@@ -39,7 +39,7 @@ export type CreateCaseActionResult =
       skippedExisting: string[];
       duplicateInList: string[];
     }
-  | { ok: false; error: "required" | "no_ids" };
+  | { ok: false; error: "required" | "no_ids" | "limits" };
 
 export async function createCaseAction(formData: FormData): Promise<CreateCaseActionResult> {
   await requireRole("REVIEWER");
@@ -50,6 +50,7 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
   const redbrickProject = String(formData.get("redbrickProject") ?? "").trim();
   const guideline = String(formData.get("guideline") ?? "").trim();
   const scopeOfWork = String(formData.get("scopeOfWork") ?? "").trim();
+  const minMinutesPerCase = Number(formData.get("minMinutesPerCase"));
   const maxMinutesPerCase = Number(formData.get("maxMinutesPerCase"));
   const compensationType =
     String(formData.get("compensationType") ?? "") === "PER_MINUTE"
@@ -61,12 +62,18 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
     !redbrickProject ||
     !guideline ||
     !scopeOfWork ||
+    !Number.isFinite(minMinutesPerCase) ||
+    minMinutesPerCase <= 0 ||
     !Number.isFinite(maxMinutesPerCase) ||
     maxMinutesPerCase <= 0 ||
     !Number.isFinite(compensationAmount) ||
     compensationAmount < 0
   ) {
     return { ok: false as const, error: "required" };
+  }
+
+  if (Math.floor(minMinutesPerCase) > Math.floor(maxMinutesPerCase)) {
+    return { ok: false as const, error: "limits" };
   }
 
   if (unique.length === 0) {
@@ -100,6 +107,7 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
     redbrickProject,
     guideline,
     scopeOfWork,
+    minMinutesPerCase: Math.floor(minMinutesPerCase),
     maxMinutesPerCase: Math.floor(maxMinutesPerCase),
     compensationType,
     compensationAmount,
@@ -421,6 +429,7 @@ export async function listCasesForAnnotator(userId: string) {
     orderBy: { updatedAt: "desc" },
     include: {
       reviews: { orderBy: { createdAt: "desc" }, take: 1 },
+      auditedBy: { select: { id: true, name: true, email: true } },
       ...caseNoteInclude,
     },
   });
@@ -429,6 +438,7 @@ export async function listCasesForAnnotator(userId: string) {
     orderBy: { updatedAt: "desc" },
     include: {
       reviews: { orderBy: { createdAt: "desc" }, take: 1 },
+      auditedBy: { select: { id: true, name: true, email: true } },
       ...caseNoteInclude,
     },
   });

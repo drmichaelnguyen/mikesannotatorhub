@@ -15,6 +15,7 @@ export type SerializedReviewerCase = {
   redbrickProject: string;
   guideline: string;
   scopeOfWork: string;
+  minMinutesPerCase: number;
   maxMinutesPerCase: number;
   compensationType: CompensationType;
   compensationAmount: number;
@@ -36,6 +37,7 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
     redbrickProject: c.redbrickProject,
     guideline: c.guideline,
     scopeOfWork: c.scopeOfWork,
+    minMinutesPerCase: c.minMinutesPerCase,
     maxMinutesPerCase: c.maxMinutesPerCase,
     compensationType: c.compensationType,
     compensationAmount: c.compensationAmount,

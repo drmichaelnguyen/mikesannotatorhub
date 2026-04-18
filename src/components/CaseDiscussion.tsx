@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { addCaseNoteAction } from "@/app/actions/cases";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
 import { formatDate } from "@/lib/format";
@@ -16,6 +16,100 @@ export type CaseDiscussionNote = {
   createdAt: string;
   author: { name: string; role: UserRole };
 };
+
+function readClipboardImageAsDataUrl(e: React.ClipboardEvent): Promise<string | null> {
+  return new Promise((resolve) => {
+    const items = e.clipboardData?.items;
+    if (!items?.length) {
+      resolve(null);
+      return;
+    }
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = () => resolve(null);
+      r.readAsDataURL(file);
+      return;
+    }
+    resolve(null);
+  });
+}
+
+function NoteImageThumbnail({
+  lang,
+  src,
+  alt,
+}: {
+  lang: Lang;
+  src: string;
+  alt: string;
+}) {
+  const tk = (k: DictKey) => t(lang, k);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    function onKey(ev: KeyboardEvent) {
+      if (ev.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <div className="mt-2">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="group flex h-20 w-20 shrink-0 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface)] p-1 text-left shadow-sm transition hover:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] sm:h-24 sm:w-24"
+          aria-label={tk("discussion_expand_image")}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src}
+            alt={alt}
+            className="max-h-full max-w-full rounded object-contain"
+            loading="lazy"
+          />
+        </button>
+      </div>
+      {open && (
+        <div
+          className="fixed inset-0 z-[100] flex cursor-zoom-out items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal
+          aria-label={tk("discussion_expand_image")}
+          onClick={() => setOpen(false)}
+        >
+          <div
+            className="max-h-[90vh] max-w-[min(96vw,56rem)] cursor-default overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={src} alt="" className="max-h-[85vh] w-auto max-w-full object-contain" />
+            <button
+              type="button"
+              className="mt-2 w-full rounded-md border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--text)]"
+              onClick={() => setOpen(false)}
+            >
+              {tk("drawer_close")}
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 export function CaseDiscussion({
   lang,
@@ -46,6 +140,14 @@ export function CaseDiscussion({
     };
     r.readAsDataURL(f);
   }
+
+  const onPasteComposer = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const dataUrl = await readClipboardImageAsDataUrl(e);
+    if (!dataUrl) return;
+    e.preventDefault();
+    setRawImage(dataUrl);
+    setMarkedImage(null);
+  }, []);
 
   function post() {
     setErr(null);
@@ -87,14 +189,7 @@ export function CaseDiscussion({
               </div>
               {n.content ? <p className="mt-2 whitespace-pre-wrap text-[var(--text)]">{n.content}</p> : null}
               {n.imageData ? (
-                <div className="mt-2">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={n.imageData}
-                    alt=""
-                    className="max-h-64 max-w-full rounded border border-[var(--border)] object-contain"
-                  />
-                </div>
+                <NoteImageThumbnail lang={lang} src={n.imageData} alt="" />
               ) : null}
             </li>
           ))}
@@ -108,6 +203,7 @@ export function CaseDiscussion({
             <textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}
+              onPaste={onPasteComposer}
               rows={2}
               className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
             />

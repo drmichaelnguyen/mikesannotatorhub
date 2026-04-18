@@ -67,6 +67,16 @@ export function CreateCaseForm({ lang }: { lang: Lang }) {
         />
       </label>
       <label>
+        <span className="text-sm text-[var(--muted)]">{tk("case_minMinutes_recommended")}</span>
+        <input
+          name="minMinutesPerCase"
+          type="number"
+          min={1}
+          required
+          className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
+        />
+      </label>
+      <label>
         <span className="text-sm text-[var(--muted)]">{tk("case_maxMinutes")}</span>
         <input
           name="maxMinutesPerCase"
@@ -108,7 +118,11 @@ export function CreateCaseForm({ lang }: { lang: Lang }) {
       </label>
       {state && !state.ok && (
         <p className="md:col-span-2 text-sm text-[var(--danger)]">
-          {state.error === "no_ids" ? tk("no_valid_ids") : tk("required")}
+          {state.error === "no_ids"
+            ? tk("no_valid_ids")
+            : state.error === "limits"
+              ? tk("case_limits_invalid")
+              : tk("required")}
         </p>
       )}
       {state?.ok && (

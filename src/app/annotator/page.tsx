@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { getLangFromCookies } from "@/app/actions/lang";
 import { getAnnotatorBoard, getAnnotatorCompensationSummary } from "@/app/actions/cases";
 import { AnnotatorStatsPanel } from "@/components/AnnotatorStatsPanel";
-import { AnnotatorWorkspace } from "@/components/AnnotatorWorkspace";
+import { AnnotatorWorkboard } from "@/components/annotator/AnnotatorWorkboard";
 import { NavBar } from "@/components/NavBar";
 import { getCurrentUser } from "@/lib/auth";
 import type { DictKey } from "@/lib/i18n";
@@ -37,7 +37,7 @@ export default async function AnnotatorPage() {
         <AnnotatorStatsPanel lang={lang} summary={summary} />
         <section>
           <h2 className="mb-3 text-lg font-medium">{tk("dash_cases_heading")}</h2>
-          <AnnotatorWorkspace
+          <AnnotatorWorkboard
             lang={lang}
             available={board.available}
             mine={board.mine}

@@ -46,6 +46,7 @@ model AnnotationCase {
   redbrickProject    String
   guideline          String
   scopeOfWork        String
+  minMinutesPerCase  Int @default(1)
   maxMinutesPerCase  Int
   compensationType   CompensationType
   compensationAmount Float

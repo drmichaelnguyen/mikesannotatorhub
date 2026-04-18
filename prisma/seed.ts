@@ -18,6 +18,7 @@ type AnnotatorSeed = {
 type ProjectTemplate = {
   guideline: string;
   scopeOfWork: string;
+  minMinutesPerCase: number;
   maxMinutesPerCase: number;
   compensationType: CompensationType;
   compensationAmount: number;
@@ -44,6 +45,7 @@ const TEAM_ANNOTATORS: AnnotatorSeed[] = [
 const DEFAULT_PROJECT_TEMPLATE: ProjectTemplate = {
   guideline: "anh em coi kỹ guideline",
   scopeOfWork: "Sửa gan lách tụy cho đẹp trên axial",
+  minMinutesPerCase: 15,
   maxMinutesPerCase: 60,
   compensationType: CompensationType.PER_CASE,
   compensationAmount: 200000,
@@ -54,6 +56,7 @@ const PROJECT_TEMPLATES: Record<string, ProjectTemplate> = {
   BC2_WB_training_set_dv_1_subsample_4_RB_1: {
     guideline: "anh em coi kỹ guideline",
     scopeOfWork: "Làm theo đúng guideline của dự án và giữ mask sạch, nhất quán.",
+    minMinutesPerCase: 15,
     maxMinutesPerCase: 60,
     compensationType: CompensationType.PER_CASE,
     compensationAmount: 200000,
@@ -365,6 +368,7 @@ async function seedCases(annotatorByAlias: Map<string, string>) {
       redbrickProject: row.project,
       guideline: project.guideline,
       scopeOfWork: project.scopeOfWork,
+      minMinutesPerCase: project.minMinutesPerCase,
       maxMinutesPerCase: project.maxMinutesPerCase,
       compensationType: project.compensationType,
       compensationAmount: project.compensationAmount,

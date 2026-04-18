@@ -1,37 +1,52 @@
 "use client";
 
-import { CaseDiscussion } from "@/components/CaseDiscussion";
+import { CaseDiscussion, type CaseDiscussionNote } from "@/components/CaseDiscussion";
 import { CopyTextButton } from "@/components/CopyTextButton";
-import { ReviewCasePanel } from "@/components/ReviewCasePanel";
-import { ReviewerAssignCase } from "@/components/ReviewerAssignCase";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate } from "@/lib/format";
-import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
-import { CaseStatus, type CompensationType } from "@prisma/client";
+import type { AnnotationCase, CaseNote, CompensationType, Review, User } from "@prisma/client";
+import { CaseStatus } from "@prisma/client";
+
+export type AnnotatorCaseRow = AnnotationCase & {
+  reviews?: Review[];
+  caseNotes?: (CaseNote & { author: Pick<User, "id" | "name" | "role"> })[];
+  auditedBy?: { id: string; name: string; email: string } | null;
+};
+
+function toDiscussionNotes(notes: NonNullable<AnnotatorCaseRow["caseNotes"]>): CaseDiscussionNote[] {
+  return notes.map((n) => ({
+    id: n.id,
+    content: n.content,
+    imageData: n.imageData,
+    createdAt: n.createdAt instanceof Date ? n.createdAt.toISOString() : String(n.createdAt),
+    author: { name: n.author.name, role: n.author.role },
+  }));
+}
 
 function compLabel(lang: Lang, type: CompensationType, amount: number) {
   if (type === "PER_MINUTE") return `${amount} × ${t(lang, "comp_per_minute")}`;
   return `${amount} (${t(lang, "comp_per_case")})`;
 }
 
-export function ReviewerCaseDetailPanel({
+export function AnnotatorCaseDetailPanel({
   lang,
-  c,
-  annotators,
+  row,
+  canPostDiscussion,
 }: {
   lang: Lang;
-  c: SerializedReviewerCase;
-  annotators: { id: string; name: string; email: string }[];
+  row: AnnotatorCaseRow;
+  canPostDiscussion: boolean;
 }) {
   const tk = (k: DictKey) => t(lang, k);
+  const last = row.reviews?.[0];
   const showAuditedInfo =
-    c.status === CaseStatus.AUDITED || c.status === CaseStatus.ACCEPTED;
+    row.status === CaseStatus.AUDITED || row.status === CaseStatus.ACCEPTED;
   const earned = computeCompensation(
-    c.compensationType,
-    c.compensationAmount,
-    c.annotationMinutes,
+    row.compensationType,
+    row.compensationAmount,
+    row.annotationMinutes,
   );
 
   return (
@@ -39,63 +54,62 @@ export function ReviewerCaseDetailPanel({
       <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[var(--border)] pb-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-xl font-semibold">{c.caseId}</h2>
-            <CopyTextButton lang={lang} value={c.caseId} />
+            <h2 className="text-xl font-semibold">{row.caseId}</h2>
+            <CopyTextButton lang={lang} value={row.caseId} />
           </div>
-          <p className="text-sm text-[var(--muted)]">{c.redbrickProject}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-[var(--muted)]">
+            <span>{row.redbrickProject}</span>
+            <CopyTextButton lang={lang} value={row.redbrickProject} />
+          </div>
         </div>
         <span className="rounded-full bg-[var(--bg)] px-2 py-0.5 text-xs">
-          {tk(`status_${c.status}` as DictKey)}
+          {tk(`status_${row.status}` as DictKey)}
         </span>
       </div>
       <dl className="grid gap-2 text-sm md:grid-cols-2">
         <div className="md:col-span-2">
           <dt className="text-[var(--muted)]">{tk("case_guideline")}</dt>
-          <dd>{c.guideline}</dd>
+          <dd>{row.guideline}</dd>
         </div>
         <div className="md:col-span-2">
           <dt className="text-[var(--muted)]">{tk("case_scope")}</dt>
-          <dd>{c.scopeOfWork}</dd>
+          <dd>{row.scopeOfWork}</dd>
         </div>
         <div>
           <dt className="text-[var(--muted)]">{tk("case_minMinutes_recommended")}</dt>
-          <dd>{c.minMinutesPerCase}</dd>
+          <dd>{row.minMinutesPerCase}</dd>
         </div>
         <div>
           <dt className="text-[var(--muted)]">{tk("case_maxMinutes")}</dt>
-          <dd>{c.maxMinutesPerCase}</dd>
+          <dd>{row.maxMinutesPerCase}</dd>
         </div>
         <div>
           <dt className="text-[var(--muted)]">{tk("case_compAmount")}</dt>
-          <dd>{compLabel(lang, c.compensationType, c.compensationAmount)}</dd>
-        </div>
-        <div>
-          <dt className="text-[var(--muted)]">{tk("case_annotator")}</dt>
-          <dd>{c.annotator?.name ?? tk("unassigned")}</dd>
+          <dd>{compLabel(lang, row.compensationType, row.compensationAmount)}</dd>
         </div>
         <div>
           <dt className="text-[var(--muted)]">{tk("case_assignedAt")}</dt>
-          <dd>{formatDate(lang, c.assignedAt)}</dd>
+          <dd>{formatDate(lang, row.assignedAt)}</dd>
         </div>
         <div>
           <dt className="text-[var(--muted)]">{tk("case_completedAt")}</dt>
-          <dd>{formatDate(lang, c.completedAt)}</dd>
+          <dd>{formatDate(lang, row.completedAt)}</dd>
         </div>
         <div>
           <dt className="text-[var(--muted)]">{tk("case_annotationMinutes")}</dt>
-          <dd>{c.annotationMinutes ?? "—"}</dd>
+          <dd>{row.annotationMinutes ?? "—"}</dd>
         </div>
         {showAuditedInfo && (
           <>
             <div>
               <dt className="text-[var(--muted)]">{tk("case_audited_at")}</dt>
-              <dd>{formatDate(lang, c.auditedAt)}</dd>
+              <dd>{formatDate(lang, row.auditedAt)}</dd>
             </div>
             <div>
               <dt className="text-[var(--muted)]">{tk("case_audited_by")}</dt>
               <dd>
-                {c.auditedBy?.name ??
-                  (c.status === CaseStatus.ACCEPTED ? tk("case_audit_legacy") : "—")}
+                {row.auditedBy?.name ??
+                  (row.status === CaseStatus.ACCEPTED ? tk("case_audit_legacy") : "—")}
               </dd>
             </div>
             <div className="md:col-span-2">
@@ -107,36 +121,21 @@ export function ReviewerCaseDetailPanel({
           </>
         )}
       </dl>
+      {last?.comment && (
+        <p className="rounded-md bg-[var(--bg)] p-2 text-sm">
+          <span className="font-medium text-[var(--text)]">{tk("last_review")}: </span>
+          {last.comment}
+        </p>
+      )}
       <div>
         <h3 className="mb-2 text-sm font-medium text-[var(--muted)]">{tk("discussion_title")}</h3>
         <CaseDiscussion
           lang={lang}
-          caseDbId={c.id}
-          canPost
-          notes={c.caseNotes.map((n) => ({
-            id: n.id,
-            content: n.content,
-            imageData: n.imageData,
-            createdAt: n.createdAt,
-            author: n.author,
-          }))}
+          caseDbId={row.id}
+          canPost={canPostDiscussion}
+          notes={row.caseNotes ? toDiscussionNotes(row.caseNotes) : []}
         />
       </div>
-      {c.reviews[0]?.comment && c.status !== CaseStatus.SUBMITTED && (
-        <p className="text-sm text-[var(--muted)]">
-          {tk("last_review")}: {c.reviews[0].comment}
-        </p>
-      )}
-      {c.status === CaseStatus.AVAILABLE && (
-        <ReviewerAssignCase lang={lang} caseDbId={c.id} annotators={annotators} />
-      )}
-      {c.status === CaseStatus.SUBMITTED && (
-        <div className="border-t border-[var(--border)] pt-4">
-          <h4 className="mb-2 font-medium">{tk("reviewer_audit_title")}</h4>
-          <p className="mb-3 text-xs text-[var(--muted)]">{tk("reviewer_audit_intro")}</p>
-          <ReviewCasePanel lang={lang} caseDbId={c.id} />
-        </div>
-      )}
     </div>
   );
 }
