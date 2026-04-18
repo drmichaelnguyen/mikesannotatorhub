@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getLangFromCookies } from "@/app/actions/lang";
 import { listAnnotatorsForAssignment, listCasesForReviewer } from "@/app/actions/cases";
+import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { CreateAnnotatorForm } from "@/components/CreateAnnotatorForm";
 import { CreateCaseForm } from "@/components/CreateCaseForm";
 import { NavBar } from "@/components/NavBar";
@@ -40,12 +41,14 @@ export default async function ReviewerPage() {
           <p className="text-sm text-[var(--muted)]">{tk("appName")}</p>
         </div>
         <section>
-          <h2 className="mb-3 text-lg font-medium">{tk("reviewer_create_annotator")}</h2>
-          <CreateAnnotatorForm lang={lang} />
+          <CollapsibleSection title={tk("reviewer_create_annotator")}>
+            <CreateAnnotatorForm lang={lang} />
+          </CollapsibleSection>
         </section>
         <section>
-          <h2 className="mb-3 text-lg font-medium">{tk("reviewer_create")}</h2>
-          <CreateCaseForm lang={lang} />
+          <CollapsibleSection title={tk("reviewer_create")}>
+            <CreateCaseForm lang={lang} />
+          </CollapsibleSection>
         </section>
         <section>
           <ReviewerWorkboard lang={lang} cases={serialized} annotators={annotators} />

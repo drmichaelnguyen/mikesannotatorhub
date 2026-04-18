@@ -4,7 +4,7 @@ import { CaseDiscussion } from "@/components/CaseDiscussion";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ReviewCasePanel } from "@/components/ReviewCasePanel";
 import { ReviewerAssignCase } from "@/components/ReviewerAssignCase";
-import { ReviewerCompensationEditor } from "@/components/reviewer/ReviewerCompensationEditor";
+import { ReviewerCaseEditor } from "@/components/reviewer/ReviewerCaseEditor";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate } from "@/lib/format";
 import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
@@ -108,12 +108,7 @@ export function ReviewerCaseDetailPanel({
           </>
         )}
       </dl>
-      <ReviewerCompensationEditor
-        lang={lang}
-        caseDbId={c.id}
-        initialType={c.compensationType}
-        initialAmount={c.compensationAmount}
-      />
+      <ReviewerCaseEditor lang={lang} c={c} />
       <div>
         <h3 className="mb-2 text-sm font-medium text-[var(--muted)]">{tk("discussion_title")}</h3>
         <CaseDiscussion

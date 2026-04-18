@@ -1,13 +1,15 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
+import { useActionState, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { addCaseNoteAction, assignCaseAction, submitAnnotationAction } from "@/app/actions/cases";
 import {
   AnnotatorCaseDetailPanel,
   type AnnotatorCaseRow,
 } from "@/components/annotator/AnnotatorCaseDetailPanel";
 import { CopyTextButton } from "@/components/CopyTextButton";
+import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
+import { getClipboardImageFile, readFileAsDataUrl } from "@/lib/client-image-data";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
@@ -156,6 +158,8 @@ export function AnnotatorWorkboard({
   const [detailId, setDetailId] = useState<string | null>(null);
   const [noteCaseId, setNoteCaseId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
+  const [noteRawImage, setNoteRawImage] = useState<string | null>(null);
+  const [noteMarkedImage, setNoteMarkedImage] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -166,10 +170,37 @@ export function AnnotatorWorkboard({
     router.refresh();
   }
 
+  function resetNoteComposer() {
+    setNoteText("");
+    setNoteRawImage(null);
+    setNoteMarkedImage(null);
+  }
+
+  const onPasteNote = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const file = getClipboardImageFile(e.clipboardData);
+    if (!file) return;
+    e.preventDefault();
+    const dataUrl = await readFileAsDataUrl(file);
+    if (!dataUrl) return;
+    setNoteRawImage(dataUrl);
+    setNoteMarkedImage(null);
+  }, []);
+
+  function onNoteFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    void readFileAsDataUrl(f).then((dataUrl) => {
+      if (!dataUrl) return;
+      setNoteRawImage(dataUrl);
+      setNoteMarkedImage(null);
+    });
+  }
+
   function submitNote() {
     if (!noteCaseId) return;
     const text = noteText.trim();
-    if (!text) {
+    const imageData = noteMarkedImage ?? noteRawImage;
+    if (!text && !imageData) {
       setErr(tk("discussion_need_body"));
       return;
     }
@@ -178,14 +209,14 @@ export function AnnotatorWorkboard({
       const res = await addCaseNoteAction({
         caseDbId: noteCaseId,
         content: text,
-        imageData: null,
+        imageData,
       });
       if (!res.ok) {
         setErr(tk("required"));
         return;
       }
       setNoteCaseId(null);
-      setNoteText("");
+      resetNoteComposer();
       refresh();
     });
   }
@@ -288,7 +319,7 @@ export function AnnotatorWorkboard({
                         onClick={() => {
                           setErr(null);
                           setNoteCaseId(c.id);
-                          setNoteText("");
+                          resetNoteComposer();
                         }}
                       >
                         {tk("action_comment")}
@@ -442,6 +473,7 @@ export function AnnotatorWorkboard({
           role="presentation"
           onClick={() => {
             setNoteCaseId(null);
+            resetNoteComposer();
             setErr(null);
           }}
         >
@@ -454,10 +486,25 @@ export function AnnotatorWorkboard({
             <textarea
               value={noteText}
               onChange={(e) => setNoteText(e.target.value)}
+              onPaste={onPasteNote}
               rows={4}
               className="mb-2 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm"
               placeholder={tk("review_comment")}
             />
+            <p className="mb-2 text-xs text-[var(--muted)]">{tk("discussion_hint")}</p>
+            <div className="mb-2">
+              <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
+              <input type="file" accept="image/*" onChange={onNoteFile} className="mt-1 block text-sm" />
+            </div>
+            {(noteRawImage || noteMarkedImage) && (
+              <div className="mb-2">
+                <ScreenshotDrawer
+                  lang={lang}
+                  imageDataUrl={noteMarkedImage ?? noteRawImage}
+                  onChange={(dataUrl) => setNoteMarkedImage(dataUrl)}
+                />
+              </div>
+            )}
             {err && <p className="mb-2 text-sm text-[var(--danger)]">{err}</p>}
             <div className="flex justify-end gap-2">
               <button
@@ -465,6 +512,7 @@ export function AnnotatorWorkboard({
                 className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm"
                 onClick={() => {
                   setNoteCaseId(null);
+                  resetNoteComposer();
                   setErr(null);
                 }}
               >

@@ -1,10 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useCallback, useMemo, useState, useTransition } from "react";
 import { addCaseNoteAction, reviewCaseAction, reviewerAssignCaseAction } from "@/app/actions/cases";
 import { CopyTextButton } from "@/components/CopyTextButton";
+import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
 import { ReviewerCaseDetailPanel } from "@/components/reviewer/ReviewerCaseDetailPanel";
+import { getClipboardImageFile, readFileAsDataUrl } from "@/lib/client-image-data";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount } from "@/lib/format";
 import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
@@ -70,15 +72,26 @@ export function ReviewerWorkboard({
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
-  const board = useMemo(() => buildBoard(cases, lang), [cases, lang]);
+  const [searchInput, setSearchInput] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
+  const filteredCases = useMemo(() => {
+    const needle = appliedSearch.trim().toLowerCase();
+    if (!needle) return cases;
+    return cases.filter((c) => c.caseId.toLowerCase().includes(needle));
+  }, [appliedSearch, cases]);
+  const board = useMemo(() => buildBoard(filteredCases, lang), [filteredCases, lang]);
 
   const [detailId, setDetailId] = useState<string | null>(null);
   const [noteCaseId, setNoteCaseId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
+  const [noteRawImage, setNoteRawImage] = useState<string | null>(null);
+  const [noteMarkedImage, setNoteMarkedImage] = useState<string | null>(null);
   const [audit, setAudit] = useState<{ caseId: string; decision: "ACCEPT" | "REJECT" } | null>(
     null,
   );
   const [auditComment, setAuditComment] = useState("");
+  const [auditRawImage, setAuditRawImage] = useState<string | null>(null);
+  const [auditMarkedImage, setAuditMarkedImage] = useState<string | null>(null);
   const [assignCaseId, setAssignCaseId] = useState<string | null>(null);
   const [assignAnnotatorId, setAssignAnnotatorId] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -92,10 +105,73 @@ export function ReviewerWorkboard({
     router.refresh();
   }
 
+  function submitSearch(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setAppliedSearch(searchInput.trim());
+  }
+
+  function clearSearch() {
+    setSearchInput("");
+    setAppliedSearch("");
+  }
+
+  function resetNoteComposer() {
+    setNoteText("");
+    setNoteRawImage(null);
+    setNoteMarkedImage(null);
+  }
+
+  function resetAuditComposer() {
+    setAuditComment("");
+    setAuditRawImage(null);
+    setAuditMarkedImage(null);
+  }
+
+  const onPasteNote = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const file = getClipboardImageFile(e.clipboardData);
+    if (!file) return;
+    e.preventDefault();
+    const dataUrl = await readFileAsDataUrl(file);
+    if (!dataUrl) return;
+    setNoteRawImage(dataUrl);
+    setNoteMarkedImage(null);
+  }, []);
+
+  const onPasteAudit = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const file = getClipboardImageFile(e.clipboardData);
+    if (!file) return;
+    e.preventDefault();
+    const dataUrl = await readFileAsDataUrl(file);
+    if (!dataUrl) return;
+    setAuditRawImage(dataUrl);
+    setAuditMarkedImage(null);
+  }, []);
+
+  function onNoteFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    void readFileAsDataUrl(f).then((dataUrl) => {
+      if (!dataUrl) return;
+      setNoteRawImage(dataUrl);
+      setNoteMarkedImage(null);
+    });
+  }
+
+  function onAuditFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    void readFileAsDataUrl(f).then((dataUrl) => {
+      if (!dataUrl) return;
+      setAuditRawImage(dataUrl);
+      setAuditMarkedImage(null);
+    });
+  }
+
   function submitNote() {
     if (!noteCaseId) return;
     const text = noteText.trim();
-    if (!text) {
+    const imageData = noteMarkedImage ?? noteRawImage;
+    if (!text && !imageData) {
       setErr(tk("discussion_need_body"));
       return;
     }
@@ -104,14 +180,14 @@ export function ReviewerWorkboard({
       const res = await addCaseNoteAction({
         caseDbId: noteCaseId,
         content: text,
-        imageData: null,
+        imageData,
       });
       if (!res.ok) {
         setErr(tk("required"));
         return;
       }
       setNoteCaseId(null);
-      setNoteText("");
+      resetNoteComposer();
       refresh();
     });
   }
@@ -146,14 +222,14 @@ export function ReviewerWorkboard({
         caseDbId: audit.caseId,
         decision: audit.decision,
         comment: text,
-        screenshotData: null,
+        screenshotData: auditMarkedImage ?? auditRawImage,
       });
       if (!res.ok) {
         setErr(tk("reviewer_assign_taken"));
         return;
       }
       setAudit(null);
-      setAuditComment("");
+      resetAuditComposer();
       setDetailId(null);
       refresh();
     });
@@ -163,8 +239,34 @@ export function ReviewerWorkboard({
     <div className="space-y-4">
       <h2 className="text-lg font-medium">{tk("reviewer_board_title")}</h2>
       <p className="text-sm text-[var(--muted)]">{tk("reviewer_board_hint")}</p>
+      <form onSubmit={submitSearch} className="flex flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 sm:flex-row sm:items-end">
+        <label className="flex-1">
+          <span className="text-sm text-[var(--muted)]">{tk("reviewer_search_case_id")}</span>
+          <input
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder={tk("reviewer_search_case_id_placeholder")}
+            className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm"
+          />
+        </label>
+        <div className="flex gap-2">
+          <button
+            type="submit"
+            className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm text-white hover:bg-[var(--accent-hover)]"
+          >
+            {tk("search")}
+          </button>
+          <button
+            type="button"
+            onClick={clearSearch}
+            className="rounded-md border border-[var(--border)] px-4 py-2 text-sm hover:border-[var(--accent)]"
+          >
+            {tk("clear_search")}
+          </button>
+        </div>
+      </form>
 
-      {cases.length === 0 ? (
+      {filteredCases.length === 0 ? (
         <p className="text-[var(--muted)]">{tk("no_cases")}</p>
       ) : (
         <div className="space-y-2">
@@ -247,14 +349,14 @@ export function ReviewerWorkboard({
                                   <button
                                     type="button"
                                     className="rounded border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 hover:border-[var(--accent)]"
-                                    onClick={() => {
-                                      setErr(null);
-                                      setNoteCaseId(c.id);
-                                      setNoteText("");
-                                    }}
-                                  >
-                                    {tk("action_comment")}
-                                  </button>
+                                      onClick={() => {
+                                        setErr(null);
+                                        setNoteCaseId(c.id);
+                                        resetNoteComposer();
+                                      }}
+                                    >
+                                      {tk("action_comment")}
+                                    </button>
                                   {c.status === CaseStatus.SUBMITTED && (
                                     <>
                                       <button
@@ -263,7 +365,7 @@ export function ReviewerWorkboard({
                                         onClick={() => {
                                           setErr(null);
                                           setAudit({ caseId: c.id, decision: "ACCEPT" });
-                                          setAuditComment("");
+                                          resetAuditComposer();
                                         }}
                                       >
                                         {tk("action_approve")}
@@ -274,7 +376,7 @@ export function ReviewerWorkboard({
                                         onClick={() => {
                                           setErr(null);
                                           setAudit({ caseId: c.id, decision: "REJECT" });
-                                          setAuditComment("");
+                                          resetAuditComposer();
                                         }}
                                       >
                                         {tk("action_reject")}
@@ -339,6 +441,7 @@ export function ReviewerWorkboard({
           role="presentation"
           onClick={() => {
             setNoteCaseId(null);
+            resetNoteComposer();
             setErr(null);
           }}
         >
@@ -351,10 +454,25 @@ export function ReviewerWorkboard({
             <textarea
               value={noteText}
               onChange={(e) => setNoteText(e.target.value)}
+              onPaste={onPasteNote}
               rows={4}
               className="mb-2 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm"
               placeholder={tk("review_comment")}
             />
+            <p className="mb-2 text-xs text-[var(--muted)]">{tk("discussion_hint")}</p>
+            <div className="mb-2">
+              <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
+              <input type="file" accept="image/*" onChange={onNoteFile} className="mt-1 block text-sm" />
+            </div>
+            {(noteRawImage || noteMarkedImage) && (
+              <div className="mb-2">
+                <ScreenshotDrawer
+                  lang={lang}
+                  imageDataUrl={noteMarkedImage ?? noteRawImage}
+                  onChange={(dataUrl) => setNoteMarkedImage(dataUrl)}
+                />
+              </div>
+            )}
             {err && <p className="mb-2 text-sm text-[var(--danger)]">{err}</p>}
             <div className="flex justify-end gap-2">
               <button
@@ -362,6 +480,7 @@ export function ReviewerWorkboard({
                 className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm"
                 onClick={() => {
                   setNoteCaseId(null);
+                  resetNoteComposer();
                   setErr(null);
                 }}
               >
@@ -464,6 +583,7 @@ export function ReviewerWorkboard({
           role="presentation"
           onClick={() => {
             setAudit(null);
+            resetAuditComposer();
             setErr(null);
           }}
         >
@@ -480,12 +600,27 @@ export function ReviewerWorkboard({
             <textarea
               value={auditComment}
               onChange={(e) => setAuditComment(e.target.value)}
+              onPaste={onPasteAudit}
               rows={4}
               className="mb-2 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm"
               placeholder={
                 audit.decision === "REJECT" ? tk("audit_reject_placeholder") : tk("review_comment")
               }
             />
+            <p className="mb-2 text-xs text-[var(--muted)]">{tk("discussion_hint")}</p>
+            <div className="mb-2">
+              <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
+              <input type="file" accept="image/*" onChange={onAuditFile} className="mt-1 block text-sm" />
+            </div>
+            {(auditRawImage || auditMarkedImage) && (
+              <div className="mb-2">
+                <ScreenshotDrawer
+                  lang={lang}
+                  imageDataUrl={auditMarkedImage ?? auditRawImage}
+                  onChange={(dataUrl) => setAuditMarkedImage(dataUrl)}
+                />
+              </div>
+            )}
             {err && <p className="mb-2 text-sm text-[var(--danger)]">{err}</p>}
             <div className="flex justify-end gap-2">
               <button
@@ -493,6 +628,7 @@ export function ReviewerWorkboard({
                 className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm"
                 onClick={() => {
                   setAudit(null);
+                  resetAuditComposer();
                   setErr(null);
                 }}
               >

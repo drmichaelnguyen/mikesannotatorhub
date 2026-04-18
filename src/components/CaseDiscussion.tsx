@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { addCaseNoteAction } from "@/app/actions/cases";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
+import { getClipboardImageFile, readFileAsDataUrl } from "@/lib/client-image-data";
 import { formatDate } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -16,28 +17,6 @@ export type CaseDiscussionNote = {
   createdAt: string;
   author: { name: string; role: UserRole };
 };
-
-function readClipboardImageAsDataUrl(e: React.ClipboardEvent): Promise<string | null> {
-  return new Promise((resolve) => {
-    const items = e.clipboardData?.items;
-    if (!items?.length) {
-      resolve(null);
-      return;
-    }
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
-      const file = item.getAsFile();
-      if (!file) continue;
-      const r = new FileReader();
-      r.onload = () => resolve(String(r.result));
-      r.onerror = () => resolve(null);
-      r.readAsDataURL(file);
-      return;
-    }
-    resolve(null);
-  });
-}
 
 function NoteImageThumbnail({
   lang,
@@ -133,18 +112,19 @@ export function CaseDiscussion({
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
-    const r = new FileReader();
-    r.onload = () => {
-      setRawImage(String(r.result));
+    void readFileAsDataUrl(f).then((dataUrl) => {
+      if (!dataUrl) return;
+      setRawImage(dataUrl);
       setMarkedImage(null);
-    };
-    r.readAsDataURL(f);
+    });
   }
 
   const onPasteComposer = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const dataUrl = await readClipboardImageAsDataUrl(e);
-    if (!dataUrl) return;
+    const file = getClipboardImageFile(e.clipboardData);
+    if (!file) return;
     e.preventDefault();
+    const dataUrl = await readFileAsDataUrl(file);
+    if (!dataUrl) return;
     setRawImage(dataUrl);
     setMarkedImage(null);
   }, []);

@@ -224,6 +224,85 @@ export async function updateCaseCompensationAction(input: {
   return { ok: true as const };
 }
 
+export async function updateCaseDetailsAction(input: {
+  caseDbId: string;
+  caseId: string;
+  redbrickProject: string;
+  guideline: string;
+  scopeOfWork: string;
+  minMinutesPerCase: number;
+  maxMinutesPerCase: number;
+  compensationType: CompensationType;
+  compensationAmount: number;
+}) {
+  await requireRole("REVIEWER");
+  const caseId = input.caseId.trim();
+  const redbrickProject = input.redbrickProject.trim();
+  const guideline = input.guideline.trim();
+  const scopeOfWork = input.scopeOfWork.trim();
+  const minMinutesPerCase = Math.floor(input.minMinutesPerCase);
+  const maxMinutesPerCase = Math.floor(input.maxMinutesPerCase);
+
+  if (
+    !caseId ||
+    !redbrickProject ||
+    !guideline ||
+    !scopeOfWork ||
+    !Number.isFinite(minMinutesPerCase) ||
+    minMinutesPerCase <= 0 ||
+    !Number.isFinite(maxMinutesPerCase) ||
+    maxMinutesPerCase <= 0 ||
+    !Number.isFinite(input.compensationAmount) ||
+    input.compensationAmount < 0
+  ) {
+    return { ok: false as const, error: "required" as const };
+  }
+
+  if (minMinutesPerCase > maxMinutesPerCase) {
+    return { ok: false as const, error: "limits" as const };
+  }
+
+  if (
+    input.compensationType !== CompensationType.PER_CASE &&
+    input.compensationType !== CompensationType.PER_MINUTE
+  ) {
+    return { ok: false as const, error: "required" as const };
+  }
+
+  const row = await prisma.annotationCase.findUnique({
+    where: { id: input.caseDbId },
+    select: { id: true },
+  });
+  if (!row) return { ok: false as const, error: "notfound" as const };
+
+  const dupe = await prisma.annotationCase.findFirst({
+    where: {
+      caseId,
+      NOT: { id: input.caseDbId },
+    },
+    select: { id: true },
+  });
+  if (dupe) return { ok: false as const, error: "case_exists" as const };
+
+  await prisma.annotationCase.update({
+    where: { id: input.caseDbId },
+    data: {
+      caseId,
+      redbrickProject,
+      guideline,
+      scopeOfWork,
+      minMinutesPerCase,
+      maxMinutesPerCase,
+      compensationType: input.compensationType,
+      compensationAmount: input.compensationAmount,
+    },
+  });
+
+  revalidatePath("/reviewer");
+  revalidatePath("/annotator");
+  return { ok: true as const };
+}
+
 export async function listAnnotatorsForAssignment() {
   await requireRole("REVIEWER");
   return prisma.user.findMany({
