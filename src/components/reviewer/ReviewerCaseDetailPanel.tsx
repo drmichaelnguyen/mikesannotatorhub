@@ -1,6 +1,7 @@
 "use client";
 
 import { CaseDiscussion } from "@/components/CaseDiscussion";
+import { CopyTextButton } from "@/components/CopyTextButton";
 import { ReviewCasePanel } from "@/components/ReviewCasePanel";
 import { ReviewerAssignCase } from "@/components/ReviewerAssignCase";
 import { computeCompensation } from "@/lib/compensation";
@@ -37,7 +38,10 @@ export function ReviewerCaseDetailPanel({
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[var(--border)] pb-3">
         <div>
-          <h2 className="text-xl font-semibold">{c.caseId}</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-xl font-semibold">{c.caseId}</h2>
+            <CopyTextButton lang={lang} value={c.caseId} />
+          </div>
           <p className="text-sm text-[var(--muted)]">{c.redbrickProject}</p>
         </div>
         <span className="rounded-full bg-[var(--bg)] px-2 py-0.5 text-xs">

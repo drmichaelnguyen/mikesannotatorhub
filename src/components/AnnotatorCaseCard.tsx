@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useState } from "react";
 import { assignCaseAction, submitAnnotationAction } from "@/app/actions/cases";
 import { CaseDiscussion, type CaseDiscussionNote } from "@/components/CaseDiscussion";
+import { CopyTextButton } from "@/components/CopyTextButton";
 import type { AnnotationCase, CaseNote, Review, User } from "@prisma/client";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -62,7 +63,10 @@ export function AnnotatorCaseCard({
     <article className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h3 className="font-medium">{row.caseId}</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-medium">{row.caseId}</h3>
+            <CopyTextButton lang={lang} value={row.caseId} />
+          </div>
           <p className="text-sm text-[var(--muted)]">{row.redbrickProject}</p>
         </div>
         <span className="rounded-full bg-[var(--bg)] px-2 py-0.5 text-xs">

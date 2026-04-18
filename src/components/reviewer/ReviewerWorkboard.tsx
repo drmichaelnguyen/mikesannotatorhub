@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { addCaseNoteAction, reviewCaseAction } from "@/app/actions/cases";
+import { CopyTextButton } from "@/components/CopyTextButton";
 import { ReviewerCaseDetailPanel } from "@/components/reviewer/ReviewerCaseDetailPanel";
 import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
 import type { DictKey, Lang } from "@/lib/i18n";
@@ -180,7 +181,10 @@ export function ReviewerWorkboard({
                               }}
                             >
                               <td className="py-1.5 pr-2 font-mono font-medium text-[var(--text)]">
-                                {c.caseId}
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span>{c.caseId}</span>
+                                  <CopyTextButton lang={lang} value={c.caseId} />
+                                </div>
                               </td>
                               <td className="py-1.5 pr-2">{tk(`status_${c.status}` as DictKey)}</td>
                               <td className="py-1.5 pr-2 tabular-nums text-[var(--muted)]">
