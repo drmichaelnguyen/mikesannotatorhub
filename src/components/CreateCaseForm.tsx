@@ -13,7 +13,9 @@ function formatIdList(ids: string[], max = 40) {
   return `${shown.join(", ")}${extra}`;
 }
 
-export function CreateCaseForm({ lang }: { lang: Lang }) {
+type Annotator = { id: string; name: string; email: string };
+
+export function CreateCaseForm({ lang, annotators = [] }: { lang: Lang; annotators?: Annotator[] }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
   const [state, formAction, pending] = useActionState(
@@ -109,12 +111,17 @@ export function CreateCaseForm({ lang }: { lang: Lang }) {
       </label>
       <label>
         <span className="text-sm text-[var(--muted)]">{tk("assign_email")}</span>
-        <input
+        <select
           name="assignEmail"
-          type="email"
-          placeholder="annotator@example.com"
           className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
-        />
+        >
+          <option value="">— {tk("unassigned")} —</option>
+          {annotators.map((a) => (
+            <option key={a.id} value={a.email}>
+              {a.name} ({a.email})
+            </option>
+          ))}
+        </select>
       </label>
       {state && !state.ok && (
         <p className="md:col-span-2 text-sm text-[var(--danger)]">

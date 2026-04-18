@@ -2,6 +2,7 @@
 
 import { CaseDiscussion, type CaseDiscussionNote } from "@/components/CaseDiscussion";
 import { CopyTextButton } from "@/components/CopyTextButton";
+import { getCaseNoteImages } from "@/lib/case-note-images";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
@@ -19,7 +20,7 @@ function toDiscussionNotes(notes: NonNullable<AnnotatorCaseRow["caseNotes"]>): C
   return notes.map((n) => ({
     id: n.id,
     content: n.content,
-    imageData: n.imageData,
+    images: getCaseNoteImages(n),
     createdAt: n.createdAt instanceof Date ? n.createdAt.toISOString() : String(n.createdAt),
     author: { name: n.author.name, role: n.author.role },
   }));

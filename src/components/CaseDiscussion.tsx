@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { addCaseNoteAction } from "@/app/actions/cases";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
-import { getClipboardImageFile, readFileAsDataUrl } from "@/lib/client-image-data";
+import { getClipboardImageFiles, readFilesAsDataUrls } from "@/lib/client-image-data";
 import { formatDate } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -13,7 +13,7 @@ import type { UserRole } from "@prisma/client";
 export type CaseDiscussionNote = {
   id: string;
   content: string | null;
-  imageData: string | null;
+  images: string[];
   createdAt: string;
   author: { name: string; role: UserRole };
 };
@@ -104,29 +104,36 @@ export function CaseDiscussion({
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
   const [content, setContent] = useState("");
-  const [rawImage, setRawImage] = useState<string | null>(null);
-  const [markedImage, setMarkedImage] = useState<string | null>(null);
+  const [images, setImages] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
+  function addImages(dataUrls: string[]) {
+    if (dataUrls.length === 0) return;
+    setImages((prev) => [...prev, ...dataUrls]);
+  }
+
+  function updateImage(index: number, dataUrl: string | null) {
+    if (!dataUrl) return;
+    setImages((prev) => prev.map((item, i) => (i === index ? dataUrl : item)));
+  }
+
+  function removeImage(index: number) {
+    setImages((prev) => prev.filter((_, i) => i !== index));
+  }
+
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    void readFileAsDataUrl(f).then((dataUrl) => {
-      if (!dataUrl) return;
-      setRawImage(dataUrl);
-      setMarkedImage(null);
-    });
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    void readFilesAsDataUrls(files).then(addImages);
+    e.target.value = "";
   }
 
   const onPasteComposer = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const file = getClipboardImageFile(e.clipboardData);
-    if (!file) return;
+    const files = getClipboardImageFiles(e.clipboardData);
+    if (files.length === 0) return;
     e.preventDefault();
-    const dataUrl = await readFileAsDataUrl(file);
-    if (!dataUrl) return;
-    setRawImage(dataUrl);
-    setMarkedImage(null);
+    addImages(await readFilesAsDataUrls(files));
   }, []);
 
   function post() {
@@ -135,15 +142,14 @@ export function CaseDiscussion({
       const res = await addCaseNoteAction({
         caseDbId,
         content,
-        imageData: markedImage ?? rawImage,
+        imageDataList: images,
       });
       if (!res.ok) {
         setErr(res.error === "empty" ? tk("discussion_need_body") : tk("required"));
         return;
       }
       setContent("");
-      setRawImage(null);
-      setMarkedImage(null);
+      setImages([]);
       router.refresh();
     });
   }
@@ -168,8 +174,12 @@ export function CaseDiscussion({
                 <span>{formatDate(lang, new Date(n.createdAt))}</span>
               </div>
               {n.content ? <p className="mt-2 whitespace-pre-wrap text-[var(--text)]">{n.content}</p> : null}
-              {n.imageData ? (
-                <NoteImageThumbnail lang={lang} src={n.imageData} alt="" />
+              {n.images.length > 0 ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {n.images.map((image, index) => (
+                    <NoteImageThumbnail key={`${n.id}-${index}`} lang={lang} src={image} alt="" />
+                  ))}
+                </div>
               ) : null}
             </li>
           ))}
@@ -190,15 +200,33 @@ export function CaseDiscussion({
           </label>
           <div className="mt-2">
             <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
-            <input type="file" accept="image/*" onChange={onFile} className="mt-1 block text-sm" />
+            <input type="file" accept="image/*" multiple onChange={onFile} className="mt-1 block text-sm" />
           </div>
-          {(rawImage || markedImage) && (
-            <div className="mt-2">
-              <ScreenshotDrawer
-                lang={lang}
-                imageDataUrl={markedImage ?? rawImage}
-                onChange={(d) => setMarkedImage(d)}
-              />
+          {images.length > 0 && (
+            <div className="mt-2 space-y-3">
+              {images.map((image, index) => (
+                <div key={`${image.slice(0, 32)}-${index}`} className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-2">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-xs text-[var(--muted)]">{tk("review_screenshot")} {index + 1}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeImage(index)}
+                      className="rounded-md border border-[var(--border)] px-2 py-1 text-xs hover:border-[var(--accent)]"
+                    >
+                      {tk("remove_image")}
+                    </button>
+                  </div>
+                  <div className="mb-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={image} alt="" className="max-h-40 rounded border border-[var(--border)] object-contain" />
+                  </div>
+                  <ScreenshotDrawer
+                    lang={lang}
+                    imageDataUrl={image}
+                    onChange={(dataUrl) => updateImage(index, dataUrl)}
+                  />
+                </div>
+              ))}
             </div>
           )}
           {err && <p className="mt-2 text-sm text-[var(--danger)]">{err}</p>}

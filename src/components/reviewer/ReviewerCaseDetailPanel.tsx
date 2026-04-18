@@ -118,7 +118,7 @@ export function ReviewerCaseDetailPanel({
           notes={c.caseNotes.map((n) => ({
             id: n.id,
             content: n.content,
-            imageData: n.imageData,
+            images: n.images,
             createdAt: n.createdAt,
             author: n.author,
           }))}

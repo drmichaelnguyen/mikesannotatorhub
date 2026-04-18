@@ -9,7 +9,7 @@ import {
 } from "@/components/annotator/AnnotatorCaseDetailPanel";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
-import { getClipboardImageFile, readFileAsDataUrl } from "@/lib/client-image-data";
+import { getClipboardImageFiles, readFilesAsDataUrls } from "@/lib/client-image-data";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
@@ -29,6 +29,25 @@ function groupByProject<T extends { redbrickProject: string; caseId: string }>(i
       project,
       cases: [...list].sort((a, b) => a.caseId.localeCompare(b.caseId)),
     }));
+}
+
+function CommentActionLabel({
+  label,
+  count,
+}: {
+  label: string;
+  count: number;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span>{label}</span>
+      {count > 0 && (
+        <span className="rounded-full bg-[var(--danger)] px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+          {count}
+        </span>
+      )}
+    </span>
+  );
 }
 
 function AnnotatorAssignForm({ lang, caseDbId }: { lang: Lang; caseDbId: string }) {
@@ -158,8 +177,7 @@ export function AnnotatorWorkboard({
   const [detailId, setDetailId] = useState<string | null>(null);
   const [noteCaseId, setNoteCaseId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
-  const [noteRawImage, setNoteRawImage] = useState<string | null>(null);
-  const [noteMarkedImage, setNoteMarkedImage] = useState<string | null>(null);
+  const [noteImages, setNoteImages] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -172,35 +190,41 @@ export function AnnotatorWorkboard({
 
   function resetNoteComposer() {
     setNoteText("");
-    setNoteRawImage(null);
-    setNoteMarkedImage(null);
+    setNoteImages([]);
+  }
+
+  function addNoteImages(dataUrls: string[]) {
+    if (dataUrls.length === 0) return;
+    setNoteImages((prev) => [...prev, ...dataUrls]);
+  }
+
+  function updateNoteImage(index: number, dataUrl: string | null) {
+    if (!dataUrl) return;
+    setNoteImages((prev) => prev.map((item, i) => (i === index ? dataUrl : item)));
+  }
+
+  function removeNoteImage(index: number) {
+    setNoteImages((prev) => prev.filter((_, i) => i !== index));
   }
 
   const onPasteNote = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const file = getClipboardImageFile(e.clipboardData);
-    if (!file) return;
+    const files = getClipboardImageFiles(e.clipboardData);
+    if (files.length === 0) return;
     e.preventDefault();
-    const dataUrl = await readFileAsDataUrl(file);
-    if (!dataUrl) return;
-    setNoteRawImage(dataUrl);
-    setNoteMarkedImage(null);
+    addNoteImages(await readFilesAsDataUrls(files));
   }, []);
 
   function onNoteFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    void readFileAsDataUrl(f).then((dataUrl) => {
-      if (!dataUrl) return;
-      setNoteRawImage(dataUrl);
-      setNoteMarkedImage(null);
-    });
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    void readFilesAsDataUrls(files).then(addNoteImages);
+    e.target.value = "";
   }
 
   function submitNote() {
     if (!noteCaseId) return;
     const text = noteText.trim();
-    const imageData = noteMarkedImage ?? noteRawImage;
-    if (!text && !imageData) {
+    if (!text && noteImages.length === 0) {
       setErr(tk("discussion_need_body"));
       return;
     }
@@ -209,7 +233,7 @@ export function AnnotatorWorkboard({
       const res = await addCaseNoteAction({
         caseDbId: noteCaseId,
         content: text,
-        imageData,
+        imageDataList: noteImages,
       });
       if (!res.ok) {
         setErr(tk("required"));
@@ -251,11 +275,17 @@ export function AnnotatorWorkboard({
             </tr>
           </thead>
           <tbody>
-            {cases.map((c) => (
+            {cases.map((c) => {
+              const highlightReviewedComment = mode === "done" && (c.caseNotes?.length ?? 0) > 0;
+              return (
               <tr
                 key={c.id}
                 tabIndex={0}
-                className="cursor-pointer border-b border-[var(--border)]/50 hover:bg-[var(--bg)]/80"
+                className={`cursor-pointer border-b ${
+                  highlightReviewedComment
+                    ? "border-[var(--danger)]/30 bg-[var(--danger)]/8"
+                    : "border-[var(--border)]/50"
+                } hover:bg-[var(--bg)]/80`}
                 onClick={() => setDetailId(c.id)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
@@ -322,7 +352,10 @@ export function AnnotatorWorkboard({
                           resetNoteComposer();
                         }}
                       >
-                        {tk("action_comment")}
+                        <CommentActionLabel
+                          label={tk("action_comment")}
+                          count={c.caseNotes?.length ?? 0}
+                        />
                       </button>
                     )}
                     <button
@@ -335,7 +368,7 @@ export function AnnotatorWorkboard({
                   </div>
                 </td>
               </tr>
-            ))}
+            )})}
           </tbody>
         </table>
       </div>
@@ -494,15 +527,33 @@ export function AnnotatorWorkboard({
             <p className="mb-2 text-xs text-[var(--muted)]">{tk("discussion_hint")}</p>
             <div className="mb-2">
               <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
-              <input type="file" accept="image/*" onChange={onNoteFile} className="mt-1 block text-sm" />
+              <input type="file" accept="image/*" multiple onChange={onNoteFile} className="mt-1 block text-sm" />
             </div>
-            {(noteRawImage || noteMarkedImage) && (
-              <div className="mb-2">
-                <ScreenshotDrawer
-                  lang={lang}
-                  imageDataUrl={noteMarkedImage ?? noteRawImage}
-                  onChange={(dataUrl) => setNoteMarkedImage(dataUrl)}
-                />
+            {noteImages.length > 0 && (
+              <div className="mb-2 space-y-3">
+                {noteImages.map((image, index) => (
+                  <div key={`${image.slice(0, 32)}-${index}`} className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-2">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className="text-xs text-[var(--muted)]">{tk("review_screenshot")} {index + 1}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeNoteImage(index)}
+                        className="rounded-md border border-[var(--border)] px-2 py-1 text-xs hover:border-[var(--accent)]"
+                      >
+                        {tk("remove_image")}
+                      </button>
+                    </div>
+                    <div className="mb-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={image} alt="" className="max-h-40 rounded border border-[var(--border)] object-contain" />
+                    </div>
+                    <ScreenshotDrawer
+                      lang={lang}
+                      imageDataUrl={image}
+                      onChange={(dataUrl) => updateNoteImage(index, dataUrl)}
+                    />
+                  </div>
+                ))}
               </div>
             )}
             {err && <p className="mb-2 text-sm text-[var(--danger)]">{err}</p>}

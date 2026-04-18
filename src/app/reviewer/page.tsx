@@ -47,7 +47,7 @@ export default async function ReviewerPage() {
         </section>
         <section>
           <CollapsibleSection title={tk("reviewer_create")}>
-            <CreateCaseForm lang={lang} />
+            <CreateCaseForm lang={lang} annotators={annotators} />
           </CollapsibleSection>
         </section>
         <section>

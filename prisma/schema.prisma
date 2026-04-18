@@ -74,6 +74,7 @@ model CaseNote {
   author           User           @relation(fields: [authorId], references: [id])
   content          String?
   imageData        String?
+  imageDataListJson String?
   createdAt        DateTime       @default(now())
 
   @@index([annotationCaseId])

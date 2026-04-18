@@ -1,10 +1,11 @@
 import type { CaseStatus, CompensationType, UserRole } from "@prisma/client";
+import { getCaseNoteImages } from "@/lib/case-note-images";
 import type { ReviewerCaseRow } from "@/lib/reviewer-types";
 
 export type SerializedDiscussionNote = {
   id: string;
   content: string | null;
-  imageData: string | null;
+  images: string[];
   createdAt: string;
   author: { name: string; role: UserRole };
 };
@@ -61,7 +62,7 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
     caseNotes: c.caseNotes.map((n) => ({
       id: n.id,
       content: n.content,
-      imageData: n.imageData,
+      images: getCaseNoteImages(n),
       createdAt: n.createdAt.toISOString(),
       author: { name: n.author.name, role: n.author.role },
     })),

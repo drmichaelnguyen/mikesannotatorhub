@@ -227,6 +227,7 @@ export async function updateCaseCompensationAction(input: {
 export async function updateCaseDetailsAction(input: {
   caseDbId: string;
   caseId: string;
+  status: CaseStatus;
   redbrickProject: string;
   guideline: string;
   scopeOfWork: string;
@@ -263,6 +264,17 @@ export async function updateCaseDetailsAction(input: {
   }
 
   if (
+    input.status !== CaseStatus.AVAILABLE &&
+    input.status !== CaseStatus.ASSIGNED &&
+    input.status !== CaseStatus.SUBMITTED &&
+    input.status !== CaseStatus.ACCEPTED &&
+    input.status !== CaseStatus.AUDITED &&
+    input.status !== CaseStatus.REJECTED
+  ) {
+    return { ok: false as const, error: "required" as const };
+  }
+
+  if (
     input.compensationType !== CompensationType.PER_CASE &&
     input.compensationType !== CompensationType.PER_MINUTE
   ) {
@@ -288,6 +300,7 @@ export async function updateCaseDetailsAction(input: {
     where: { id: input.caseDbId },
     data: {
       caseId,
+      status: input.status,
       redbrickProject,
       guideline,
       scopeOfWork,
@@ -395,7 +408,7 @@ export async function reviewCaseAction(input: {
 export async function addCaseNoteAction(input: {
   caseDbId: string;
   content: string;
-  imageData: string | null;
+  imageDataList: string[];
 }) {
   const user = await getCurrentUser();
   if (!user) return { ok: false as const, error: "auth" as const };
@@ -412,8 +425,8 @@ export async function addCaseNoteAction(input: {
   }
 
   const text = input.content.trim();
-  const img = input.imageData?.trim() ? input.imageData.trim() : null;
-  if (!text && !img) {
+  const images = input.imageDataList.map((item) => item.trim()).filter(Boolean);
+  if (!text && images.length === 0) {
     return { ok: false as const, error: "empty" as const };
   }
 
@@ -422,7 +435,8 @@ export async function addCaseNoteAction(input: {
       annotationCaseId: row.id,
       authorId: user.id,
       content: text || null,
-      imageData: img,
+      imageData: images[0] ?? null,
+      imageDataListJson: images.length > 0 ? JSON.stringify(images) : null,
     },
   });
 

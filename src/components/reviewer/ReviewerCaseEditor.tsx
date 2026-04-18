@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { updateCaseDetailsAction } from "@/app/actions/cases";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
-import { CompensationType } from "@prisma/client";
+import { CaseStatus, CompensationType } from "@prisma/client";
 
 export function ReviewerCaseEditor({
   lang,
@@ -15,6 +15,7 @@ export function ReviewerCaseEditor({
   c: {
     id: string;
     caseId: string;
+    status: CaseStatus;
     redbrickProject: string;
     guideline: string;
     scopeOfWork: string;
@@ -27,6 +28,7 @@ export function ReviewerCaseEditor({
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
   const [caseId, setCaseId] = useState(c.caseId);
+  const [status, setStatus] = useState<CaseStatus>(c.status);
   const [redbrickProject, setRedbrickProject] = useState(c.redbrickProject);
   const [guideline, setGuideline] = useState(c.guideline);
   const [scopeOfWork, setScopeOfWork] = useState(c.scopeOfWork);
@@ -40,6 +42,7 @@ export function ReviewerCaseEditor({
 
   useEffect(() => {
     setCaseId(c.caseId);
+    setStatus(c.status);
     setRedbrickProject(c.redbrickProject);
     setGuideline(c.guideline);
     setScopeOfWork(c.scopeOfWork);
@@ -71,6 +74,7 @@ export function ReviewerCaseEditor({
       const res = await updateCaseDetailsAction({
         caseDbId: c.id,
         caseId,
+        status,
         redbrickProject,
         guideline,
         scopeOfWork,
@@ -102,6 +106,21 @@ export function ReviewerCaseEditor({
             onChange={(e) => setCaseId(e.target.value)}
             className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono"
           />
+        </label>
+        <label className="text-sm">
+          <span className="text-[var(--muted)]">{tk("case_status")}</span>
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value as CaseStatus)}
+            className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
+          >
+            <option value={CaseStatus.AVAILABLE}>{tk("status_AVAILABLE")}</option>
+            <option value={CaseStatus.ASSIGNED}>{tk("status_ASSIGNED")}</option>
+            <option value={CaseStatus.SUBMITTED}>{tk("status_SUBMITTED")}</option>
+            <option value={CaseStatus.ACCEPTED}>{tk("status_ACCEPTED")}</option>
+            <option value={CaseStatus.AUDITED}>{tk("status_AUDITED")}</option>
+            <option value={CaseStatus.REJECTED}>{tk("status_REJECTED")}</option>
+          </select>
         </label>
         <label className="md:col-span-2 text-sm">
           <span className="text-[var(--muted)]">{tk("case_redbrick")}</span>

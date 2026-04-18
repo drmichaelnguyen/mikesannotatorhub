@@ -37,8 +37,16 @@ const TEAM_ANNOTATORS: AnnotatorSeed[] = [
     aliases: ["Trọng"],
     legacyEmail: "annotator@example.com",
   },
-  { email: "duy.annotator@example.com", name: "Duy" },
-  { email: "thien.annotator@example.com", name: "Thiên" },
+  {
+    email: "duynhamyds@gmail.com",
+    name: "Duy",
+    legacyEmail: "duy.annotator@example.com",
+  },
+  {
+    email: "thantrongthien@gmail.com",
+    name: "Thiên",
+    legacyEmail: "thien.annotator@example.com",
+  },
   { email: "khanhnhunguyenngoc@gmail.com", name: "Như" },
 ];
 
@@ -288,7 +296,7 @@ async function upsertAdmin(adminHash: string) {
       data: {
         email: ADMIN_EMAIL,
         passwordHash: adminHash,
-        name: "Lead Reviewer",
+        name: "Trong",
         role: UserRole.REVIEWER,
       },
     });
@@ -296,11 +304,11 @@ async function upsertAdmin(adminHash: string) {
 
   return prisma.user.upsert({
     where: { email: ADMIN_EMAIL },
-    update: { passwordHash: adminHash, name: "Lead Reviewer", role: UserRole.REVIEWER },
+    update: { passwordHash: adminHash, name: "Trong", role: UserRole.REVIEWER },
     create: {
       email: ADMIN_EMAIL,
       passwordHash: adminHash,
-      name: "Lead Reviewer",
+      name: "Trong",
       role: UserRole.REVIEWER,
     },
   });
@@ -311,36 +319,55 @@ async function upsertAnnotators(annotatorHash: string) {
 
   for (const annotator of TEAM_ANNOTATORS) {
     const existingAnnotator = await prisma.user.findUnique({ where: { email: annotator.email } });
-    const legacyAnnotator =
-      !existingAnnotator && annotator.legacyEmail
-        ? await prisma.user.findUnique({ where: { email: annotator.legacyEmail } })
-        : null;
+    const legacyAnnotator = annotator.legacyEmail
+      ? await prisma.user.findUnique({ where: { email: annotator.legacyEmail } })
+      : null;
 
     const user =
-      !existingAnnotator && legacyAnnotator
-        ? await prisma.user.update({
-            where: { email: annotator.legacyEmail! },
-            data: {
-              email: annotator.email,
-              passwordHash: annotatorHash,
-              name: annotator.name,
-              role: UserRole.ANNOTATOR,
-            },
+      existingAnnotator && legacyAnnotator && existingAnnotator.id !== legacyAnnotator.id
+        ? await prisma.$transaction(async (tx) => {
+            await tx.annotationCase.updateMany({
+              where: { annotatorId: legacyAnnotator.id },
+              data: { annotatorId: existingAnnotator.id },
+            });
+            await tx.caseNote.updateMany({
+              where: { authorId: legacyAnnotator.id },
+              data: { authorId: existingAnnotator.id },
+            });
+            await tx.user.delete({ where: { id: legacyAnnotator.id } });
+            return tx.user.update({
+              where: { id: existingAnnotator.id },
+              data: {
+                name: annotator.name,
+                role: UserRole.ANNOTATOR,
+              },
+            });
           })
-        : await prisma.user.upsert({
-            where: { email: annotator.email },
-            update: {
-              passwordHash: annotatorHash,
-              name: annotator.name,
-              role: UserRole.ANNOTATOR,
-            },
-            create: {
-              email: annotator.email,
-              passwordHash: annotatorHash,
-              name: annotator.name,
-              role: UserRole.ANNOTATOR,
-            },
-          });
+        : !existingAnnotator && legacyAnnotator
+          ? await prisma.user.update({
+              where: { id: legacyAnnotator.id },
+              data: {
+                email: annotator.email,
+                name: annotator.name,
+                role: UserRole.ANNOTATOR,
+              },
+            })
+          : existingAnnotator
+            ? await prisma.user.update({
+                where: { id: existingAnnotator.id },
+                data: {
+                  name: annotator.name,
+                  role: UserRole.ANNOTATOR,
+                },
+              })
+            : await prisma.user.create({
+                data: {
+                  email: annotator.email,
+                  passwordHash: annotatorHash,
+                  name: annotator.name,
+                  role: UserRole.ANNOTATOR,
+                },
+              });
 
     for (const alias of [annotator.name, ...(annotator.aliases ?? [])]) {
       annotatorByAlias.set(alias, user.id);
