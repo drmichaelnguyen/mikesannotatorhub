@@ -61,6 +61,23 @@ function buildBoard(cases: SerializedReviewerCase[], lang: Lang): ProjectGroup[]
     }));
 }
 
+function ReviewerStatusCounts({ cases }: { cases: SerializedReviewerCase[] }) {
+  const submitted = cases.filter((c) => c.status === CaseStatus.SUBMITTED).length;
+  const rejected = cases.filter((c) => c.status === CaseStatus.REJECTED).length;
+  const approved = cases.filter(
+    (c) => c.status === CaseStatus.AUDITED || c.status === CaseStatus.ACCEPTED,
+  ).length;
+  const other = cases.length - submitted - rejected - approved;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5 font-normal">
+      {other > 0 && <span className="text-[var(--muted)]">{other}</span>}
+      {submitted > 0 && <span className="font-semibold text-blue-400">{submitted}</span>}
+      {approved > 0 && <span className="text-[var(--success)]">{approved}</span>}
+      {rejected > 0 && <span className="text-[var(--danger)]">{rejected}</span>}
+    </span>
+  );
+}
+
 function CommentActionLabel({
   label,
   count,
@@ -301,16 +318,18 @@ export function ReviewerWorkboard({
             >
               <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
                 {p.project}{" "}
-                <span className="font-normal text-[var(--muted)]">
-                  ({p.groups.reduce((n, g) => n + g.cases.length, 0)})
-                </span>
+                <span>(</span>
+                <ReviewerStatusCounts cases={p.groups.flatMap((g) => g.cases)} />
+                <span>)</span>
               </summary>
               <div className="border-t border-[var(--border)] px-2 pb-2 pt-1">
                 {p.groups.map((g) => (
                   <details key={g.key} className="mb-2 rounded-md border border-[var(--border)]/60">
                     <summary className="cursor-pointer select-none px-2 py-1.5 text-xs font-medium text-[var(--muted)] hover:text-[var(--text)]">
                       {g.label}{" "}
-                      <span className="font-normal">({g.cases.length})</span>
+                      <span>(</span>
+                      <ReviewerStatusCounts cases={g.cases} />
+                      <span>)</span>
                     </summary>
                     <div className="overflow-x-auto px-1 pb-1">
                       <table className="w-full min-w-[720px] border-collapse text-left text-xs">
@@ -333,7 +352,11 @@ export function ReviewerWorkboard({
                             <tr
                               key={c.id}
                               tabIndex={0}
-                              className="cursor-pointer border-b border-[var(--border)]/50 hover:bg-[var(--bg)]/80"
+                              className={`cursor-pointer border-b hover:bg-[var(--bg)]/80 ${
+                                c.status === CaseStatus.SUBMITTED
+                                  ? "border-blue-400/30 bg-blue-400/8"
+                                  : "border-[var(--border)]/50"
+                              }`}
                               onClick={() => setDetailId(c.id)}
                               onKeyDown={(e) => {
                                 if (e.key === "Enter" || e.key === " ") {
