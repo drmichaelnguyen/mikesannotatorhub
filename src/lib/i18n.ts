@@ -70,6 +70,11 @@ export const dict = {
     case_exists: "Case ID already exists.",
     assign_email: "Assign to annotator (email, optional)",
     last_review: "Latest review",
+    discussion_title: "Discussion",
+    discussion_hint: "Add a comment and/or an image. At least one is required.",
+    discussion_empty: "No messages yet.",
+    discussion_need_body: "Enter a comment and/or attach an image.",
+    discussion_post: "Post message",
   },
   vi: {
     appName: "Trung tâm gán nhãn",
@@ -140,6 +145,11 @@ export const dict = {
     case_exists: "Mã ca đã tồn tại.",
     assign_email: "Giao cho người gán nhãn (email, tuỳ chọn)",
     last_review: "Duyệt gần nhất",
+    discussion_title: "Trao đổi",
+    discussion_hint: "Thêm nhận xét và/hoặc ảnh. Cần ít nhất một trong hai.",
+    discussion_empty: "Chưa có tin nhắn.",
+    discussion_need_body: "Nhập nhận xét và/hoặc đính kèm ảnh.",
+    discussion_post: "Gửi",
   },
 } as const;
 

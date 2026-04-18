@@ -1,12 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import type { AnnotationCase, Review } from "@prisma/client";
+import type { AnnotationCase, CaseNote, Review, User } from "@prisma/client";
 import { AnnotatorCaseCard } from "@/components/AnnotatorCaseCard";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 
-type Row = AnnotationCase & { reviews?: Review[] };
+type Row = AnnotationCase & {
+  reviews?: Review[];
+  caseNotes?: (CaseNote & { author: Pick<User, "id" | "name" | "role"> })[];
+};
 
 export function AnnotatorWorkspace({
   lang,
@@ -54,7 +57,13 @@ export function AnnotatorWorkspace({
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {list.map((row) => (
-            <AnnotatorCaseCard key={row.id} lang={lang} row={row} mode={tab} />
+            <AnnotatorCaseCard
+              key={row.id}
+              lang={lang}
+              row={row}
+              mode={tab}
+              canPost={tab !== "available"}
+            />
           ))}
         </div>
       )}

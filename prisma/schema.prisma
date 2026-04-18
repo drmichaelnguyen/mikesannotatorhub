@@ -35,6 +35,7 @@ model User {
 
   assignedCases AnnotationCase[] @relation("AnnotatorCases")
   reviews       Review[]
+  caseNotes     CaseNote[]
 }
 
 model AnnotationCase {
@@ -55,7 +56,21 @@ model AnnotationCase {
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
-  reviews Review[]
+  reviews   Review[]
+  caseNotes CaseNote[]
+}
+
+model CaseNote {
+  id               String         @id @default(cuid())
+  annotationCaseId String
+  annotationCase   AnnotationCase @relation(fields: [annotationCaseId], references: [id], onDelete: Cascade)
+  authorId         String
+  author           User           @relation(fields: [authorId], references: [id])
+  content          String?
+  imageData        String?
+  createdAt        DateTime       @default(now())
+
+  @@index([annotationCaseId])
 }
 
 model Review {

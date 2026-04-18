@@ -3,22 +3,38 @@
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useState } from "react";
 import { assignCaseAction, submitAnnotationAction } from "@/app/actions/cases";
-import type { AnnotationCase, Review } from "@prisma/client";
+import { CaseDiscussion, type CaseDiscussionNote } from "@/components/CaseDiscussion";
+import type { AnnotationCase, CaseNote, Review, User } from "@prisma/client";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 
-type Row = AnnotationCase & { reviews?: Review[] };
+type Row = AnnotationCase & {
+  reviews?: Review[];
+  caseNotes?: (CaseNote & { author: Pick<User, "id" | "name" | "role"> })[];
+};
 
 type SubmitResult = Awaited<ReturnType<typeof submitAnnotationAction>>;
+
+function toDiscussionNotes(notes: NonNullable<Row["caseNotes"]>): CaseDiscussionNote[] {
+  return notes.map((n) => ({
+    id: n.id,
+    content: n.content,
+    imageData: n.imageData,
+    createdAt: n.createdAt instanceof Date ? n.createdAt.toISOString() : String(n.createdAt),
+    author: { name: n.author.name, role: n.author.role },
+  }));
+}
 
 export function AnnotatorCaseCard({
   lang,
   row,
   mode,
+  canPost,
 }: {
   lang: Lang;
   row: Row;
   mode: "available" | "mine" | "rejected";
+  canPost: boolean;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const [minutes, setMinutes] = useState(String(row.annotationMinutes ?? ""));
@@ -112,6 +128,12 @@ export function AnnotatorCaseCard({
       {submitState && !submitState.ok && (
         <p className="mt-2 text-sm text-[var(--danger)]">{tk("required")}</p>
       )}
+      <CaseDiscussion
+        lang={lang}
+        caseDbId={row.id}
+        canPost={canPost}
+        notes={row.caseNotes ? toDiscussionNotes(row.caseNotes) : []}
+      />
     </article>
   );
 }

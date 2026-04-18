@@ -3,7 +3,14 @@
 import { CaseStatus, CompensationType } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { requireRole } from "@/lib/auth";
+import { getCurrentUser, requireRole } from "@/lib/auth";
+
+const caseNoteInclude = {
+  caseNotes: {
+    orderBy: { createdAt: "asc" as const },
+    include: { author: { select: { id: true, name: true, role: true } } },
+  },
+} as const;
 
 function payout(
   type: CompensationType,
@@ -217,11 +224,54 @@ export async function reviewCaseAction(input: {
   };
 }
 
+export async function addCaseNoteAction(input: {
+  caseDbId: string;
+  content: string;
+  imageData: string | null;
+}) {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false as const, error: "auth" as const };
+
+  const row = await prisma.annotationCase.findUnique({ where: { id: input.caseDbId } });
+  if (!row) return { ok: false as const, error: "notfound" as const };
+
+  if (user.role === "ANNOTATOR") {
+    if (row.annotatorId !== user.id) {
+      return { ok: false as const, error: "forbidden" as const };
+    }
+  } else if (user.role !== "REVIEWER") {
+    return { ok: false as const, error: "forbidden" as const };
+  }
+
+  const text = input.content.trim();
+  const img = input.imageData?.trim() ? input.imageData.trim() : null;
+  if (!text && !img) {
+    return { ok: false as const, error: "empty" as const };
+  }
+
+  await prisma.caseNote.create({
+    data: {
+      annotationCaseId: row.id,
+      authorId: user.id,
+      content: text || null,
+      imageData: img,
+    },
+  });
+
+  revalidatePath("/reviewer");
+  revalidatePath("/annotator");
+  return { ok: true as const };
+}
+
 export async function listCasesForReviewer() {
   await requireRole("REVIEWER");
   return prisma.annotationCase.findMany({
     orderBy: { createdAt: "desc" },
-    include: { annotator: true, reviews: { orderBy: { createdAt: "desc" }, take: 1 } },
+    include: {
+      annotator: true,
+      reviews: { orderBy: { createdAt: "desc" }, take: 1 },
+      ...caseNoteInclude,
+    },
   });
 }
 
@@ -234,6 +284,7 @@ export async function listCasesForAnnotator(userId: string) {
   const available = await prisma.annotationCase.findMany({
     where: { status: CaseStatus.AVAILABLE },
     orderBy: { createdAt: "desc" },
+    include: { ...caseNoteInclude },
   });
   const mine = await prisma.annotationCase.findMany({
     where: {
@@ -241,12 +292,18 @@ export async function listCasesForAnnotator(userId: string) {
       status: { in: [CaseStatus.ASSIGNED, CaseStatus.SUBMITTED, CaseStatus.ACCEPTED] },
     },
     orderBy: { updatedAt: "desc" },
-    include: { reviews: { orderBy: { createdAt: "desc" }, take: 1 } },
+    include: {
+      reviews: { orderBy: { createdAt: "desc" }, take: 1 },
+      ...caseNoteInclude,
+    },
   });
   const rejected = await prisma.annotationCase.findMany({
     where: { annotatorId: userId, status: CaseStatus.REJECTED },
     orderBy: { updatedAt: "desc" },
-    include: { reviews: { orderBy: { createdAt: "desc" }, take: 1 } },
+    include: {
+      reviews: { orderBy: { createdAt: "desc" }, take: 1 },
+      ...caseNoteInclude,
+    },
   });
   return { available, mine, rejected };
 }

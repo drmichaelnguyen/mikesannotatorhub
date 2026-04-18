@@ -3,16 +3,18 @@ import { getLangFromCookies } from "@/app/actions/lang";
 import { listCasesForReviewer } from "@/app/actions/cases";
 import { CreateCaseForm } from "@/components/CreateCaseForm";
 import { NavBar } from "@/components/NavBar";
+import { CaseDiscussion } from "@/components/CaseDiscussion";
 import { ReviewCasePanel } from "@/components/ReviewCasePanel";
 import { getCurrentUser } from "@/lib/auth";
 import { formatDate } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
-import type { AnnotationCase, CompensationType, Review, User } from "@prisma/client";
+import type { AnnotationCase, CaseNote, CompensationType, Review, User } from "@prisma/client";
 
 type Row = AnnotationCase & {
   annotator: User | null;
   reviews: Review[];
+  caseNotes: (CaseNote & { author: Pick<User, "id" | "name" | "role"> })[];
 };
 
 function compLabel(lang: Lang, type: CompensationType, amount: number) {
@@ -100,6 +102,18 @@ export default async function ReviewerPage() {
                       <dd>{c.annotationMinutes ?? "—"}</dd>
                     </div>
                   </dl>
+                  <CaseDiscussion
+                    lang={lang}
+                    caseDbId={c.id}
+                    canPost
+                    notes={c.caseNotes.map((n) => ({
+                      id: n.id,
+                      content: n.content,
+                      imageData: n.imageData,
+                      createdAt: n.createdAt.toISOString(),
+                      author: { name: n.author.name, role: n.author.role },
+                    }))}
+                  />
                   {c.reviews[0]?.comment && c.status !== "SUBMITTED" && (
                     <p className="mt-2 text-sm text-[var(--muted)]">
                       {tk("last_review")}: {c.reviews[0].comment}
