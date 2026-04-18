@@ -25,10 +25,10 @@ export function AnnotatorWorkspace({
   const tk = (k: DictKey) => t(lang, k);
   const [tab, setTab] = useState<"available" | "mine" | "rejected">("available");
 
-  const tabs: { id: typeof tab; label: DictKey }[] = [
-    { id: "available", label: "tab_available" },
-    { id: "mine", label: "tab_mine" },
-    { id: "rejected", label: "tab_rejected" },
+  const tabs: { id: typeof tab; label: DictKey; count: number }[] = [
+    { id: "available", label: "tab_available", count: available.length },
+    { id: "mine", label: "tab_mine", count: mine.length },
+    { id: "rejected", label: "tab_rejected", count: rejected.length },
   ];
 
   const list =
@@ -48,7 +48,7 @@ export function AnnotatorWorkspace({
                 : "border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)]"
             }`}
           >
-            {tk(x.label)}
+            {tk(x.label)} <span className="opacity-80">({x.count})</span>
           </button>
         ))}
       </div>

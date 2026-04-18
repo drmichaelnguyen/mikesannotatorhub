@@ -85,6 +85,18 @@ export const dict = {
     error_password_short: "Password must be at least 8 characters.",
     error_email_invalid: "Enter a valid email address.",
     login_demo_hint: "Reviewer creates annotator accounts above. Demo: reviewer@example.com / demo123",
+    dash_compensation: "Compensation (accepted cases)",
+    dash_period_hint:
+      "This month uses your device's local calendar. Totals include only cases with status Accepted.",
+    dash_this_month: "This month",
+    dash_past: "Past (before this month)",
+    dash_all_time: "All time",
+    dash_projects: "Projects (RedbrickAI)",
+    dash_project_col: "RedbrickAI project",
+    dash_accepted_cases: "Accepted cases",
+    dash_project_total: "Total compensation",
+    dash_no_projects: "No accepted cases yet — totals will appear after review.",
+    dash_cases_heading: "Cases",
   },
   vi: {
     appName: "Trung tâm gán nhãn",
@@ -170,6 +182,18 @@ export const dict = {
     error_password_short: "Mật khẩu cần ít nhất 8 ký tự.",
     error_email_invalid: "Email không hợp lệ.",
     login_demo_hint: "Người duyệt tạo tài khoản người gán nhãn ở trên. Demo: reviewer@example.com / demo123",
+    dash_compensation: "Thù lao (ca đã duyệt)",
+    dash_period_hint:
+      "Tháng này theo lịch máy của bạn. Chỉ tính các ca trạng thái Đã duyệt.",
+    dash_this_month: "Tháng này",
+    dash_past: "Trước đó (trước tháng này)",
+    dash_all_time: "Tất cả thời gian",
+    dash_projects: "Dự án (RedbrickAI)",
+    dash_project_col: "Dự án RedbrickAI",
+    dash_accepted_cases: "Ca đã duyệt",
+    dash_project_total: "Tổng thù lao",
+    dash_no_projects: "Chưa có ca được duyệt — số liệu sẽ hiện sau khi duyệt.",
+    dash_cases_heading: "Danh sách ca",
   },
 } as const;
 

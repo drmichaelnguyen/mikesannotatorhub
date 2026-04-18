@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getLangFromCookies } from "@/app/actions/lang";
-import { getAnnotatorBoard } from "@/app/actions/cases";
+import { getAnnotatorBoard, getAnnotatorCompensationSummary } from "@/app/actions/cases";
+import { AnnotatorStatsPanel } from "@/components/AnnotatorStatsPanel";
 import { AnnotatorWorkspace } from "@/components/AnnotatorWorkspace";
 import { NavBar } from "@/components/NavBar";
 import { getCurrentUser } from "@/lib/auth";
@@ -15,8 +16,12 @@ export default async function AnnotatorPage() {
   const tk = (k: DictKey) => t(lang, k);
 
   let board;
+  let summary;
   try {
-    board = await getAnnotatorBoard();
+    [board, summary] = await Promise.all([
+      getAnnotatorBoard(),
+      getAnnotatorCompensationSummary(),
+    ]);
   } catch {
     redirect("/login");
   }
@@ -24,17 +29,21 @@ export default async function AnnotatorPage() {
   return (
     <div className="min-h-screen">
       <NavBar lang={lang} role="ANNOTATOR" name={user.name} />
-      <main className="mx-auto max-w-6xl space-y-6 px-4 py-8">
+      <main className="mx-auto max-w-6xl space-y-8 px-4 py-8">
         <div>
           <h1 className="text-2xl font-semibold">{tk("annotator_title")}</h1>
           <p className="text-sm text-[var(--muted)]">{user.email}</p>
         </div>
-        <AnnotatorWorkspace
-          lang={lang}
-          available={board.available}
-          mine={board.mine}
-          rejected={board.rejected}
-        />
+        <AnnotatorStatsPanel lang={lang} summary={summary} />
+        <section>
+          <h2 className="mb-3 text-lg font-medium">{tk("dash_cases_heading")}</h2>
+          <AnnotatorWorkspace
+            lang={lang}
+            available={board.available}
+            mine={board.mine}
+            rejected={board.rejected}
+          />
+        </section>
       </main>
     </div>
   );

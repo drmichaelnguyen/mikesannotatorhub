@@ -280,6 +280,79 @@ export async function getAnnotatorBoard() {
   return listCasesForAnnotator(user.id);
 }
 
+export type AnnotatorProjectRow = {
+  name: string;
+  acceptedCount: number;
+  totalCompensation: number;
+};
+
+export type AnnotatorCompensationSummary = {
+  thisMonth: number;
+  priorMonths: number;
+  allTime: number;
+  projects: AnnotatorProjectRow[];
+};
+
+/** Accepted cases only; month boundaries use the viewer's local calendar. */
+export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompensationSummary> {
+  const user = await requireRole("ANNOTATOR");
+  const cases = await prisma.annotationCase.findMany({
+    where: { annotatorId: user.id, status: CaseStatus.ACCEPTED },
+    include: {
+      reviews: {
+        where: { decision: "ACCEPT" },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+      },
+    },
+  });
+
+  const now = new Date();
+  const y = now.getFullYear();
+  const mo = now.getMonth();
+  const startCurrent = new Date(y, mo, 1, 0, 0, 0, 0);
+  const startNext = new Date(y, mo + 1, 1, 0, 0, 0, 0);
+
+  let thisMonth = 0;
+  let priorMonths = 0;
+  const byProject = new Map<string, { acceptedCount: number; totalCompensation: number }>();
+
+  for (const c of cases) {
+    const amount = payout(c.compensationType, c.compensationAmount, c.annotationMinutes);
+    const acceptedAt = c.reviews[0]?.createdAt ?? c.updatedAt;
+
+    if (acceptedAt >= startCurrent && acceptedAt < startNext) {
+      thisMonth += amount;
+    } else if (acceptedAt < startCurrent) {
+      priorMonths += amount;
+    } else {
+      thisMonth += amount;
+    }
+
+    const key = c.redbrickProject.trim() || "—";
+    const prev = byProject.get(key) ?? { acceptedCount: 0, totalCompensation: 0 };
+    prev.acceptedCount += 1;
+    prev.totalCompensation += amount;
+    byProject.set(key, prev);
+  }
+
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const projects = Array.from(byProject.entries())
+    .map(([name, v]) => ({
+      name,
+      acceptedCount: v.acceptedCount,
+      totalCompensation: round2(v.totalCompensation),
+    }))
+    .sort((a, b) => b.totalCompensation - a.totalCompensation);
+
+  return {
+    thisMonth: round2(thisMonth),
+    priorMonths: round2(priorMonths),
+    allTime: round2(thisMonth + priorMonths),
+    projects,
+  };
+}
+
 export async function listCasesForAnnotator(userId: string) {
   const available = await prisma.annotationCase.findMany({
     where: { status: CaseStatus.AVAILABLE },
