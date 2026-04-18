@@ -1,9 +1,11 @@
 import { redirect } from "next/navigation";
 import { getLangFromCookies } from "@/app/actions/lang";
 import { getAnnotatorBoard, getAnnotatorCompensationSummary } from "@/app/actions/cases";
+import { getAnnotatorNotifications } from "@/app/actions/notifications";
 import { AnnotatorStatsPanel } from "@/components/AnnotatorStatsPanel";
 import { AnnotatorWorkboard } from "@/components/annotator/AnnotatorWorkboard";
 import { NavBar } from "@/components/NavBar";
+import { NotificationBell } from "@/components/NotificationBell";
 import { getCurrentUser } from "@/lib/auth";
 import type { DictKey } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -17,10 +19,12 @@ export default async function AnnotatorPage() {
 
   let board;
   let summary;
+  let notifGroups;
   try {
-    [board, summary] = await Promise.all([
+    [board, summary, notifGroups] = await Promise.all([
       getAnnotatorBoard(),
       getAnnotatorCompensationSummary(),
+      getAnnotatorNotifications(),
     ]);
   } catch {
     redirect("/login");
@@ -28,7 +32,12 @@ export default async function AnnotatorPage() {
 
   return (
     <div className="min-h-screen">
-      <NavBar lang={lang} role="ANNOTATOR" name={user.name} />
+      <NavBar
+        lang={lang}
+        role="ANNOTATOR"
+        name={user.name}
+        notificationSlot={<NotificationBell lang={lang} initialGroups={notifGroups} />}
+      />
       <main className="mx-auto max-w-6xl space-y-8 px-4 py-8">
         <div>
           <h1 className="text-2xl font-semibold">{tk("annotator_title")}</h1>

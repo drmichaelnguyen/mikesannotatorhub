@@ -5,6 +5,8 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { computeCompensation } from "@/lib/compensation";
 import { getCurrentUser, requireRole } from "@/lib/auth";
+import { pushNotification } from "@/app/actions/notifications";
+import { NOTIF } from "@/lib/notification-types";
 
 const caseNoteInclude = {
   caseNotes: {
@@ -122,6 +124,26 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
       data: toCreate.map((caseId) => ({ ...base, caseId })),
     });
     created = res.count;
+
+    const createdRows = await prisma.annotationCase.findMany({
+      where: { caseId: { in: toCreate } },
+      select: { id: true, caseId: true },
+    });
+
+    if (annotatorId) {
+      for (const row of createdRows) {
+        await pushNotification([annotatorId], NOTIF.CASE_ASSIGNED, row.id, row.caseId);
+      }
+    } else {
+      const allAnnotators = await prisma.user.findMany({
+        where: { role: "ANNOTATOR" },
+        select: { id: true },
+      });
+      const allIds = allAnnotators.map((u) => u.id);
+      for (const row of createdRows) {
+        await pushNotification(allIds, NOTIF.NEW_CASE, row.id, row.caseId);
+      }
+    }
   }
 
   revalidatePath("/reviewer");
@@ -184,6 +206,13 @@ export async function reviewerAssignCaseAction(caseDbId: string, annotatorUserId
   });
   if (updated.count !== 1) {
     return { ok: false as const, error: "state" as const };
+  }
+  const assignedRow = await prisma.annotationCase.findUnique({
+    where: { id: caseDbId },
+    select: { caseId: true },
+  });
+  if (assignedRow) {
+    await pushNotification([target.id], NOTIF.CASE_ASSIGNED, caseDbId, assignedRow.caseId);
   }
   revalidatePath("/reviewer");
   revalidatePath("/annotator");
@@ -393,6 +422,10 @@ export async function reviewCaseAction(input: {
     }),
   ]);
 
+  if (!accept && row.annotatorId) {
+    await pushNotification([row.annotatorId], NOTIF.CASE_REJECTED, row.id, row.caseId);
+  }
+
   revalidatePath("/reviewer");
   revalidatePath("/annotator");
   return {
@@ -439,6 +472,10 @@ export async function addCaseNoteAction(input: {
       imageDataListJson: images.length > 0 ? JSON.stringify(images) : null,
     },
   });
+
+  if (user.role === "REVIEWER" && row.annotatorId) {
+    await pushNotification([row.annotatorId], NOTIF.NEW_COMMENT, row.id, row.caseId);
+  }
 
   revalidatePath("/reviewer");
   revalidatePath("/annotator");

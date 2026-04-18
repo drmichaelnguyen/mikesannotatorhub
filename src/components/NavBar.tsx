@@ -1,3 +1,4 @@
+import type React from "react";
 import Link from "next/link";
 import { logoutAction } from "@/app/actions/auth";
 import { LangSwitch } from "@/components/LangSwitch";
@@ -8,10 +9,12 @@ export function NavBar({
   lang,
   role,
   name,
+  notificationSlot,
 }: {
   lang: Lang;
   role: "REVIEWER" | "ANNOTATOR";
   name: string;
+  notificationSlot?: React.ReactNode;
 }) {
   const home = role === "REVIEWER" ? "/reviewer" : "/annotator";
   return (
@@ -28,6 +31,7 @@ export function NavBar({
           </nav>
         </div>
         <div className="flex items-center gap-4 text-sm">
+          {notificationSlot}
           <span className="text-[var(--muted)]">{name}</span>
           <LangSwitch current={lang} />
           <form action={logoutAction}>

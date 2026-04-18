@@ -38,6 +38,20 @@ model User {
   auditedCases  AnnotationCase[] @relation("CaseAuditor")
   reviews         Review[]
   caseNotes       CaseNote[]
+  notifications   Notification[]
+}
+
+model Notification {
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type             String
+  annotationCaseId String
+  caseLabel        String
+  readAt           DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([userId, readAt])
 }
 
 model AnnotationCase {
