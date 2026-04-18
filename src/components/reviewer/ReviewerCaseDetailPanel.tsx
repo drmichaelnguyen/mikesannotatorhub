@@ -1,31 +1,27 @@
+"use client";
+
 import { CaseDiscussion } from "@/components/CaseDiscussion";
 import { ReviewCasePanel } from "@/components/ReviewCasePanel";
 import { ReviewerAssignCase } from "@/components/ReviewerAssignCase";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate } from "@/lib/format";
+import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
-import { CaseStatus, type AnnotationCase, type CaseNote, type CompensationType, type Review, type User } from "@prisma/client";
-
-export type ReviewerCaseRow = AnnotationCase & {
-  annotator: User | null;
-  auditedBy: Pick<User, "id" | "name" | "email"> | null;
-  reviews: Review[];
-  caseNotes: (CaseNote & { author: Pick<User, "id" | "name" | "role"> })[];
-};
+import { CaseStatus, type CompensationType } from "@prisma/client";
 
 function compLabel(lang: Lang, type: CompensationType, amount: number) {
   if (type === "PER_MINUTE") return `${amount} × ${t(lang, "comp_per_minute")}`;
   return `${amount} (${t(lang, "comp_per_case")})`;
 }
 
-export function ReviewerCaseBlock({
+export function ReviewerCaseDetailPanel({
   lang,
   c,
   annotators,
 }: {
   lang: Lang;
-  c: ReviewerCaseRow;
+  c: SerializedReviewerCase;
   annotators: { id: string; name: string; email: string }[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
@@ -38,17 +34,17 @@ export function ReviewerCaseBlock({
   );
 
   return (
-    <article className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
-      <div className="flex flex-wrap items-start justify-between gap-2">
+    <div className="space-y-4 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[var(--border)] pb-3">
         <div>
-          <h3 className="text-lg font-medium">{c.caseId}</h3>
+          <h2 className="text-xl font-semibold">{c.caseId}</h2>
           <p className="text-sm text-[var(--muted)]">{c.redbrickProject}</p>
         </div>
         <span className="rounded-full bg-[var(--bg)] px-2 py-0.5 text-xs">
           {tk(`status_${c.status}` as DictKey)}
         </span>
       </div>
-      <dl className="mt-3 grid gap-2 text-sm md:grid-cols-2">
+      <dl className="grid gap-2 text-sm md:grid-cols-2">
         <div className="md:col-span-2">
           <dt className="text-[var(--muted)]">{tk("case_guideline")}</dt>
           <dd>{c.guideline}</dd>
@@ -103,20 +99,23 @@ export function ReviewerCaseBlock({
           </>
         )}
       </dl>
-      <CaseDiscussion
-        lang={lang}
-        caseDbId={c.id}
-        canPost
-        notes={c.caseNotes.map((n) => ({
-          id: n.id,
-          content: n.content,
-          imageData: n.imageData,
-          createdAt: n.createdAt.toISOString(),
-          author: { name: n.author.name, role: n.author.role },
-        }))}
-      />
+      <div>
+        <h3 className="mb-2 text-sm font-medium text-[var(--muted)]">{tk("discussion_title")}</h3>
+        <CaseDiscussion
+          lang={lang}
+          caseDbId={c.id}
+          canPost
+          notes={c.caseNotes.map((n) => ({
+            id: n.id,
+            content: n.content,
+            imageData: n.imageData,
+            createdAt: n.createdAt,
+            author: n.author,
+          }))}
+        />
+      </div>
       {c.reviews[0]?.comment && c.status !== CaseStatus.SUBMITTED && (
-        <p className="mt-2 text-sm text-[var(--muted)]">
+        <p className="text-sm text-[var(--muted)]">
           {tk("last_review")}: {c.reviews[0].comment}
         </p>
       )}
@@ -124,12 +123,12 @@ export function ReviewerCaseBlock({
         <ReviewerAssignCase lang={lang} caseDbId={c.id} annotators={annotators} />
       )}
       {c.status === CaseStatus.SUBMITTED && (
-        <div className="mt-4 border-t border-[var(--border)] pt-4">
+        <div className="border-t border-[var(--border)] pt-4">
           <h4 className="mb-2 font-medium">{tk("reviewer_audit_title")}</h4>
           <p className="mb-3 text-xs text-[var(--muted)]">{tk("reviewer_audit_intro")}</p>
           <ReviewCasePanel lang={lang} caseDbId={c.id} />
         </div>
       )}
-    </article>
+    </div>
   );
 }

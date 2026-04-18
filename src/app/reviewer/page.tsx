@@ -4,11 +4,12 @@ import { listAnnotatorsForAssignment, listCasesForReviewer } from "@/app/actions
 import { CreateAnnotatorForm } from "@/components/CreateAnnotatorForm";
 import { CreateCaseForm } from "@/components/CreateCaseForm";
 import { NavBar } from "@/components/NavBar";
-import { ReviewerCaseBlock, type ReviewerCaseRow } from "@/components/ReviewerCaseBlock";
+import { ReviewerWorkboard } from "@/components/reviewer/ReviewerWorkboard";
 import { getCurrentUser } from "@/lib/auth";
 import type { DictKey } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
-import { CaseStatus } from "@prisma/client";
+import { serializeReviewerCase } from "@/lib/reviewer-serialize";
+import type { ReviewerCaseRow } from "@/lib/reviewer-types";
 
 export default async function ReviewerPage() {
   const user = await getCurrentUser();
@@ -28,16 +29,7 @@ export default async function ReviewerPage() {
     redirect("/login");
   }
 
-  const pendingAudit = cases.filter((c) => c.status === CaseStatus.SUBMITTED);
-  const audited = cases.filter(
-    (c) => c.status === CaseStatus.AUDITED || c.status === CaseStatus.ACCEPTED,
-  );
-  const other = cases.filter(
-    (c) =>
-      c.status !== CaseStatus.SUBMITTED &&
-      c.status !== CaseStatus.AUDITED &&
-      c.status !== CaseStatus.ACCEPTED,
-  );
+  const serialized = cases.map(serializeReviewerCase);
 
   return (
     <div className="min-h-screen">
@@ -55,46 +47,8 @@ export default async function ReviewerPage() {
           <h2 className="mb-3 text-lg font-medium">{tk("reviewer_create")}</h2>
           <CreateCaseForm lang={lang} />
         </section>
-
         <section>
-          <h2 className="mb-3 text-lg font-medium">{tk("reviewer_section_pending_audit")}</h2>
-          <p className="mb-3 text-sm text-[var(--muted)]">{tk("reviewer_section_pending_audit_hint")}</p>
-          {pendingAudit.length === 0 ? (
-            <p className="text-[var(--muted)]">{tk("reviewer_no_pending_audit")}</p>
-          ) : (
-            <div className="space-y-6">
-              {pendingAudit.map((c) => (
-                <ReviewerCaseBlock key={c.id} lang={lang} c={c} annotators={annotators} />
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section>
-          <h2 className="mb-3 text-lg font-medium">{tk("reviewer_section_audited")}</h2>
-          <p className="mb-3 text-sm text-[var(--muted)]">{tk("reviewer_section_audited_hint")}</p>
-          {audited.length === 0 ? (
-            <p className="text-[var(--muted)]">{tk("reviewer_no_audited")}</p>
-          ) : (
-            <div className="space-y-6">
-              {audited.map((c) => (
-                <ReviewerCaseBlock key={c.id} lang={lang} c={c} annotators={annotators} />
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section>
-          <h2 className="mb-3 text-lg font-medium">{tk("reviewer_section_other")}</h2>
-          {other.length === 0 ? (
-            <p className="text-[var(--muted)]">{tk("reviewer_no_other_cases")}</p>
-          ) : (
-            <div className="space-y-6">
-              {other.map((c) => (
-                <ReviewerCaseBlock key={c.id} lang={lang} c={c} annotators={annotators} />
-              ))}
-            </div>
-          )}
+          <ReviewerWorkboard lang={lang} cases={serialized} annotators={annotators} />
         </section>
       </main>
     </div>
