@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getLangFromCookies } from "@/app/actions/lang";
 import { listCasesForReviewer } from "@/app/actions/cases";
+import { CreateAnnotatorForm } from "@/components/CreateAnnotatorForm";
 import { CreateCaseForm } from "@/components/CreateCaseForm";
 import { NavBar } from "@/components/NavBar";
 import { CaseDiscussion } from "@/components/CaseDiscussion";
@@ -44,6 +45,10 @@ export default async function ReviewerPage() {
           <h1 className="text-2xl font-semibold">{tk("reviewer_title")}</h1>
           <p className="text-sm text-[var(--muted)]">{tk("appName")}</p>
         </div>
+        <section>
+          <h2 className="mb-3 text-lg font-medium">{tk("reviewer_create_annotator")}</h2>
+          <CreateAnnotatorForm lang={lang} />
+        </section>
         <section>
           <h2 className="mb-3 text-lg font-medium">{tk("reviewer_create")}</h2>
           <CreateCaseForm lang={lang} />

@@ -1,26 +1,19 @@
 import { cookies } from "next/headers";
 import { createHmac, timingSafeEqual } from "crypto";
+import {
+  getSessionSecret,
+  SESSION_COOKIE,
+  type SessionPayload,
+} from "@/lib/session-verify";
 
-const COOKIE = "am_session";
+export type { SessionPayload };
+
+const COOKIE = SESSION_COOKIE;
 const MAX_AGE_DAYS = 14;
 
-function getSecret(): string {
-  const s = process.env.SESSION_SECRET;
-  if (s && s.length >= 16) return s;
-  if (process.env.NODE_ENV !== "production") {
-    return "dev-only-secret-change-me!!";
-  }
-  throw new Error("Set SESSION_SECRET (16+ chars) in .env");
-}
-
 function sign(payload: string): string {
-  return createHmac("sha256", getSecret()).update(payload).digest("hex");
+  return createHmac("sha256", getSessionSecret()).update(payload).digest("hex");
 }
-
-export type SessionPayload = {
-  userId: string;
-  exp: number;
-};
 
 export async function createSession(userId: string) {
   const exp = Date.now() + MAX_AGE_DAYS * 24 * 60 * 60 * 1000;

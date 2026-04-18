@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect } from "react";
 import { loginAction } from "@/app/actions/auth";
+import { safeNextPath } from "@/lib/safe-next-path";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 
@@ -11,7 +12,7 @@ type LoginState =
   | { ok: true; role: "REVIEWER" | "ANNOTATOR" }
   | { ok: false; error: "login" | "required" };
 
-export function LoginForm({ lang }: { lang: Lang }) {
+export function LoginForm({ lang, next }: { lang: Lang; next?: string }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
   const [state, formAction, pending] = useActionState(async (_: LoginState, fd: FormData) => {
@@ -20,9 +21,14 @@ export function LoginForm({ lang }: { lang: Lang }) {
 
   useEffect(() => {
     if (state?.ok) {
+      const n = safeNextPath(next);
+      if (n) {
+        router.push(n);
+        return;
+      }
       router.push(state.role === "REVIEWER" ? "/reviewer" : "/annotator");
     }
-  }, [state, router]);
+  }, [state, router, next]);
 
   return (
     <form action={formAction} className="mx-auto max-w-md space-y-4 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6">
@@ -59,9 +65,7 @@ export function LoginForm({ lang }: { lang: Lang }) {
       >
         {tk("signIn")}
       </button>
-      <p className="text-xs text-[var(--muted)]">
-        Demo: reviewer@example.com / annotator@example.com — password demo123
-      </p>
+      <p className="text-xs text-[var(--muted)]">{tk("login_demo_hint")}</p>
     </form>
   );
 }
