@@ -190,6 +190,40 @@ export async function reviewerAssignCaseAction(caseDbId: string, annotatorUserId
   return { ok: true as const };
 }
 
+/** Reviewer (admin) updates per-case compensation rate. */
+export async function updateCaseCompensationAction(input: {
+  caseDbId: string;
+  compensationType: CompensationType;
+  compensationAmount: number;
+}) {
+  await requireRole("REVIEWER");
+  if (
+    input.compensationType !== CompensationType.PER_MINUTE &&
+    input.compensationType !== CompensationType.PER_CASE
+  ) {
+    return { ok: false as const, error: "required" as const };
+  }
+  if (!Number.isFinite(input.compensationAmount) || input.compensationAmount < 0) {
+    return { ok: false as const, error: "required" as const };
+  }
+  const row = await prisma.annotationCase.findUnique({
+    where: { id: input.caseDbId },
+    select: { id: true },
+  });
+  if (!row) return { ok: false as const, error: "notfound" as const };
+
+  await prisma.annotationCase.update({
+    where: { id: input.caseDbId },
+    data: {
+      compensationType: input.compensationType,
+      compensationAmount: input.compensationAmount,
+    },
+  });
+  revalidatePath("/reviewer");
+  revalidatePath("/annotator");
+  return { ok: true as const };
+}
+
 export async function listAnnotatorsForAssignment() {
   await requireRole("REVIEWER");
   return prisma.user.findMany({

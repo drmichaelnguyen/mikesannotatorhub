@@ -2,13 +2,23 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
-import { addCaseNoteAction, reviewCaseAction } from "@/app/actions/cases";
+import { addCaseNoteAction, reviewCaseAction, reviewerAssignCaseAction } from "@/app/actions/cases";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ReviewerCaseDetailPanel } from "@/components/reviewer/ReviewerCaseDetailPanel";
+import { computeCompensation } from "@/lib/compensation";
+import { formatCompensationAmount } from "@/lib/format";
 import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
-import { CaseStatus } from "@prisma/client";
+import { CaseStatus, CompensationType } from "@prisma/client";
+
+function formatRowCompensation(lang: Lang, c: SerializedReviewerCase): string {
+  if (c.compensationType === CompensationType.PER_MINUTE && c.annotationMinutes == null) {
+    return "—";
+  }
+  const v = computeCompensation(c.compensationType, c.compensationAmount, c.annotationMinutes);
+  return formatCompensationAmount(lang, v);
+}
 
 type ProjectGroup = {
   project: string;
@@ -69,11 +79,14 @@ export function ReviewerWorkboard({
     null,
   );
   const [auditComment, setAuditComment] = useState("");
+  const [assignCaseId, setAssignCaseId] = useState<string | null>(null);
+  const [assignAnnotatorId, setAssignAnnotatorId] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
   const detailCase = detailId ? cases.find((c) => c.id === detailId) ?? null : null;
   const noteCase = noteCaseId ? cases.find((c) => c.id === noteCaseId) ?? null : null;
+  const assignCase = assignCaseId ? cases.find((c) => c.id === assignCaseId) ?? null : null;
 
   function refresh() {
     router.refresh();
@@ -99,6 +112,23 @@ export function ReviewerWorkboard({
       }
       setNoteCaseId(null);
       setNoteText("");
+      refresh();
+    });
+  }
+
+  function submitAssign() {
+    if (!assignCaseId) return;
+    setErr(null);
+    start(async () => {
+      const res = await reviewerAssignCaseAction(assignCaseId, assignAnnotatorId);
+      if (!res.ok) {
+        if (res.error === "invalid_annotator") setErr(tk("reviewer_assign_invalid"));
+        else if (res.error === "required") setErr(tk("required"));
+        else setErr(tk("reviewer_assign_taken"));
+        return;
+      }
+      setAssignCaseId(null);
+      setAssignAnnotatorId("");
       refresh();
     });
   }
@@ -157,12 +187,18 @@ export function ReviewerWorkboard({
                       <span className="font-normal">({g.cases.length})</span>
                     </summary>
                     <div className="overflow-x-auto px-1 pb-1">
-                      <table className="w-full min-w-[520px] border-collapse text-left text-xs">
+                      <table className="w-full min-w-[720px] border-collapse text-left text-xs">
                         <thead>
                           <tr className="border-b border-[var(--border)] text-[var(--muted)]">
                             <th className="py-1.5 pr-2 font-medium">{tk("col_case_id")}</th>
                             <th className="py-1.5 pr-2 font-medium">{tk("case_status")}</th>
                             <th className="py-1.5 pr-2 font-medium">{tk("case_annotationMinutes")}</th>
+                            <th
+                              className="py-1.5 pr-2 font-medium"
+                              title={tk("col_compensation_hint")}
+                            >
+                              {tk("col_compensation")}
+                            </th>
                             <th className="py-1.5 font-medium">{tk("col_actions")}</th>
                           </tr>
                         </thead>
@@ -190,8 +226,24 @@ export function ReviewerWorkboard({
                               <td className="py-1.5 pr-2 tabular-nums text-[var(--muted)]">
                                 {c.annotationMinutes ?? "—"}
                               </td>
+                              <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
+                                {formatRowCompensation(lang, c)}
+                              </td>
                               <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
                                 <div className="flex flex-wrap gap-1">
+                                  {c.status === CaseStatus.AVAILABLE && (
+                                    <button
+                                      type="button"
+                                      className="rounded border border-[var(--accent)]/50 bg-[var(--accent)]/10 px-1.5 py-0.5 text-[var(--accent)] hover:bg-[var(--accent)]/20"
+                                      onClick={() => {
+                                        setErr(null);
+                                        setAssignAnnotatorId("");
+                                        setAssignCaseId(c.id);
+                                      }}
+                                    >
+                                      {tk("action_assign")}
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
                                     className="rounded border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 hover:border-[var(--accent)]"
@@ -324,6 +376,84 @@ export function ReviewerWorkboard({
                 {tk("discussion_post")}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {assignCase && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+          role="presentation"
+          onClick={() => {
+            setAssignCaseId(null);
+            setAssignAnnotatorId("");
+            setErr(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="mb-1 font-medium">{tk("reviewer_assign_heading")}</h3>
+            <p className="mb-3 text-xs text-[var(--muted)]">{assignCase.caseId}</p>
+            {annotators.length === 0 ? (
+              <div className="space-y-3">
+                <p className="text-sm text-[var(--muted)]">{tk("reviewer_assign_no_annotators")}</p>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm"
+                    onClick={() => {
+                      setAssignCaseId(null);
+                      setErr(null);
+                    }}
+                  >
+                    {tk("drawer_close")}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="mb-2 text-xs text-[var(--muted)]">{tk("reviewer_assign_help")}</p>
+                <label className="block text-sm">
+                  <span className="text-[var(--muted)]">{tk("reviewer_assign_select")}</span>
+                  <select
+                    value={assignAnnotatorId}
+                    onChange={(e) => setAssignAnnotatorId(e.target.value)}
+                    className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5"
+                  >
+                    <option value="">{tk("reviewer_assign_placeholder")}</option>
+                    {annotators.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({a.email})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {err && <p className="mt-2 text-sm text-[var(--danger)]">{err}</p>}
+                <div className="mt-3 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm"
+                    onClick={() => {
+                      setAssignCaseId(null);
+                      setAssignAnnotatorId("");
+                      setErr(null);
+                    }}
+                  >
+                    {tk("drawer_close")}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={pending || !assignAnnotatorId}
+                    className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                    onClick={submitAssign}
+                  >
+                    {tk("reviewer_assign_submit")}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
