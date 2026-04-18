@@ -1,0 +1,252 @@
+"use server";
+
+import { CaseStatus, CompensationType } from "@prisma/client";
+import { revalidatePath } from "next/cache";
+import { prisma } from "@/lib/prisma";
+import { requireRole } from "@/lib/auth";
+
+function payout(
+  type: CompensationType,
+  amount: number,
+  minutes: number | null,
+): number {
+  if (type === "PER_CASE") return amount;
+  const m = minutes ?? 0;
+  return Math.round(amount * m * 100) / 100;
+}
+
+function parseCaseIdBatch(raw: string): { unique: string[]; duplicateTokens: string[] } {
+  const tokens = raw
+    .split(/[\r\n,;\t]+/g)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  const duplicateTokens: string[] = [];
+  for (const t of tokens) {
+    if (seen.has(t)) {
+      duplicateTokens.push(t);
+      continue;
+    }
+    seen.add(t);
+    unique.push(t);
+  }
+  return { unique, duplicateTokens };
+}
+
+export type CreateCaseActionResult =
+  | {
+      ok: true;
+      created: number;
+      skippedExisting: string[];
+      duplicateInList: string[];
+    }
+  | { ok: false; error: "required" | "no_ids" };
+
+export async function createCaseAction(formData: FormData): Promise<CreateCaseActionResult> {
+  await requireRole("REVIEWER");
+  const rawIds = String(formData.get("caseIds") ?? "").trim();
+  const { unique, duplicateTokens } = parseCaseIdBatch(rawIds);
+  const duplicateInList = [...new Set(duplicateTokens)];
+
+  const redbrickProject = String(formData.get("redbrickProject") ?? "").trim();
+  const guideline = String(formData.get("guideline") ?? "").trim();
+  const scopeOfWork = String(formData.get("scopeOfWork") ?? "").trim();
+  const maxMinutesPerCase = Number(formData.get("maxMinutesPerCase"));
+  const compensationType =
+    String(formData.get("compensationType") ?? "") === "PER_MINUTE"
+      ? CompensationType.PER_MINUTE
+      : CompensationType.PER_CASE;
+  const compensationAmount = Number(formData.get("compensationAmount"));
+
+  if (
+    !redbrickProject ||
+    !guideline ||
+    !scopeOfWork ||
+    !Number.isFinite(maxMinutesPerCase) ||
+    maxMinutesPerCase <= 0 ||
+    !Number.isFinite(compensationAmount) ||
+    compensationAmount < 0
+  ) {
+    return { ok: false as const, error: "required" };
+  }
+
+  if (unique.length === 0) {
+    return { ok: false as const, error: "no_ids" };
+  }
+
+  const assignEmail = String(formData.get("assignEmail") ?? "")
+    .trim()
+    .toLowerCase();
+  let annotatorId: string | undefined;
+  let status: CaseStatus = CaseStatus.AVAILABLE;
+  let assignedAt: Date | undefined;
+  if (assignEmail) {
+    const u = await prisma.user.findUnique({ where: { email: assignEmail } });
+    if (u?.role === "ANNOTATOR") {
+      annotatorId = u.id;
+      status = CaseStatus.ASSIGNED;
+      assignedAt = new Date();
+    }
+  }
+
+  const existingRows = await prisma.annotationCase.findMany({
+    where: { caseId: { in: unique } },
+    select: { caseId: true },
+  });
+  const existingSet = new Set(existingRows.map((r) => r.caseId));
+  const skippedExisting = unique.filter((id) => existingSet.has(id));
+  const toCreate = unique.filter((id) => !existingSet.has(id));
+
+  const base = {
+    redbrickProject,
+    guideline,
+    scopeOfWork,
+    maxMinutesPerCase: Math.floor(maxMinutesPerCase),
+    compensationType,
+    compensationAmount,
+    annotatorId,
+    status,
+    assignedAt,
+  };
+
+  let created = 0;
+  if (toCreate.length > 0) {
+    const res = await prisma.annotationCase.createMany({
+      data: toCreate.map((caseId) => ({ ...base, caseId })),
+      skipDuplicates: true,
+    });
+    created = res.count;
+  }
+
+  revalidatePath("/reviewer");
+  revalidatePath("/annotator");
+  return {
+    ok: true as const,
+    created,
+    skippedExisting,
+    duplicateInList,
+  };
+}
+
+export async function assignCaseAction(caseDbId: string) {
+  const user = await requireRole("ANNOTATOR");
+  const row = await prisma.annotationCase.findUnique({ where: { id: caseDbId } });
+  if (!row || row.status !== CaseStatus.AVAILABLE) {
+    return { ok: false as const, error: "state" };
+  }
+  await prisma.annotationCase.update({
+    where: { id: caseDbId },
+    data: {
+      annotatorId: user.id,
+      status: CaseStatus.ASSIGNED,
+      assignedAt: new Date(),
+      completedAt: null,
+      annotationMinutes: null,
+    },
+  });
+  revalidatePath("/reviewer");
+  revalidatePath("/annotator");
+  return { ok: true as const };
+}
+
+export async function submitAnnotationAction(caseDbId: string, minutes: number) {
+  const user = await requireRole("ANNOTATOR");
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    return { ok: false as const, error: "minutes" };
+  }
+  const row = await prisma.annotationCase.findUnique({ where: { id: caseDbId } });
+  if (!row || row.annotatorId !== user.id) {
+    return { ok: false as const, error: "forbidden" };
+  }
+  if (row.status !== CaseStatus.ASSIGNED && row.status !== CaseStatus.REJECTED) {
+    return { ok: false as const, error: "state" };
+  }
+  await prisma.annotationCase.update({
+    where: { id: caseDbId },
+    data: {
+      status: CaseStatus.SUBMITTED,
+      annotationMinutes: Math.floor(minutes),
+      completedAt: new Date(),
+    },
+  });
+  revalidatePath("/reviewer");
+  revalidatePath("/annotator");
+  return { ok: true as const };
+}
+
+export async function reviewCaseAction(input: {
+  caseDbId: string;
+  decision: "ACCEPT" | "REJECT";
+  comment: string;
+  screenshotData: string | null;
+}) {
+  const reviewer = await requireRole("REVIEWER");
+  const row = await prisma.annotationCase.findUnique({
+    where: { id: input.caseDbId },
+    include: { annotator: true },
+  });
+  if (!row || row.status !== CaseStatus.SUBMITTED) {
+    return { ok: false as const, error: "state" };
+  }
+
+  const nextStatus =
+    input.decision === "ACCEPT" ? CaseStatus.ACCEPTED : CaseStatus.REJECTED;
+
+  await prisma.$transaction([
+    prisma.review.create({
+      data: {
+        annotationCaseId: row.id,
+        reviewerId: reviewer.id,
+        decision: input.decision,
+        comment: input.comment.trim() || null,
+        screenshotData: input.screenshotData,
+      },
+    }),
+    prisma.annotationCase.update({
+      where: { id: row.id },
+      data: { status: nextStatus },
+    }),
+  ]);
+
+  revalidatePath("/reviewer");
+  revalidatePath("/annotator");
+  return {
+    ok: true as const,
+    payout: payout(row.compensationType, row.compensationAmount, row.annotationMinutes),
+  };
+}
+
+export async function listCasesForReviewer() {
+  await requireRole("REVIEWER");
+  return prisma.annotationCase.findMany({
+    orderBy: { createdAt: "desc" },
+    include: { annotator: true, reviews: { orderBy: { createdAt: "desc" }, take: 1 } },
+  });
+}
+
+export async function getAnnotatorBoard() {
+  const user = await requireRole("ANNOTATOR");
+  return listCasesForAnnotator(user.id);
+}
+
+export async function listCasesForAnnotator(userId: string) {
+  const available = await prisma.annotationCase.findMany({
+    where: { status: CaseStatus.AVAILABLE },
+    orderBy: { createdAt: "desc" },
+  });
+  const mine = await prisma.annotationCase.findMany({
+    where: {
+      annotatorId: userId,
+      status: { in: [CaseStatus.ASSIGNED, CaseStatus.SUBMITTED, CaseStatus.ACCEPTED] },
+    },
+    orderBy: { updatedAt: "desc" },
+    include: { reviews: { orderBy: { createdAt: "desc" }, take: 1 } },
+  });
+  const rejected = await prisma.annotationCase.findMany({
+    where: { annotatorId: userId, status: CaseStatus.REJECTED },
+    orderBy: { updatedAt: "desc" },
+    include: { reviews: { orderBy: { createdAt: "desc" }, take: 1 } },
+  });
+  return { available, mine, rejected };
+}

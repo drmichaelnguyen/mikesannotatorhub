@@ -1,0 +1,41 @@
+import { redirect } from "next/navigation";
+import { getLangFromCookies } from "@/app/actions/lang";
+import { getAnnotatorBoard } from "@/app/actions/cases";
+import { AnnotatorWorkspace } from "@/components/AnnotatorWorkspace";
+import { NavBar } from "@/components/NavBar";
+import { getCurrentUser } from "@/lib/auth";
+import type { DictKey, Lang } from "@/lib/i18n";
+import { t } from "@/lib/i18n";
+
+export default async function AnnotatorPage() {
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
+  if (user.role !== "ANNOTATOR") redirect("/reviewer");
+  const lang = await getLangFromCookies();
+  const tk = (k: DictKey) => t(lang, k);
+
+  let board;
+  try {
+    board = await getAnnotatorBoard();
+  } catch {
+    redirect("/login");
+  }
+
+  return (
+    <div className="min-h-screen">
+      <NavBar lang={lang} role="ANNOTATOR" name={user.name} />
+      <main className="mx-auto max-w-6xl space-y-6 px-4 py-8">
+        <div>
+          <h1 className="text-2xl font-semibold">{tk("annotator_title")}</h1>
+          <p className="text-sm text-[var(--muted)]">{user.email}</p>
+        </div>
+        <AnnotatorWorkspace
+          lang={lang}
+          available={board.available}
+          mine={board.mine}
+          rejected={board.rejected}
+        />
+      </main>
+    </div>
+  );
+}

@@ -1,0 +1,73 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  REVIEWER
+  ANNOTATOR
+}
+
+enum CompensationType {
+  PER_MINUTE
+  PER_CASE
+}
+
+enum CaseStatus {
+  AVAILABLE
+  ASSIGNED
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         UserRole
+  createdAt    DateTime @default(now())
+
+  assignedCases AnnotationCase[] @relation("AnnotatorCases")
+  reviews       Review[]
+}
+
+model AnnotationCase {
+  id                 String             @id @default(cuid())
+  caseId             String             @unique
+  redbrickProject    String
+  guideline          String
+  scopeOfWork        String
+  maxMinutesPerCase  Int
+  compensationType   CompensationType
+  compensationAmount Float
+  annotatorId        String?
+  annotator          User?              @relation("AnnotatorCases", fields: [annotatorId], references: [id])
+  assignedAt         DateTime?
+  completedAt        DateTime?
+  annotationMinutes  Int?
+  status             CaseStatus         @default(AVAILABLE)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  reviews Review[]
+}
+
+model Review {
+  id                 String         @id @default(cuid())
+  annotationCaseId   String
+  annotationCase     AnnotationCase @relation(fields: [annotationCaseId], references: [id], onDelete: Cascade)
+  reviewerId      String
+  reviewer        User           @relation(fields: [reviewerId], references: [id])
+  decision        String
+  comment         String?
+  screenshotData  String?
+  createdAt       DateTime       @default(now())
+
+  @@index([annotationCaseId])
+}
