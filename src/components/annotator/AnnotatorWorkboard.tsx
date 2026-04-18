@@ -294,7 +294,7 @@ export function AnnotatorWorkboard({
                   }
                 }}
               >
-                <td className="py-1.5 pr-2 font-mono font-medium text-[var(--text)]">
+                <td className={`py-1.5 pr-2 font-mono font-medium ${c.status === CaseStatus.REJECTED ? "text-[var(--danger)]" : "text-[var(--text)]"}`}>
                   <div className="flex flex-wrap items-center gap-1">
                     <span>{c.caseId}</span>
                     <CopyTextButton lang={lang} value={c.caseId} />
@@ -309,7 +309,9 @@ export function AnnotatorWorkboard({
                   </div>
                 </td>
                 {mode !== "pool" && (
-                  <td className="py-1.5 pr-2">{tk(`status_${c.status}` as DictKey)}</td>
+                  <td className={`py-1.5 pr-2 ${c.status === CaseStatus.REJECTED ? "font-semibold text-[var(--danger)]" : ""}`}>
+                    {tk(`status_${c.status}` as DictKey)}
+                  </td>
                 )}
                 {mode === "active" && (
                   <td className="py-1.5 pr-2 tabular-nums text-[var(--muted)]">
