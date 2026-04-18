@@ -44,7 +44,7 @@ export function AnnotatorStatsPanel({
               <thead className="border-b border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]">
                 <tr>
                   <th className="px-3 py-2 font-medium">{tk("dash_project_col")}</th>
-                  <th className="px-3 py-2 font-medium">{tk("dash_accepted_cases")}</th>
+                  <th className="px-3 py-2 font-medium">{tk("dash_audited_cases")}</th>
                   <th className="px-3 py-2 font-medium">{tk("dash_project_total")}</th>
                 </tr>
               </thead>
@@ -52,7 +52,7 @@ export function AnnotatorStatsPanel({
                 {summary.projects.map((p) => (
                   <tr key={p.name} className="border-b border-[var(--border)] last:border-0">
                     <td className="px-3 py-2 font-medium text-[var(--text)]">{p.name}</td>
-                    <td className="px-3 py-2 tabular-nums text-[var(--muted)]">{p.acceptedCount}</td>
+                    <td className="px-3 py-2 tabular-nums text-[var(--muted)]">{p.auditedCount}</td>
                     <td className="px-3 py-2 tabular-nums">{fmt(p.totalCompensation)}</td>
                   </tr>
                 ))}
