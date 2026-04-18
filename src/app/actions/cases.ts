@@ -22,6 +22,15 @@ function payout(
   return Math.round(amount * m * 100) / 100;
 }
 
+/** Final compensation for an audited (or legacy accepted) case. */
+export function computeCompensation(
+  type: CompensationType,
+  amount: number,
+  minutes: number | null,
+): number {
+  return payout(type, amount, minutes);
+}
+
 function parseCaseIdBatch(raw: string): { unique: string[]; duplicateTokens: string[] } {
   const tokens = raw
     .split(/[\r\n,;\t]+/g)
@@ -138,12 +147,12 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
 
 export async function assignCaseAction(caseDbId: string) {
   const user = await requireRole("ANNOTATOR");
-  const row = await prisma.annotationCase.findUnique({ where: { id: caseDbId } });
-  if (!row || row.status !== CaseStatus.AVAILABLE) {
-    return { ok: false as const, error: "state" };
-  }
-  await prisma.annotationCase.update({
-    where: { id: caseDbId },
+  const updated = await prisma.annotationCase.updateMany({
+    where: {
+      id: caseDbId,
+      status: CaseStatus.AVAILABLE,
+      annotatorId: null,
+    },
     data: {
       annotatorId: user.id,
       status: CaseStatus.ASSIGNED,
@@ -152,9 +161,53 @@ export async function assignCaseAction(caseDbId: string) {
       annotationMinutes: null,
     },
   });
+  if (updated.count !== 1) {
+    return { ok: false as const, error: "state" as const };
+  }
   revalidatePath("/reviewer");
   revalidatePath("/annotator");
   return { ok: true as const };
+}
+
+/** Reviewer assigns an unclaimed case to a specific annotator (exclusive). */
+export async function reviewerAssignCaseAction(caseDbId: string, annotatorUserId: string) {
+  await requireRole("REVIEWER");
+  if (!annotatorUserId) {
+    return { ok: false as const, error: "required" as const };
+  }
+  const target = await prisma.user.findUnique({ where: { id: annotatorUserId } });
+  if (!target || target.role !== "ANNOTATOR") {
+    return { ok: false as const, error: "invalid_annotator" as const };
+  }
+  const updated = await prisma.annotationCase.updateMany({
+    where: {
+      id: caseDbId,
+      status: CaseStatus.AVAILABLE,
+      annotatorId: null,
+    },
+    data: {
+      annotatorId: target.id,
+      status: CaseStatus.ASSIGNED,
+      assignedAt: new Date(),
+      completedAt: null,
+      annotationMinutes: null,
+    },
+  });
+  if (updated.count !== 1) {
+    return { ok: false as const, error: "state" as const };
+  }
+  revalidatePath("/reviewer");
+  revalidatePath("/annotator");
+  return { ok: true as const };
+}
+
+export async function listAnnotatorsForAssignment() {
+  await requireRole("REVIEWER");
+  return prisma.user.findMany({
+    where: { role: "ANNOTATOR" },
+    select: { id: true, name: true, email: true },
+    orderBy: [{ name: "asc" }, { email: "asc" }],
+  });
 }
 
 export async function submitAnnotationAction(caseDbId: string, minutes: number) {
@@ -197,8 +250,7 @@ export async function reviewCaseAction(input: {
     return { ok: false as const, error: "state" };
   }
 
-  const nextStatus =
-    input.decision === "ACCEPT" ? CaseStatus.ACCEPTED : CaseStatus.REJECTED;
+  const accept = input.decision === "ACCEPT";
 
   await prisma.$transaction([
     prisma.review.create({
@@ -212,7 +264,17 @@ export async function reviewCaseAction(input: {
     }),
     prisma.annotationCase.update({
       where: { id: row.id },
-      data: { status: nextStatus },
+      data: accept
+        ? {
+            status: CaseStatus.AUDITED,
+            auditedAt: new Date(),
+            auditedById: reviewer.id,
+          }
+        : {
+            status: CaseStatus.REJECTED,
+            auditedAt: null,
+            auditedById: null,
+          },
     }),
   ]);
 
@@ -269,6 +331,7 @@ export async function listCasesForReviewer() {
     orderBy: { createdAt: "desc" },
     include: {
       annotator: true,
+      auditedBy: { select: { id: true, name: true, email: true } },
       reviews: { orderBy: { createdAt: "desc" }, take: 1 },
       ...caseNoteInclude,
     },
@@ -282,7 +345,7 @@ export async function getAnnotatorBoard() {
 
 export type AnnotatorProjectRow = {
   name: string;
-  acceptedCount: number;
+  auditedCount: number;
   totalCompensation: number;
 };
 
@@ -293,11 +356,11 @@ export type AnnotatorCompensationSummary = {
   projects: AnnotatorProjectRow[];
 };
 
-/** Accepted cases only; month boundaries use the viewer's local calendar. */
+/** Audited (and legacy accepted) cases; month boundaries use the viewer's local calendar. */
 export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompensationSummary> {
   const user = await requireRole("ANNOTATOR");
   const cases = await prisma.annotationCase.findMany({
-    where: { annotatorId: user.id, status: CaseStatus.ACCEPTED },
+    where: { annotatorId: user.id, status: { in: [CaseStatus.AUDITED, CaseStatus.ACCEPTED] } },
     include: {
       reviews: {
         where: { decision: "ACCEPT" },
@@ -315,11 +378,11 @@ export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompen
 
   let thisMonth = 0;
   let priorMonths = 0;
-  const byProject = new Map<string, { acceptedCount: number; totalCompensation: number }>();
+  const byProject = new Map<string, { auditedCount: number; totalCompensation: number }>();
 
   for (const c of cases) {
     const amount = payout(c.compensationType, c.compensationAmount, c.annotationMinutes);
-    const acceptedAt = c.reviews[0]?.createdAt ?? c.updatedAt;
+    const acceptedAt = c.reviews[0]?.createdAt ?? c.auditedAt ?? c.updatedAt;
 
     if (acceptedAt >= startCurrent && acceptedAt < startNext) {
       thisMonth += amount;
@@ -330,8 +393,8 @@ export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompen
     }
 
     const key = c.redbrickProject.trim() || "—";
-    const prev = byProject.get(key) ?? { acceptedCount: 0, totalCompensation: 0 };
-    prev.acceptedCount += 1;
+    const prev = byProject.get(key) ?? { auditedCount: 0, totalCompensation: 0 };
+    prev.auditedCount += 1;
     prev.totalCompensation += amount;
     byProject.set(key, prev);
   }
@@ -340,7 +403,7 @@ export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompen
   const projects = Array.from(byProject.entries())
     .map(([name, v]) => ({
       name,
-      acceptedCount: v.acceptedCount,
+      auditedCount: v.auditedCount,
       totalCompensation: round2(v.totalCompensation),
     }))
     .sort((a, b) => b.totalCompensation - a.totalCompensation);
@@ -362,7 +425,9 @@ export async function listCasesForAnnotator(userId: string) {
   const mine = await prisma.annotationCase.findMany({
     where: {
       annotatorId: userId,
-      status: { in: [CaseStatus.ASSIGNED, CaseStatus.SUBMITTED, CaseStatus.ACCEPTED] },
+      status: {
+        in: [CaseStatus.ASSIGNED, CaseStatus.SUBMITTED, CaseStatus.ACCEPTED, CaseStatus.AUDITED],
+      },
     },
     orderBy: { updatedAt: "desc" },
     include: {
