@@ -31,6 +31,35 @@ function groupByProject<T extends { redbrickProject: string; caseId: string }>(i
     }));
 }
 
+function StatusCountBadges({ cases }: { cases: AnnotatorCaseRow[] }) {
+  const rejected = cases.filter((c) => c.status === CaseStatus.REJECTED).length;
+  const approved = cases.filter(
+    (c) => c.status === CaseStatus.AUDITED || c.status === CaseStatus.ACCEPTED,
+  ).length;
+  const notSubmitted = cases.filter((c) => c.status === CaseStatus.ASSIGNED).length;
+  const submitted = cases.filter((c) => c.status === CaseStatus.SUBMITTED).length;
+  const available = cases.filter((c) => c.status === CaseStatus.AVAILABLE).length;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5 font-normal">
+      {available > 0 && (
+        <span className="text-[var(--muted)]">{available}</span>
+      )}
+      {notSubmitted > 0 && (
+        <span className="text-[var(--text)]">{notSubmitted}</span>
+      )}
+      {submitted > 0 && (
+        <span className="text-blue-400">{submitted}</span>
+      )}
+      {approved > 0 && (
+        <span className="text-[var(--success)]">{approved}</span>
+      )}
+      {rejected > 0 && (
+        <span className="text-[var(--danger)]">{rejected}</span>
+      )}
+    </span>
+  );
+}
+
 function CommentActionLabel({
   label,
   count,
@@ -406,7 +435,7 @@ export function AnnotatorWorkboard({
                       <span className="inline-flex flex-wrap items-center gap-2">
                         <span>{g.project}</span>
                         <CopyTextButton lang={lang} value={g.project === "—" ? "" : g.project} />
-                        <span className="font-normal text-[var(--muted)]">({g.cases.length})</span>
+                        <span>(</span><StatusCountBadges cases={g.cases} /><span>)</span>
                       </span>
                     </summary>
                     <div className="border-t border-[var(--border)]">{renderProjectTable(g.cases, "pool")}</div>
@@ -431,7 +460,7 @@ export function AnnotatorWorkboard({
                       <span className="inline-flex flex-wrap items-center gap-2">
                         <span>{g.project}</span>
                         <CopyTextButton lang={lang} value={g.project === "—" ? "" : g.project} />
-                        <span className="font-normal text-[var(--muted)]">({g.cases.length})</span>
+                        <span>(</span><StatusCountBadges cases={g.cases} /><span>)</span>
                       </span>
                     </summary>
                     <div className="border-t border-[var(--border)]">{renderProjectTable(g.cases, "active")}</div>
@@ -456,7 +485,7 @@ export function AnnotatorWorkboard({
                       <span className="inline-flex flex-wrap items-center gap-2">
                         <span>{g.project}</span>
                         <CopyTextButton lang={lang} value={g.project === "—" ? "" : g.project} />
-                        <span className="font-normal text-[var(--muted)]">({g.cases.length})</span>
+                        <span>(</span><StatusCountBadges cases={g.cases} /><span>)</span>
                       </span>
                     </summary>
                     <div className="border-t border-[var(--border)]">{renderProjectTable(g.cases, "done")}</div>
