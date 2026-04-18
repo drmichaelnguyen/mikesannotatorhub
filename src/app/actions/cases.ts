@@ -121,7 +121,6 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
   if (toCreate.length > 0) {
     const res = await prisma.annotationCase.createMany({
       data: toCreate.map((caseId) => ({ ...base, caseId })),
-      skipDuplicates: true,
     });
     created = res.count;
   }

@@ -5,7 +5,7 @@ import { AnnotatorStatsPanel } from "@/components/AnnotatorStatsPanel";
 import { AnnotatorWorkspace } from "@/components/AnnotatorWorkspace";
 import { NavBar } from "@/components/NavBar";
 import { getCurrentUser } from "@/lib/auth";
-import type { DictKey, Lang } from "@/lib/i18n";
+import type { DictKey } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 
 export default async function AnnotatorPage() {

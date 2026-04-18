@@ -84,7 +84,7 @@ export const dict = {
     error_email_taken: "That email is already registered.",
     error_password_short: "Password must be at least 8 characters.",
     error_email_invalid: "Enter a valid email address.",
-    login_demo_hint: "Reviewer creates annotator accounts above. Demo: reviewer@example.com / demo123",
+    login_demo_hint: "Reviewer creates annotator accounts above. Admin: dr.trongto@gmail.com / host1234",
     dash_compensation: "Compensation (accepted cases)",
     dash_period_hint:
       "This month uses your device's local calendar. Totals include only cases with status Accepted.",
@@ -181,7 +181,7 @@ export const dict = {
     error_email_taken: "Email này đã được đăng ký.",
     error_password_short: "Mật khẩu cần ít nhất 8 ký tự.",
     error_email_invalid: "Email không hợp lệ.",
-    login_demo_hint: "Người duyệt tạo tài khoản người gán nhãn ở trên. Demo: reviewer@example.com / demo123",
+    login_demo_hint: "Người duyệt tạo tài khoản người gán nhãn ở trên. Admin: dr.trongto@gmail.com / host1234",
     dash_compensation: "Thù lao (ca đã duyệt)",
     dash_period_hint:
       "Tháng này theo lịch máy của bạn. Chỉ tính các ca trạng thái Đã duyệt.",
