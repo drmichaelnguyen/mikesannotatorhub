@@ -49,7 +49,6 @@ export type CreateCaseActionResult =
 
 export type GuideListRow = {
   id: string;
-  redbrickProject: string;
   title: string;
   content: string;
 };
@@ -68,8 +67,8 @@ export async function listGuidesAndTopics() {
   }
   const [guides, topics] = await Promise.all([
     prisma.guide.findMany({
-      orderBy: [{ redbrickProject: "asc" }, { title: "asc" }],
-      select: { id: true, redbrickProject: true, title: true, content: true },
+      orderBy: [{ title: "asc" }],
+      select: { id: true, title: true, content: true },
     }),
     prisma.topic.findMany({
       orderBy: { name: "asc" },
@@ -89,16 +88,52 @@ export async function listGuidesAndTopics() {
 
 export async function createGuideAction(formData: FormData) {
   await requireRole("REVIEWER");
-  const redbrickProject = String(formData.get("redbrickProject") ?? "").trim();
   const title = String(formData.get("title") ?? "").trim();
   const content = String(formData.get("content") ?? "").trim();
-  if (!redbrickProject || !title || !content) {
+  if (!title || !content) {
     return { ok: false as const, error: "required" as const };
   }
   await prisma.guide.create({
-    data: { redbrickProject, title, content },
+    data: { title, content },
   });
   revalidatePath("/reviewer");
+  return { ok: true as const };
+}
+
+export async function updateGuideAction(formData: FormData) {
+  await requireRole("REVIEWER");
+  const guideId = String(formData.get("guideId") ?? "").trim();
+  const title = String(formData.get("title") ?? "").trim();
+  const content = String(formData.get("content") ?? "").trim();
+  if (!guideId || !title || !content) {
+    return { ok: false as const, error: "required" as const };
+  }
+  const guide = await prisma.guide.findUnique({ where: { id: guideId }, select: { id: true } });
+  if (!guide) {
+    return { ok: false as const, error: "notfound" as const };
+  }
+  await prisma.guide.update({
+    where: { id: guideId },
+    data: { title, content },
+  });
+  revalidatePath("/reviewer");
+  revalidatePath("/annotator");
+  return { ok: true as const };
+}
+
+export async function deleteGuideAction(formData: FormData) {
+  await requireRole("REVIEWER");
+  const guideId = String(formData.get("guideId") ?? "").trim();
+  if (!guideId) {
+    return { ok: false as const, error: "required" as const };
+  }
+  const guide = await prisma.guide.findUnique({ where: { id: guideId }, select: { id: true } });
+  if (!guide) {
+    return { ok: false as const, error: "notfound" as const };
+  }
+  await prisma.guide.delete({ where: { id: guideId } });
+  revalidatePath("/reviewer");
+  revalidatePath("/annotator");
   return { ok: true as const };
 }
 
@@ -148,9 +183,9 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
   if (guideId) {
     const guide = await prisma.guide.findUnique({
       where: { id: guideId },
-      select: { id: true, redbrickProject: true, content: true },
+      select: { id: true, content: true },
     });
-    if (!guide || guide.redbrickProject !== redbrickProject) {
+    if (!guide) {
       return { ok: false as const, error: "required" };
     }
     if (!resolvedGuideline) {
@@ -428,9 +463,9 @@ export async function updateCaseDetailsAction(input: {
   if (guideId) {
     const guide = await prisma.guide.findUnique({
       where: { id: guideId },
-      select: { id: true, redbrickProject: true },
+      select: { id: true },
     });
-    if (!guide || guide.redbrickProject !== redbrickProject) {
+    if (!guide) {
       return { ok: false as const, error: "required" as const };
     }
   }

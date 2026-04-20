@@ -3,13 +3,21 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { updateCaseDetailsAction } from "@/app/actions/cases";
+import type { GuideOption } from "@/lib/guide-topic";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import { CaseStatus, CompensationType } from "@prisma/client";
 
+function htmlToPlainText(html: string) {
+  if (!html) return "";
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return (doc.body.textContent ?? "").replace(/\s+\n/g, "\n").trim();
+}
+
 export function ReviewerCaseEditor({
   lang,
   c,
+  guides = [],
 }: {
   lang: Lang;
   c: {
@@ -26,6 +34,7 @@ export function ReviewerCaseEditor({
     compensationType: CompensationType;
     compensationAmount: number;
   };
+  guides?: GuideOption[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
@@ -43,6 +52,14 @@ export function ReviewerCaseEditor({
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
+
+  useEffect(() => {
+    if (!guideId) return;
+    const selected = guides.find((g) => g.id === guideId);
+    if (selected) {
+      setGuideline(htmlToPlainText(selected.content));
+    }
+  }, [guideId, guides]);
 
   useEffect(() => {
     setCaseId(c.caseId);
@@ -131,6 +148,22 @@ export function ReviewerCaseEditor({
           </select>
         </label>
         <label className="md:col-span-2 text-sm">
+          <span className="text-[var(--muted)]">{tk("case_guide")}</span>
+          <select
+            value={guideId}
+            onChange={(e) => setGuideId(e.target.value)}
+            className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
+          >
+            <option value="">—</option>
+            {guides.map((guide) => (
+              <option key={guide.id} value={guide.id}>
+                {guide.title}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-[var(--muted)]">{tk("reviewer_case_edit_help")}</p>
+        </label>
+        <label className="md:col-span-2 text-sm">
           <span className="text-[var(--muted)]">{tk("case_redbrick")}</span>
           <input
             value={redbrickProject}
@@ -138,7 +171,6 @@ export function ReviewerCaseEditor({
             className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
           />
         </label>
-        <input type="hidden" name="guideId" value={guideId} />
         <input type="hidden" name="topicId" value={topicId} />
         <label className="md:col-span-2 text-sm">
           <span className="text-[var(--muted)]">{tk("case_guideline")}</span>

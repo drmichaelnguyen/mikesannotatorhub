@@ -14,6 +14,13 @@ function formatIdList(ids: string[], max = 40) {
   return `${shown.join(", ")}${extra}`;
 }
 
+function htmlToPlainText(html: string) {
+  if (!html) return "";
+  if (typeof window === "undefined") return html;
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return (doc.body.textContent ?? "").replace(/\s+\n/g, "\n").trim();
+}
+
 type Annotator = { id: string; name: string; email: string };
 
 type GuideSelectOption = GuideOption;
@@ -43,10 +50,7 @@ export function CreateCaseForm({
   const [assignEmail, setAssignEmail] = useState("");
   const lastGuideId = useRef("");
 
-  const visibleGuides = useMemo(
-    () => guides.filter((guide) => !redbrickProject.trim() || guide.redbrickProject === redbrickProject.trim()),
-    [guides, redbrickProject],
-  );
+  const visibleGuides = guides;
   const visibleTopics = useMemo(
     () =>
       topics.filter(
@@ -73,7 +77,7 @@ export function CreateCaseForm({
     if (guideId === lastGuideId.current) return;
     lastGuideId.current = guideId;
     const selected = visibleGuides.find((guide) => guide.id === guideId);
-    setGuideline(selected ? selected.content : "");
+    setGuideline(selected ? htmlToPlainText(selected.content) : "");
   }, [guideId, visibleGuides]);
 
   return (
@@ -110,7 +114,7 @@ export function CreateCaseForm({
           <option value="">—</option>
           {visibleGuides.map((guide) => (
             <option key={guide.id} value={guide.id}>
-              {guide.redbrickProject} / {guide.title}
+              {guide.title}
             </option>
           ))}
         </select>

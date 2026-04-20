@@ -325,10 +325,10 @@ export function ReviewerWorkboard({
   const selectedCaseId = searchParams.get("case");
   const annotatorsQuery = searchParams.get("annotators");
   const detailMentionOptions = detailCase
-    ? buildMentionOptionsForProject(detailCase.redbrickProject, guides, topics)
+    ? buildMentionOptionsForProject(guides, topics)
     : [];
   const noteMentionOptions = noteCase
-    ? buildMentionOptionsForProject(noteCase.redbrickProject, guides, topics)
+    ? buildMentionOptionsForProject(guides, topics)
     : [];
 
   function syncCaseQuery(caseId: string | null) {
@@ -750,9 +750,8 @@ export function ReviewerWorkboard({
 
       {detailCase && (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/50" role="presentation">
-          <button
-            type="button"
-            className="absolute inset-0 h-full w-full cursor-default border-0 bg-transparent"
+          <div
+            className="absolute inset-0 h-full w-full cursor-default"
             aria-label={tk("drawer_close")}
             onClick={closeDetail}
           />
@@ -760,6 +759,7 @@ export function ReviewerWorkboard({
             className="relative z-10 flex h-full w-full flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-xl lg:w-2/3"
             role="dialog"
             aria-modal
+            onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
               <span className="text-sm font-medium">{tk("action_details")}</span>
@@ -776,6 +776,7 @@ export function ReviewerWorkboard({
                 lang={lang}
                 c={detailCase}
                 annotators={annotators}
+                guides={guides}
                 mentionOptions={detailMentionOptions}
               />
             </div>
@@ -785,9 +786,8 @@ export function ReviewerWorkboard({
 
       {annotatorFocus && (
         <div className="fixed inset-0 z-[65] flex justify-end bg-black/50" role="presentation">
-          <button
-            type="button"
-            className="absolute inset-0 h-full w-full cursor-default border-0 bg-transparent"
+          <div
+            className="absolute inset-0 h-full w-full cursor-default"
             aria-label={tk("drawer_close")}
             onClick={closeAnnotatorFocus}
           />
@@ -795,6 +795,7 @@ export function ReviewerWorkboard({
             className="relative z-10 flex h-full w-full flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-xl lg:w-2/3"
             role="dialog"
             aria-modal
+            onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
               <div>
@@ -861,9 +862,8 @@ export function ReviewerWorkboard({
 
       {annotatorsQuery === "1" && (
         <div className="fixed inset-0 z-[70] flex justify-end bg-black/50" role="presentation">
-          <button
-            type="button"
-            className="absolute inset-0 h-full w-full cursor-default border-0 bg-transparent"
+          <div
+            className="absolute inset-0 h-full w-full cursor-default"
             aria-label={tk("drawer_close")}
             onClick={closeAnnotatorPerformance}
           />
@@ -871,6 +871,7 @@ export function ReviewerWorkboard({
             className="relative z-10 flex h-full w-full flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-xl lg:w-2/3"
             role="dialog"
             aria-modal
+            onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
               <div>

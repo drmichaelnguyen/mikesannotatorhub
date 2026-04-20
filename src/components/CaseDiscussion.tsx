@@ -119,6 +119,7 @@ export function MentionTextarea({
   rows,
   placeholder,
   mentionOptions,
+  autoFocus = false,
 }: {
   lang: Lang;
   value: string;
@@ -127,6 +128,7 @@ export function MentionTextarea({
   rows: number;
   placeholder?: string;
   mentionOptions: MentionOption[];
+  autoFocus?: boolean;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const [queryState, setQueryState] = useState<{ open: boolean; start: number; query: string }>({
@@ -175,11 +177,15 @@ export function MentionTextarea({
     <div className="relative">
       <textarea
         ref={textareaRef}
+        autoFocus={autoFocus}
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
           updateQuery(e.target.value, e.target.selectionStart ?? e.target.value.length);
         }}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDownCapture={(e) => e.stopPropagation()}
+        onKeyUpCapture={(e) => e.stopPropagation()}
         onKeyUp={(e) => updateQuery((e.target as HTMLTextAreaElement).value, e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
         onKeyDown={(e) => {
           if (!queryState.open || matches.length === 0) return;
@@ -347,6 +353,7 @@ export function CaseDiscussion({
             rows={compact ? 2 : 3}
             placeholder={tk("review_comment")}
             mentionOptions={mentionOptions}
+            autoFocus={!!parentNoteId}
           />
         </label>
         <div className="mt-2">

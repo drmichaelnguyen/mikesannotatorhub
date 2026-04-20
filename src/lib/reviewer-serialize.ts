@@ -15,7 +15,7 @@ export type SerializedReviewerCase = {
   id: string;
   caseId: string;
   redbrickProject: string;
-  guide: { id: string; redbrickProject: string; title: string; content: string } | null;
+  guide: { id: string; title: string; content: string } | null;
   topic:
     | { id: string; name: string; description: string | null; projects: { id: string; redbrickProject: string }[] }
     | null;
@@ -46,7 +46,6 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
     guide: c.guide
       ? {
           id: c.guide.id,
-          redbrickProject: c.guide.redbrickProject,
           title: c.guide.title,
           content: c.guide.content,
         }

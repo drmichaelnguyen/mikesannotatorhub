@@ -3,6 +3,7 @@
 import { CaseDiscussion } from "@/components/CaseDiscussion";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ReviewCasePanel } from "@/components/ReviewCasePanel";
+import { RichTextContent } from "@/components/RichTextContent";
 import { ReviewerAssignCase } from "@/components/ReviewerAssignCase";
 import { ReviewerCaseEditor } from "@/components/reviewer/ReviewerCaseEditor";
 import { StarRating } from "@/components/StarRating";
@@ -12,6 +13,7 @@ import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import type { MentionOption } from "@/lib/guide-topic";
+import type { GuideOption } from "@/lib/guide-topic";
 import { CaseStatus, type CompensationType } from "@prisma/client";
 
 function compLabel(lang: Lang, type: CompensationType, amount: number) {
@@ -19,15 +21,23 @@ function compLabel(lang: Lang, type: CompensationType, amount: number) {
   return `${amount} (${t(lang, "comp_per_case")})`;
 }
 
+function htmlToPlainText(html: string) {
+  if (!html) return "";
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return (doc.body.textContent ?? "").replace(/\s+\n/g, "\n").trim();
+}
+
 export function ReviewerCaseDetailPanel({
   lang,
   c,
   annotators,
+  guides = [],
   mentionOptions = [],
 }: {
   lang: Lang;
   c: SerializedReviewerCase;
   annotators: { id: string; name: string; email: string }[];
+  guides?: GuideOption[];
   mentionOptions?: MentionOption[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
@@ -38,6 +48,8 @@ export function ReviewerCaseDetailPanel({
     c.compensationAmount,
     c.annotationMinutes,
   );
+  const guideGuideline = c.guide ? htmlToPlainText(c.guide.content) : "";
+  const showGuideline = !c.guide || c.guideline.trim() !== guideGuideline;
 
   return (
     <div className="space-y-4 p-4">
@@ -54,17 +66,23 @@ export function ReviewerCaseDetailPanel({
         </span>
       </div>
       <dl className="grid gap-2 text-sm md:grid-cols-2">
-        <div className="md:col-span-2">
-          <dt className="text-[var(--muted)]">{tk("case_guideline")}</dt>
-          <dd>{c.guideline}</dd>
-        </div>
         {c.guide && (
           <div className="md:col-span-2">
             <dt className="text-[var(--muted)]">{tk("case_guide")}</dt>
             <dd>
-              <div className="font-medium">{c.guide.title}</div>
-              <div className="text-xs text-[var(--muted)]">{c.guide.redbrickProject}</div>
+              <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3">
+                <div className="font-medium">{c.guide.title}</div>
+                <div className="mt-2">
+                  <RichTextContent html={c.guide.content} />
+                </div>
+              </div>
             </dd>
+          </div>
+        )}
+        {showGuideline && (
+          <div className="md:col-span-2">
+            <dt className="text-[var(--muted)]">{tk("case_guideline")}</dt>
+            <dd>{c.guideline}</dd>
           </div>
         )}
         {c.topic && (
@@ -150,7 +168,7 @@ export function ReviewerCaseDetailPanel({
           </>
         )}
       </dl>
-      <ReviewerCaseEditor lang={lang} c={c} />
+      <ReviewerCaseEditor lang={lang} c={c} guides={guides} />
       <div>
         <h3 className="mb-2 text-sm font-medium text-[var(--muted)]">{tk("discussion_title")}</h3>
         <CaseDiscussion

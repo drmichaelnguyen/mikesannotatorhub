@@ -237,10 +237,10 @@ export function AnnotatorWorkboard({
   const noteCase = noteCaseId ? (allRows.find((c) => c.id === noteCaseId) ?? null) : null;
   const selectedCaseId = searchParams.get("case");
   const detailMentionOptions = detailRow
-    ? buildMentionOptionsForProject(detailRow.redbrickProject, guides, topics)
+    ? buildMentionOptionsForProject(guides, topics)
     : [];
   const noteMentionOptions = noteCase
-    ? buildMentionOptionsForProject(noteCase.redbrickProject, guides, topics)
+    ? buildMentionOptionsForProject(guides, topics)
     : [];
 
   useEffect(() => {
@@ -346,7 +346,13 @@ export function AnnotatorWorkboard({
       <div className="overflow-x-auto px-1 pb-1">
         <table className="w-full min-w-[560px] border-collapse text-left text-xs">
           <thead>
-            <tr className="border-b border-[var(--border)] text-[var(--muted)]">
+            <tr
+              className={`border-b ${
+                mode === "pool"
+                  ? "border-amber-300 text-amber-900"
+                  : "border-[var(--border)] text-[var(--muted)]"
+              }`}
+            >
               <th className="py-1.5 pr-2 font-medium">{tk("col_case_id")}</th>
               <th className="py-1.5 pr-2 font-medium">{tk("col_redbrick")}</th>
               {mode !== "pool" && (
@@ -369,6 +375,10 @@ export function AnnotatorWorkboard({
                 key={c.id}
                 tabIndex={0}
                 className={`cursor-pointer border-b ${
+                  mode === "pool"
+                    ? "border-amber-200/80 bg-amber-50/90 hover:bg-amber-100/90"
+                    : ""
+                } ${
                   highlightReviewedComment
                     ? "border-[var(--danger)]/30 bg-[var(--danger)]/8"
                     : "border-[var(--border)]/50"
@@ -467,6 +477,7 @@ export function AnnotatorWorkboard({
 
   const emptyAll =
     available.length === 0 && inProgress.length === 0 && completed.length === 0;
+  const openPoolCount = available.length;
 
   return (
     <div className="space-y-6">
@@ -480,7 +491,19 @@ export function AnnotatorWorkboard({
       ) : (
         <>
           <section className="space-y-2">
-            <h3 className="text-sm font-semibold text-[var(--text)]">{tk("annotator_section_pool")}</h3>
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 shadow-sm shadow-amber-500/10">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-amber-950">{tk("annotator_section_pool")}</h3>
+                  <p className="mt-0.5 text-xs text-amber-950/80">
+                    Available work waiting for assignment
+                  </p>
+                </div>
+                <span className="rounded-full bg-amber-500 px-2.5 py-1 text-xs font-semibold text-white">
+                  {openPoolCount} available
+                </span>
+              </div>
+            </div>
             {available.length === 0 ? (
               <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
             ) : (
@@ -488,16 +511,18 @@ export function AnnotatorWorkboard({
                 {poolGroups.map((g) => (
                   <details
                     key={g.project}
-                    className="rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                    className="rounded-lg border border-amber-400/60 bg-amber-50/90 shadow-sm shadow-amber-500/5"
                   >
-                    <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
+                    <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-amber-950 hover:bg-amber-100/90">
                       <span className="inline-flex flex-wrap items-center gap-2">
                         <span>{g.project}</span>
                         <CopyTextButton lang={lang} value={g.project === "—" ? "" : g.project} />
-                        <span>(</span><StatusCountBadges cases={g.cases} /><span>)</span>
+                        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-900">
+                          <StatusCountBadges cases={g.cases} />
+                        </span>
                       </span>
                     </summary>
-                    <div className="border-t border-[var(--border)]">{renderProjectTable(g.cases, "pool")}</div>
+                    <div className="border-t border-amber-400/50">{renderProjectTable(g.cases, "pool")}</div>
                   </details>
                 ))}
               </div>
@@ -558,16 +583,16 @@ export function AnnotatorWorkboard({
 
       {detailRow && (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/50" role="presentation">
-          <button
-            type="button"
-            className="absolute inset-0 h-full w-full cursor-default border-0 bg-transparent"
+          <div
+            className="absolute inset-0 h-full w-full cursor-default"
             aria-label={tk("drawer_close")}
             onClick={closeDetail}
           />
           <div
-            className="relative z-10 flex h-full w-full max-w-xl flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-xl"
+            className="relative z-10 flex h-full w-full flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-xl lg:w-2/3"
             role="dialog"
             aria-modal
+            onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
               <span className="text-sm font-medium">{tk("action_details")}</span>

@@ -88,15 +88,12 @@ model AnnotationCase {
 
 model Guide {
   id              String          @id @default(cuid())
-  redbrickProject String
   title           String
   content         String
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
-  cases AnnotationCase[]
-
-  @@index([redbrickProject])
+  cases           AnnotationCase[]
 }
 
 model Topic {
