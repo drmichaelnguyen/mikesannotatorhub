@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { createCaseAction, type CreateCaseActionResult } from "@/app/actions/cases";
+import type { GuideOption, TopicOption } from "@/lib/guide-topic";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 
@@ -15,9 +16,48 @@ function formatIdList(ids: string[], max = 40) {
 
 type Annotator = { id: string; name: string; email: string };
 
-export function CreateCaseForm({ lang, annotators = [] }: { lang: Lang; annotators?: Annotator[] }) {
+type GuideSelectOption = GuideOption;
+
+export function CreateCaseForm({
+  lang,
+  annotators = [],
+  guides = [],
+  topics = [],
+}: {
+  lang: Lang;
+  annotators?: Annotator[];
+  guides?: GuideSelectOption[];
+  topics?: TopicOption[];
+}) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
+  const [redbrickProject, setRedbrickProject] = useState("");
+  const [guideId, setGuideId] = useState("");
+  const [topicId, setTopicId] = useState("");
+  const [guideline, setGuideline] = useState("");
+  const [scopeOfWork, setScopeOfWork] = useState("");
+  const [minMinutesPerCase, setMinMinutesPerCase] = useState("");
+  const [maxMinutesPerCase, setMaxMinutesPerCase] = useState("");
+  const [compensationType, setCompensationType] = useState<"PER_CASE" | "PER_MINUTE">("PER_CASE");
+  const [compensationAmount, setCompensationAmount] = useState("");
+  const [assignEmail, setAssignEmail] = useState("");
+  const lastGuideId = useRef("");
+
+  const visibleGuides = useMemo(
+    () => guides.filter((guide) => !redbrickProject.trim() || guide.redbrickProject === redbrickProject.trim()),
+    [guides, redbrickProject],
+  );
+  const visibleTopics = useMemo(
+    () =>
+      topics.filter(
+        (topic) =>
+          !redbrickProject.trim() ||
+          topic.projects.length === 0 ||
+          topic.projects.some((p) => p.redbrickProject === redbrickProject.trim()),
+      ),
+    [topics, redbrickProject],
+  );
+
   const [state, formAction, pending] = useActionState(
     async (_: CreateCaseActionResult | null, fd: FormData) => {
       return createCaseAction(fd);
@@ -28,6 +68,13 @@ export function CreateCaseForm({ lang, annotators = [] }: { lang: Lang; annotato
   useEffect(() => {
     if (state?.ok) router.refresh();
   }, [state, router]);
+
+  useEffect(() => {
+    if (guideId === lastGuideId.current) return;
+    lastGuideId.current = guideId;
+    const selected = visibleGuides.find((guide) => guide.id === guideId);
+    setGuideline(selected ? selected.content : "");
+  }, [guideId, visibleGuides]);
 
   return (
     <form action={formAction} className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 md:grid-cols-2">
@@ -47,8 +94,42 @@ export function CreateCaseForm({ lang, annotators = [] }: { lang: Lang; annotato
         <input
           name="redbrickProject"
           required
+          value={redbrickProject}
+          onChange={(e) => setRedbrickProject(e.target.value)}
           className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
         />
+      </label>
+      <label>
+        <span className="text-sm text-[var(--muted)]">{tk("case_guide")}</span>
+        <select
+          name="guideId"
+          value={guideId}
+          onChange={(e) => setGuideId(e.target.value)}
+          className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
+        >
+          <option value="">—</option>
+          {visibleGuides.map((guide) => (
+            <option key={guide.id} value={guide.id}>
+              {guide.redbrickProject} / {guide.title}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span className="text-sm text-[var(--muted)]">{tk("case_topic")}</span>
+        <select
+          name="topicId"
+          value={topicId}
+          onChange={(e) => setTopicId(e.target.value)}
+          className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
+        >
+          <option value="">—</option>
+          {visibleTopics.map((topic) => (
+            <option key={topic.id} value={topic.id}>
+              {topic.name}
+            </option>
+          ))}
+        </select>
       </label>
       <label className="md:col-span-2">
         <span className="text-sm text-[var(--muted)]">{tk("case_guideline")}</span>
@@ -56,6 +137,8 @@ export function CreateCaseForm({ lang, annotators = [] }: { lang: Lang; annotato
           name="guideline"
           required
           rows={3}
+          value={guideline}
+          onChange={(e) => setGuideline(e.target.value)}
           className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
         />
       </label>
@@ -65,6 +148,8 @@ export function CreateCaseForm({ lang, annotators = [] }: { lang: Lang; annotato
           name="scopeOfWork"
           required
           rows={3}
+          value={scopeOfWork}
+          onChange={(e) => setScopeOfWork(e.target.value)}
           className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
         />
       </label>
@@ -75,6 +160,8 @@ export function CreateCaseForm({ lang, annotators = [] }: { lang: Lang; annotato
           type="number"
           min={1}
           required
+          value={minMinutesPerCase}
+          onChange={(e) => setMinMinutesPerCase(e.target.value)}
           className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
         />
       </label>
@@ -85,6 +172,8 @@ export function CreateCaseForm({ lang, annotators = [] }: { lang: Lang; annotato
           type="number"
           min={1}
           required
+          value={maxMinutesPerCase}
+          onChange={(e) => setMaxMinutesPerCase(e.target.value)}
           className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
         />
       </label>
@@ -92,6 +181,8 @@ export function CreateCaseForm({ lang, annotators = [] }: { lang: Lang; annotato
         <span className="text-sm text-[var(--muted)]">{tk("case_compType")}</span>
         <select
           name="compensationType"
+          value={compensationType}
+          onChange={(e) => setCompensationType(e.target.value as "PER_CASE" | "PER_MINUTE")}
           className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
         >
           <option value="PER_CASE">{tk("comp_per_case")}</option>
@@ -106,6 +197,8 @@ export function CreateCaseForm({ lang, annotators = [] }: { lang: Lang; annotato
           min={0}
           step="0.01"
           required
+          value={compensationAmount}
+          onChange={(e) => setCompensationAmount(e.target.value)}
           className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
         />
       </label>
@@ -113,6 +206,8 @@ export function CreateCaseForm({ lang, annotators = [] }: { lang: Lang; annotato
         <span className="text-sm text-[var(--muted)]">{tk("assign_email")}</span>
         <select
           name="assignEmail"
+          value={assignEmail}
+          onChange={(e) => setAssignEmail(e.target.value)}
           className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
         >
           <option value="">— {tk("unassigned")} —</option>

@@ -1,6 +1,10 @@
 import { redirect } from "next/navigation";
 import { getLangFromCookies } from "@/app/actions/lang";
-import { getAnnotatorBoard, getAnnotatorCompensationSummary } from "@/app/actions/cases";
+import {
+  getAnnotatorBoard,
+  getAnnotatorCompensationSummary,
+  listGuidesAndTopics,
+} from "@/app/actions/cases";
 import { getNotifications } from "@/app/actions/notifications";
 import { AnnotatorStatsPanel } from "@/components/AnnotatorStatsPanel";
 import { AnnotatorWorkboard } from "@/components/annotator/AnnotatorWorkboard";
@@ -19,11 +23,13 @@ export default async function AnnotatorPage() {
 
   let board;
   let summary;
+  let guidesAndTopics;
   let notifGroups;
   try {
-    [board, summary, notifGroups] = await Promise.all([
+    [board, summary, guidesAndTopics, notifGroups] = await Promise.all([
       getAnnotatorBoard(),
       getAnnotatorCompensationSummary(),
+      listGuidesAndTopics(),
       getNotifications(),
     ]);
   } catch {
@@ -51,6 +57,8 @@ export default async function AnnotatorPage() {
             available={board.available}
             mine={board.mine}
             rejected={board.rejected}
+            guides={guidesAndTopics.guides}
+            topics={guidesAndTopics.topics}
           />
         </section>
       </main>

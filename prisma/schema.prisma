@@ -58,6 +58,10 @@ model AnnotationCase {
   id                 String             @id @default(cuid())
   caseId             String             @unique
   redbrickProject    String
+  guideId            String?
+  guide              Guide?             @relation(fields: [guideId], references: [id], onDelete: SetNull)
+  topicId            String?
+  topic              Topic?             @relation(fields: [topicId], references: [id], onDelete: SetNull)
   guideline          String
   scopeOfWork        String
   minMinutesPerCase  Int @default(1)
@@ -80,6 +84,40 @@ model AnnotationCase {
 
   reviews   Review[]
   caseNotes CaseNote[]
+}
+
+model Guide {
+  id              String          @id @default(cuid())
+  redbrickProject String
+  title           String
+  content         String
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  cases AnnotationCase[]
+
+  @@index([redbrickProject])
+}
+
+model Topic {
+  id          String          @id @default(cuid())
+  name        String          @unique
+  description String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  projects TopicProject[]
+  cases    AnnotationCase[]
+}
+
+model TopicProject {
+  id              String   @id @default(cuid())
+  topicId         String
+  topic           Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  redbrickProject String
+
+  @@unique([topicId, redbrickProject])
+  @@index([redbrickProject])
 }
 
 model CaseNote {

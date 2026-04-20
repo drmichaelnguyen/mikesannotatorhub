@@ -17,6 +17,8 @@ export function ReviewerCaseEditor({
     caseId: string;
     status: CaseStatus;
     redbrickProject: string;
+    guide?: { id: string } | null;
+    topic?: { id: string } | null;
     guideline: string;
     scopeOfWork: string;
     minMinutesPerCase: number;
@@ -30,6 +32,8 @@ export function ReviewerCaseEditor({
   const [caseId, setCaseId] = useState(c.caseId);
   const [status, setStatus] = useState<CaseStatus>(c.status);
   const [redbrickProject, setRedbrickProject] = useState(c.redbrickProject);
+  const [guideId, setGuideId] = useState(c.guide?.id ?? "");
+  const [topicId, setTopicId] = useState(c.topic?.id ?? "");
   const [guideline, setGuideline] = useState(c.guideline);
   const [scopeOfWork, setScopeOfWork] = useState(c.scopeOfWork);
   const [minMinutes, setMinMinutes] = useState(String(c.minMinutesPerCase));
@@ -44,6 +48,8 @@ export function ReviewerCaseEditor({
     setCaseId(c.caseId);
     setStatus(c.status);
     setRedbrickProject(c.redbrickProject);
+    setGuideId(c.guide?.id ?? "");
+    setTopicId(c.topic?.id ?? "");
     setGuideline(c.guideline);
     setScopeOfWork(c.scopeOfWork);
     setMinMinutes(String(c.minMinutesPerCase));
@@ -76,6 +82,8 @@ export function ReviewerCaseEditor({
         caseId,
         status,
         redbrickProject,
+        guideId,
+        topicId,
         guideline,
         scopeOfWork,
         minMinutesPerCase,
@@ -130,6 +138,8 @@ export function ReviewerCaseEditor({
             className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
           />
         </label>
+        <input type="hidden" name="guideId" value={guideId} />
+        <input type="hidden" name="topicId" value={topicId} />
         <label className="md:col-span-2 text-sm">
           <span className="text-[var(--muted)]">{tk("case_guideline")}</span>
           <textarea

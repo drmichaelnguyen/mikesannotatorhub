@@ -11,6 +11,7 @@ import { formatCompensationAmount, formatDate } from "@/lib/format";
 import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
+import type { MentionOption } from "@/lib/guide-topic";
 import { CaseStatus, type CompensationType } from "@prisma/client";
 
 function compLabel(lang: Lang, type: CompensationType, amount: number) {
@@ -22,10 +23,12 @@ export function ReviewerCaseDetailPanel({
   lang,
   c,
   annotators,
+  mentionOptions = [],
 }: {
   lang: Lang;
   c: SerializedReviewerCase;
   annotators: { id: string; name: string; email: string }[];
+  mentionOptions?: MentionOption[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const showAuditedInfo =
@@ -55,6 +58,26 @@ export function ReviewerCaseDetailPanel({
           <dt className="text-[var(--muted)]">{tk("case_guideline")}</dt>
           <dd>{c.guideline}</dd>
         </div>
+        {c.guide && (
+          <div className="md:col-span-2">
+            <dt className="text-[var(--muted)]">{tk("case_guide")}</dt>
+            <dd>
+              <div className="font-medium">{c.guide.title}</div>
+              <div className="text-xs text-[var(--muted)]">{c.guide.redbrickProject}</div>
+            </dd>
+          </div>
+        )}
+        {c.topic && (
+          <div className="md:col-span-2">
+            <dt className="text-[var(--muted)]">{tk("case_topic")}</dt>
+            <dd>
+              <div className="font-medium">{c.topic.name}</div>
+              <div className="text-xs text-[var(--muted)]">
+                {c.topic.projects.map((p) => p.redbrickProject).join(", ") || "—"}
+              </div>
+            </dd>
+          </div>
+        )}
         <div className="md:col-span-2">
           <dt className="text-[var(--muted)]">{tk("case_scope")}</dt>
           <dd>{c.scopeOfWork}</dd>
@@ -134,6 +157,7 @@ export function ReviewerCaseDetailPanel({
           lang={lang}
           caseDbId={c.id}
           canPost
+          mentionOptions={mentionOptions}
           notes={c.caseNotes.map((n) => ({
             id: n.id,
             parentNoteId: n.parentNoteId,

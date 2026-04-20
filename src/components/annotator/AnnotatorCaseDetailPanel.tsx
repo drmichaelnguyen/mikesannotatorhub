@@ -8,10 +8,15 @@ import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
+import type { MentionOption } from "@/lib/guide-topic";
 import type { AnnotationCase, CaseNote, CompensationType, Review, User } from "@prisma/client";
 import { CaseStatus } from "@prisma/client";
 
 export type AnnotatorCaseRow = AnnotationCase & {
+  guide: { id: string; redbrickProject: string; title: string; content: string } | null;
+  topic:
+    | { id: string; name: string; description: string | null; projects: { id: string; redbrickProject: string }[] }
+    | null;
   reviews?: Review[];
   caseNotes?: (CaseNote & { author: Pick<User, "id" | "name" | "role"> })[];
   auditedBy?: { id: string; name: string; email: string } | null;
@@ -37,10 +42,12 @@ export function AnnotatorCaseDetailPanel({
   lang,
   row,
   canPostDiscussion,
+  mentionOptions = [],
 }: {
   lang: Lang;
   row: AnnotatorCaseRow;
   canPostDiscussion: boolean;
+  mentionOptions?: MentionOption[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const last = row.reviews?.[0];
@@ -74,6 +81,26 @@ export function AnnotatorCaseDetailPanel({
           <dt className="text-[var(--muted)]">{tk("case_guideline")}</dt>
           <dd>{row.guideline}</dd>
         </div>
+        {row.guide && (
+          <div className="md:col-span-2">
+            <dt className="text-[var(--muted)]">{tk("case_guide")}</dt>
+            <dd>
+              <div className="font-medium">{row.guide.title}</div>
+              <div className="text-xs text-[var(--muted)]">{row.guide.redbrickProject}</div>
+            </dd>
+          </div>
+        )}
+        {row.topic && (
+          <div className="md:col-span-2">
+            <dt className="text-[var(--muted)]">{tk("case_topic")}</dt>
+            <dd>
+              <div className="font-medium">{row.topic.name}</div>
+              <div className="text-xs text-[var(--muted)]">
+                {row.topic.projects.map((p) => p.redbrickProject).join(", ") || "—"}
+              </div>
+            </dd>
+          </div>
+        )}
         <div className="md:col-span-2">
           <dt className="text-[var(--muted)]">{tk("case_scope")}</dt>
           <dd>{row.scopeOfWork}</dd>
@@ -160,6 +187,7 @@ export function AnnotatorCaseDetailPanel({
           lang={lang}
           caseDbId={row.id}
           canPost={canPostDiscussion}
+          mentionOptions={mentionOptions}
           notes={row.caseNotes ? toDiscussionNotes(row.caseNotes) : []}
         />
       </div>

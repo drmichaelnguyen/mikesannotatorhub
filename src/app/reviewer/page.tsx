@@ -1,9 +1,14 @@
 import { redirect } from "next/navigation";
 import { getLangFromCookies } from "@/app/actions/lang";
-import { listAnnotatorsForAssignment, listCasesForReviewer } from "@/app/actions/cases";
+import {
+  listAnnotatorsForAssignment,
+  listCasesForReviewer,
+  listGuidesAndTopics,
+} from "@/app/actions/cases";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { CreateAnnotatorForm } from "@/components/CreateAnnotatorForm";
 import { CreateCaseForm } from "@/components/CreateCaseForm";
+import { GuideTopicManager } from "@/components/reviewer/GuideTopicManager";
 import { NavBar } from "@/components/NavBar";
 import { ReviewerWorkboard } from "@/components/reviewer/ReviewerWorkboard";
 import { ReviewerDashboardStatsPanel } from "@/components/reviewer/ReviewerDashboardStatsPanel";
@@ -25,11 +30,13 @@ export default async function ReviewerPage() {
 
   let cases: ReviewerCaseRow[];
   let annotators: Awaited<ReturnType<typeof listAnnotatorsForAssignment>>;
+  let guidesAndTopics: Awaited<ReturnType<typeof listGuidesAndTopics>>;
   let notifGroups;
   try {
-    [cases, annotators, notifGroups] = await Promise.all([
+    [cases, annotators, guidesAndTopics, notifGroups] = await Promise.all([
       listCasesForReviewer() as Promise<ReviewerCaseRow[]>,
       listAnnotatorsForAssignment(),
+      listGuidesAndTopics(),
       getNotifications(),
     ]);
   } catch {
@@ -75,17 +82,33 @@ export default async function ReviewerPage() {
           qualityCount={qualityRatings.length}
         />
         <section>
+          <CollapsibleSection title={tk("reviewer_guide_section")}>
+            <GuideTopicManager lang={lang} guides={guidesAndTopics.guides} topics={guidesAndTopics.topics} />
+          </CollapsibleSection>
+        </section>
+        <section>
           <CollapsibleSection title={tk("reviewer_create_annotator")}>
             <CreateAnnotatorForm lang={lang} />
           </CollapsibleSection>
         </section>
         <section>
           <CollapsibleSection title={tk("reviewer_create")}>
-            <CreateCaseForm lang={lang} annotators={annotators} />
+            <CreateCaseForm
+              lang={lang}
+              annotators={annotators}
+              guides={guidesAndTopics.guides}
+              topics={guidesAndTopics.topics}
+            />
           </CollapsibleSection>
         </section>
         <section>
-          <ReviewerWorkboard lang={lang} cases={serialized} annotators={annotators} />
+          <ReviewerWorkboard
+            lang={lang}
+            cases={serialized}
+            annotators={annotators}
+            guides={guidesAndTopics.guides}
+            topics={guidesAndTopics.topics}
+          />
         </section>
       </main>
     </div>

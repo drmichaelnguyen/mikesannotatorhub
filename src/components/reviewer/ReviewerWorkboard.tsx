@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { addCaseNoteAction, reviewCaseAction, reviewerAssignCaseAction } from "@/app/actions/cases";
+import { MentionTextarea } from "@/components/CaseDiscussion";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
 import { StarRating } from "@/components/StarRating";
@@ -11,6 +12,7 @@ import { ReviewerCaseDetailPanel } from "@/components/reviewer/ReviewerCaseDetai
 import { getClipboardImageFile, getClipboardImageFiles, readFileAsDataUrl, readFilesAsDataUrls } from "@/lib/client-image-data";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate, formatMinutes } from "@/lib/format";
+import { buildMentionOptionsForProject, type GuideOption, type TopicOption } from "@/lib/guide-topic";
 import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -271,10 +273,14 @@ export function ReviewerWorkboard({
   lang,
   cases,
   annotators,
+  guides,
+  topics,
 }: {
   lang: Lang;
   cases: SerializedReviewerCase[];
   annotators: { id: string; name: string; email: string }[];
+  guides: GuideOption[];
+  topics: TopicOption[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
@@ -318,6 +324,12 @@ export function ReviewerWorkboard({
     : null;
   const selectedCaseId = searchParams.get("case");
   const annotatorsQuery = searchParams.get("annotators");
+  const detailMentionOptions = detailCase
+    ? buildMentionOptionsForProject(detailCase.redbrickProject, guides, topics)
+    : [];
+  const noteMentionOptions = noteCase
+    ? buildMentionOptionsForProject(noteCase.redbrickProject, guides, topics)
+    : [];
 
   function syncCaseQuery(caseId: string | null) {
     const params = new URLSearchParams(searchParams.toString());
@@ -760,7 +772,12 @@ export function ReviewerWorkboard({
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <ReviewerCaseDetailPanel lang={lang} c={detailCase} annotators={annotators} />
+              <ReviewerCaseDetailPanel
+                lang={lang}
+                c={detailCase}
+                annotators={annotators}
+                mentionOptions={detailMentionOptions}
+              />
             </div>
           </div>
         </div>
@@ -1176,13 +1193,14 @@ export function ReviewerWorkboard({
           >
             <h3 className="mb-2 font-medium">{tk("action_comment")}</h3>
             <p className="mb-2 text-xs text-[var(--muted)]">{noteCase.caseId}</p>
-            <textarea
+            <MentionTextarea
+              lang={lang}
               value={noteText}
-              onChange={(e) => setNoteText(e.target.value)}
+              onChange={setNoteText}
               onPaste={onPasteNote}
               rows={4}
-              className="mb-2 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm"
               placeholder={tk("review_comment")}
+              mentionOptions={noteMentionOptions}
             />
             <p className="mb-2 text-xs text-[var(--muted)]">{tk("discussion_hint")}</p>
             <div className="mb-2">

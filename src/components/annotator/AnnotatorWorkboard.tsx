@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useActionState, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { addCaseNoteAction, assignCaseAction, submitAnnotationAction } from "@/app/actions/cases";
+import { MentionTextarea } from "@/components/CaseDiscussion";
 import {
   AnnotatorCaseDetailPanel,
   type AnnotatorCaseRow,
@@ -14,6 +15,7 @@ import { StarRating } from "@/components/StarRating";
 import { getClipboardImageFiles, readFilesAsDataUrls } from "@/lib/client-image-data";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount } from "@/lib/format";
+import { buildMentionOptionsForProject, type GuideOption, type TopicOption } from "@/lib/guide-topic";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import { CaseStatus } from "@prisma/client";
@@ -185,11 +187,15 @@ export function AnnotatorWorkboard({
   available,
   mine,
   rejected,
+  guides,
+  topics,
 }: {
   lang: Lang;
   available: AnnotatorCaseRow[];
   mine: AnnotatorCaseRow[];
   rejected: AnnotatorCaseRow[];
+  guides: GuideOption[];
+  topics: TopicOption[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
@@ -230,6 +236,12 @@ export function AnnotatorWorkboard({
   const detailRow = detailId ? (allRows.find((c) => c.id === detailId) ?? null) : null;
   const noteCase = noteCaseId ? (allRows.find((c) => c.id === noteCaseId) ?? null) : null;
   const selectedCaseId = searchParams.get("case");
+  const detailMentionOptions = detailRow
+    ? buildMentionOptionsForProject(detailRow.redbrickProject, guides, topics)
+    : [];
+  const noteMentionOptions = noteCase
+    ? buildMentionOptionsForProject(noteCase.redbrickProject, guides, topics)
+    : [];
 
   useEffect(() => {
     if (!selectedCaseId) {
@@ -572,6 +584,7 @@ export function AnnotatorWorkboard({
                 lang={lang}
                 row={detailRow}
                 canPostDiscussion={canPostInDetail(detailRow)}
+                mentionOptions={detailMentionOptions}
               />
             </div>
           </div>
@@ -594,13 +607,14 @@ export function AnnotatorWorkboard({
           >
             <h3 className="mb-2 font-medium">{tk("action_comment")}</h3>
             <p className="mb-2 text-xs text-[var(--muted)]">{noteCase.caseId}</p>
-            <textarea
+            <MentionTextarea
+              lang={lang}
               value={noteText}
-              onChange={(e) => setNoteText(e.target.value)}
+              onChange={setNoteText}
               onPaste={onPasteNote}
               rows={4}
-              className="mb-2 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm"
               placeholder={tk("review_comment")}
+              mentionOptions={noteMentionOptions}
             />
             <p className="mb-2 text-xs text-[var(--muted)]">{tk("discussion_hint")}</p>
             <div className="mb-2">
