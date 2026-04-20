@@ -317,7 +317,6 @@ export function ReviewerWorkboard({
   const [assignCaseId, setAssignCaseId] = useState<string | null>(null);
   const [assignAnnotatorId, setAssignAnnotatorId] = useState("");
   const [annotatorFocusId, setAnnotatorFocusId] = useState<string | null>(null);
-  const [annotatorPerfOpen, setAnnotatorPerfOpen] = useState(false);
   const [selectedAnnotatorId, setSelectedAnnotatorId] = useState<string | null>(null);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -354,11 +353,9 @@ export function ReviewerWorkboard({
 
   useEffect(() => {
     if (annotatorsQuery === "1") {
-      setAnnotatorPerfOpen(true);
       setDetailId(null);
       return;
     }
-    setAnnotatorPerfOpen(false);
     setSelectedAnnotatorId(null);
     setSelectedProject(null);
   }, [annotatorsQuery]);
@@ -397,7 +394,6 @@ export function ReviewerWorkboard({
   }
 
   function closeAnnotatorPerformance() {
-    setAnnotatorPerfOpen(false);
     setSelectedAnnotatorId(null);
     setSelectedProject(null);
     const params = new URLSearchParams(searchParams.toString());
@@ -416,7 +412,6 @@ export function ReviewerWorkboard({
   }
 
   function openCaseFromPerformance(caseId: string) {
-    setAnnotatorPerfOpen(false);
     setSelectedAnnotatorId(null);
     setSelectedProject(null);
     setDetailId(caseId);
@@ -861,7 +856,7 @@ export function ReviewerWorkboard({
         </div>
       )}
 
-      {annotatorPerfOpen && (
+      {annotatorsQuery === "1" && (
         <div className="fixed inset-0 z-[70] flex justify-end bg-black/50" role="presentation">
           <button
             type="button"
