@@ -5,6 +5,9 @@ import { getLangFromCookies } from "@/app/actions/lang";
 export const metadata: Metadata = {
   title: "Annotation Hub",
   description: "Case and review management for annotation teams",
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export default async function RootLayout({
