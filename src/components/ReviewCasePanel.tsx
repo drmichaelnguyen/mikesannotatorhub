@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useState, useTransition } from "react";
 import { reviewCaseAction } from "@/app/actions/cases";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
+import { StarRating } from "@/components/StarRating";
 import { getClipboardImageFile, readFileAsDataUrl } from "@/lib/client-image-data";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -19,6 +20,7 @@ export function ReviewCasePanel({
   const [comment, setComment] = useState("");
   const [rawImage, setRawImage] = useState<string | null>(null);
   const [markedImage, setMarkedImage] = useState<string | null>(null);
+  const [qualityRating, setQualityRating] = useState<number | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const router = useRouter();
@@ -44,6 +46,10 @@ export function ReviewCasePanel({
   }, []);
 
   function submit(decision: "ACCEPT" | "REJECT") {
+    if (!qualityRating) {
+      setMsg(tk("rating_required"));
+      return;
+    }
     setMsg(null);
     start(async () => {
       const res = await reviewCaseAction({
@@ -51,8 +57,9 @@ export function ReviewCasePanel({
         decision,
         comment,
         screenshotData: markedImage ?? rawImage,
+        qualityRating,
       });
-      if (!res.ok) setMsg(tk("required"));
+      if (!res.ok) setMsg(res.error === "rating" ? tk("rating_required") : tk("required"));
       else {
         setMsg(
           `${decision === "ACCEPT" ? tk("accept") : tk("reject")} — ${tk("compensation_preview")}: ${res.payout}`,
@@ -75,6 +82,12 @@ export function ReviewCasePanel({
         />
       </label>
       <p className="text-xs text-[var(--muted)]">{tk("discussion_hint")}</p>
+      <StarRating
+        label={tk("reviewer_quality_rating")}
+        value={qualityRating}
+        onChange={setQualityRating}
+        required
+      />
       <div>
         <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
         <input type="file" accept="image/*" onChange={onFile} className="mt-1 block text-sm" />

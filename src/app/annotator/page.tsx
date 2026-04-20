@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getLangFromCookies } from "@/app/actions/lang";
 import { getAnnotatorBoard, getAnnotatorCompensationSummary } from "@/app/actions/cases";
-import { getAnnotatorNotifications } from "@/app/actions/notifications";
+import { getNotifications } from "@/app/actions/notifications";
 import { AnnotatorStatsPanel } from "@/components/AnnotatorStatsPanel";
 import { AnnotatorWorkboard } from "@/components/annotator/AnnotatorWorkboard";
 import { NavBar } from "@/components/NavBar";
@@ -24,7 +24,7 @@ export default async function AnnotatorPage() {
     [board, summary, notifGroups] = await Promise.all([
       getAnnotatorBoard(),
       getAnnotatorCompensationSummary(),
-      getAnnotatorNotifications(),
+      getNotifications(),
     ]);
   } catch {
     redirect("/login");

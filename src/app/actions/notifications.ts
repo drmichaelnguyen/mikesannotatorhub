@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
-import { requireRole } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import type { NotifType } from "@/lib/notification-types";
 
 export type NotificationItem = {
@@ -16,8 +16,8 @@ export type NotificationGroup = {
   items: NotificationItem[];
 };
 
-export async function getAnnotatorNotifications(): Promise<NotificationGroup[]> {
-  const user = await requireRole("ANNOTATOR");
+export async function getNotifications(): Promise<NotificationGroup[]> {
+  const user = await requireUser();
   const rows = await prisma.notification.findMany({
     where: { userId: user.id, readAt: null },
     orderBy: { createdAt: "desc" },
@@ -41,7 +41,7 @@ export async function getAnnotatorNotifications(): Promise<NotificationGroup[]> 
 }
 
 export async function markCaseNotificationsReadAction(annotationCaseDbId: string) {
-  const user = await requireRole("ANNOTATOR");
+  const user = await requireUser();
   await prisma.notification.updateMany({
     where: { userId: user.id, annotationCaseId: annotationCaseDbId, readAt: null },
     data: { readAt: new Date() },
@@ -50,12 +50,20 @@ export async function markCaseNotificationsReadAction(annotationCaseDbId: string
 }
 
 export async function markAllNotificationsReadAction() {
-  const user = await requireRole("ANNOTATOR");
+  const user = await requireUser();
   await prisma.notification.updateMany({
     where: { userId: user.id, readAt: null },
     data: { readAt: new Date() },
   });
   return { ok: true as const };
+}
+
+export async function getReviewerNotificationRecipients() {
+  const reviewers = await prisma.user.findMany({
+    where: { role: "REVIEWER" },
+    select: { id: true },
+  });
+  return reviewers.map((u) => u.id);
 }
 
 export async function pushNotification(

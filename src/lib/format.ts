@@ -16,3 +16,11 @@ export function formatCompensationAmount(lang: Lang, value: number) {
     maximumFractionDigits: 2,
   }).format(value);
 }
+
+export function formatMinutes(lang: Lang, value: number | null) {
+  if (value == null) return "—";
+  return `${new Intl.NumberFormat(lang === "vi" ? "vi-VN" : "en-US", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(value)} min`;
+}

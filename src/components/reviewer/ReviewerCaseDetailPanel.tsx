@@ -5,6 +5,7 @@ import { CopyTextButton } from "@/components/CopyTextButton";
 import { ReviewCasePanel } from "@/components/ReviewCasePanel";
 import { ReviewerAssignCase } from "@/components/ReviewerAssignCase";
 import { ReviewerCaseEditor } from "@/components/reviewer/ReviewerCaseEditor";
+import { StarRating } from "@/components/StarRating";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate } from "@/lib/format";
 import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
@@ -86,6 +87,24 @@ export function ReviewerCaseDetailPanel({
           <dt className="text-[var(--muted)]">{tk("case_annotationMinutes")}</dt>
           <dd>{c.annotationMinutes ?? "—"}</dd>
         </div>
+        <div>
+          <dt className="text-[var(--muted)]">{tk("case_difficultyRating")}</dt>
+          <dd>
+            {c.difficultyRating == null ? (
+              "—"
+            ) : (
+              <StarRating label={tk("case_difficultyRating")} value={c.difficultyRating} />
+            )}
+          </dd>
+        </div>
+        {c.qualityRating != null && (
+          <div>
+            <dt className="text-[var(--muted)]">{tk("case_qualityRating")}</dt>
+            <dd>
+              <StarRating label={tk("case_qualityRating")} value={c.qualityRating} />
+            </dd>
+          </div>
+        )}
         {showAuditedInfo && (
           <>
             <div>
@@ -117,6 +136,7 @@ export function ReviewerCaseDetailPanel({
           canPost
           notes={c.caseNotes.map((n) => ({
             id: n.id,
+            parentNoteId: n.parentNoteId,
             content: n.content,
             images: n.images,
             createdAt: n.createdAt,

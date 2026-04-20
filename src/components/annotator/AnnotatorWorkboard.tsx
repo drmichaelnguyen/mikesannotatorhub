@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useActionState, useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { addCaseNoteAction, assignCaseAction, submitAnnotationAction } from "@/app/actions/cases";
 import {
   AnnotatorCaseDetailPanel,
@@ -9,6 +10,7 @@ import {
 } from "@/components/annotator/AnnotatorCaseDetailPanel";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
+import { StarRating } from "@/components/StarRating";
 import { getClipboardImageFiles, readFilesAsDataUrls } from "@/lib/client-image-data";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount } from "@/lib/format";
@@ -113,18 +115,22 @@ function AnnotatorSubmitForm({
   lang,
   caseDbId,
   initialMinutes,
+  initialDifficultyRating,
 }: {
   lang: Lang;
   caseDbId: string;
   initialMinutes: number | null;
+  initialDifficultyRating: number | null;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
   const [minutes, setMinutes] = useState(String(initialMinutes ?? ""));
+  const [difficultyRating, setDifficultyRating] = useState<number | null>(initialDifficultyRating);
   const [state, action, pending] = useActionState(
     async (_: SubmitResult | null, fd: FormData) => {
       const m = Number(fd.get("minutes"));
-      return submitAnnotationAction(caseDbId, m);
+      const r = Number(fd.get("difficultyRating"));
+      return submitAnnotationAction(caseDbId, m, r);
     },
     null as SubmitResult | null,
   );
@@ -138,6 +144,7 @@ function AnnotatorSubmitForm({
   return (
     <div className="flex flex-col items-start gap-1">
       <form action={action} className="flex flex-wrap items-end gap-1">
+        <input type="hidden" name="difficultyRating" value={difficultyRating ?? ""} />
         <label className="flex items-center gap-1 text-[var(--muted)]">
           <span className="sr-only">{tk("minutes_spent")}</span>
           <input
@@ -158,8 +165,16 @@ function AnnotatorSubmitForm({
           {tk("submit")}
         </button>
       </form>
+      <StarRating
+        label={tk("submit_difficulty")}
+        value={difficultyRating}
+        onChange={setDifficultyRating}
+        required
+      />
       {state && !state.ok && (
-        <span className="text-[var(--danger)]">{tk("required")}</span>
+        <span className="text-[var(--danger)]">
+          {state.error === "rating" ? tk("rating_required") : tk("required")}
+        </span>
       )}
     </div>
   );
@@ -178,6 +193,8 @@ export function AnnotatorWorkboard({
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
 
   const { inProgress, completed } = useMemo(() => {
     const activeStatuses = new Set<CaseStatus>([
@@ -212,6 +229,35 @@ export function AnnotatorWorkboard({
 
   const detailRow = detailId ? (allRows.find((c) => c.id === detailId) ?? null) : null;
   const noteCase = noteCaseId ? (allRows.find((c) => c.id === noteCaseId) ?? null) : null;
+  const selectedCaseId = searchParams.get("case");
+
+  useEffect(() => {
+    if (!selectedCaseId) {
+      setDetailId(null);
+      return;
+    }
+    if (allRows.some((c) => c.id === selectedCaseId) && detailId !== selectedCaseId) {
+      setDetailId(selectedCaseId);
+    }
+  }, [allRows, detailId, selectedCaseId]);
+
+  function syncCaseQuery(caseId: string | null) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (caseId) params.set("case", caseId);
+    else params.delete("case");
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }
+
+  function openDetail(caseId: string) {
+    setDetailId(caseId);
+    syncCaseQuery(caseId);
+  }
+
+  function closeDetail() {
+    setDetailId(null);
+    syncCaseQuery(null);
+  }
 
   function refresh() {
     router.refresh();
@@ -315,11 +361,11 @@ export function AnnotatorWorkboard({
                     ? "border-[var(--danger)]/30 bg-[var(--danger)]/8"
                     : "border-[var(--border)]/50"
                 } hover:bg-[var(--bg)]/80`}
-                onClick={() => setDetailId(c.id)}
+                onClick={() => openDetail(c.id)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    setDetailId(c.id);
+                    openDetail(c.id);
                   }
                 }}
               >
@@ -368,6 +414,7 @@ export function AnnotatorWorkboard({
                           lang={lang}
                           caseDbId={c.id}
                           initialMinutes={c.annotationMinutes}
+                          initialDifficultyRating={c.difficultyRating}
                         />
                       )}
                     {mode === "active" && c.status === CaseStatus.SUBMITTED && (
@@ -392,7 +439,7 @@ export function AnnotatorWorkboard({
                     <button
                       type="button"
                       className="rounded border border-[var(--border)] px-1.5 py-0.5 hover:border-[var(--accent)]"
-                      onClick={() => setDetailId(c.id)}
+                      onClick={() => openDetail(c.id)}
                     >
                       {tk("action_details")}
                     </button>
@@ -503,7 +550,7 @@ export function AnnotatorWorkboard({
             type="button"
             className="absolute inset-0 h-full w-full cursor-default border-0 bg-transparent"
             aria-label={tk("drawer_close")}
-            onClick={() => setDetailId(null)}
+            onClick={closeDetail}
           />
           <div
             className="relative z-10 flex h-full w-full max-w-xl flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-xl"
@@ -515,7 +562,7 @@ export function AnnotatorWorkboard({
               <button
                 type="button"
                 className="rounded px-2 py-1 text-sm text-[var(--muted)] hover:text-[var(--text)]"
-                onClick={() => setDetailId(null)}
+                onClick={closeDetail}
               >
                 {tk("drawer_close")}
               </button>

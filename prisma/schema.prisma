@@ -69,10 +69,12 @@ model AnnotationCase {
   assignedAt         DateTime?
   completedAt        DateTime?
   annotationMinutes  Int?
+  difficultyRating   Int?
   status             CaseStatus         @default(AVAILABLE)
   auditedAt        DateTime?
   auditedById      String?
   auditedBy          User?              @relation("CaseAuditor", fields: [auditedById], references: [id])
+  qualityRating      Int?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
@@ -84,6 +86,9 @@ model CaseNote {
   id               String         @id @default(cuid())
   annotationCaseId String
   annotationCase   AnnotationCase @relation(fields: [annotationCaseId], references: [id], onDelete: Cascade)
+  parentNoteId     String?
+  parentNote       CaseNote?      @relation("CaseNoteReplies", fields: [parentNoteId], references: [id], onDelete: Cascade)
+  replies          CaseNote[]     @relation("CaseNoteReplies")
   authorId         String
   author           User           @relation(fields: [authorId], references: [id])
   content          String?

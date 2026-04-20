@@ -12,6 +12,7 @@ import type { UserRole } from "@prisma/client";
 
 export type CaseDiscussionNote = {
   id: string;
+  parentNoteId: string | null;
   content: string | null;
   images: string[];
   createdAt: string;
@@ -90,6 +91,25 @@ function NoteImageThumbnail({
   );
 }
 
+type DiscussionNode = CaseDiscussionNote & { children: DiscussionNode[] };
+
+function buildDiscussionTree(notes: CaseDiscussionNote[]): DiscussionNode[] {
+  const byId = new Map<string, DiscussionNode>();
+  const roots: DiscussionNode[] = [];
+  for (const note of notes) {
+    byId.set(note.id, { ...note, children: [] });
+  }
+  for (const note of notes) {
+    const node = byId.get(note.id)!;
+    if (note.parentNoteId && byId.has(note.parentNoteId)) {
+      byId.get(note.parentNoteId)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  return roots;
+}
+
 export function CaseDiscussion({
   lang,
   caseDbId,
@@ -105,8 +125,11 @@ export function CaseDiscussion({
   const router = useRouter();
   const [content, setContent] = useState("");
   const [images, setImages] = useState<string[]>([]);
+  const [replyToId, setReplyToId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
+
+  const thread = buildDiscussionTree(notes);
 
   function addImages(dataUrls: string[]) {
     if (dataUrls.length === 0) return;
@@ -136,110 +159,198 @@ export function CaseDiscussion({
     addImages(await readFilesAsDataUrls(files));
   }, []);
 
-  function post() {
+  function resetComposer() {
+    setContent("");
+    setImages([]);
+    setReplyToId(null);
+  }
+
+  function post(parentNoteId: string | null = null) {
     setErr(null);
     start(async () => {
       const res = await addCaseNoteAction({
         caseDbId,
         content,
         imageDataList: images,
+        parentNoteId,
       });
       if (!res.ok) {
-        setErr(res.error === "empty" ? tk("discussion_need_body") : tk("required"));
+        setErr(
+          res.error === "empty"
+            ? tk("discussion_need_body")
+            : res.error === "invalid_parent"
+              ? tk("discussion_reply_invalid")
+              : tk("required"),
+        );
         return;
       }
-      setContent("");
-      setImages([]);
+      resetComposer();
       router.refresh();
     });
+  }
+
+  function Composer({
+    parentNoteId,
+    compact = false,
+  }: {
+    parentNoteId: string | null;
+    compact?: boolean;
+  }) {
+    return (
+      <div
+        className={
+          compact
+            ? "mt-2 rounded-md border border-dashed border-[var(--border)] bg-[var(--surface)] p-3"
+            : "rounded-md border border-[var(--border)] bg-[var(--bg)] p-3"
+        }
+      >
+        {parentNoteId ? (
+          <p className="mb-2 text-xs text-[var(--muted)]">{tk("discussion_replying")}</p>
+        ) : (
+          <p className="mb-2 text-xs text-[var(--muted)]">{tk("discussion_hint")}</p>
+        )}
+        <label className="block">
+          <span className="text-sm text-[var(--muted)]">{tk("review_comment")}</span>
+          <textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            onPaste={onPasteComposer}
+            rows={compact ? 2 : 3}
+            className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+          />
+        </label>
+        <div className="mt-2">
+          <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
+          <input type="file" accept="image/*" multiple onChange={onFile} className="mt-1 block text-sm" />
+        </div>
+        {images.length > 0 && (
+          <div className="mt-2 space-y-3">
+            {images.map((image, index) => (
+              <div key={`${image.slice(0, 32)}-${index}`} className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-2">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-xs text-[var(--muted)]">{tk("review_screenshot")} {index + 1}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeImage(index)}
+                    className="rounded-md border border-[var(--border)] px-2 py-1 text-xs hover:border-[var(--accent)]"
+                  >
+                    {tk("remove_image")}
+                  </button>
+                </div>
+                <div className="mb-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={image} alt="" className="max-h-40 rounded border border-[var(--border)] object-contain" />
+                </div>
+                <ScreenshotDrawer
+                  lang={lang}
+                  imageDataUrl={image}
+                  onChange={(dataUrl) => updateImage(index, dataUrl)}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+        {err && <p className="mt-2 text-sm text-[var(--danger)]">{err}</p>}
+        <div className="mt-3 flex flex-wrap gap-2">
+          {parentNoteId && (
+            <button
+              type="button"
+              className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm"
+              onClick={() => {
+                setReplyToId(null);
+                setErr(null);
+              }}
+            >
+              {tk("discussion_reply_cancel")}
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => post(parentNoteId)}
+            className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
+          >
+            {parentNoteId ? tk("discussion_reply") : tk("discussion_post")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function NoteItem({ note, depth = 0 }: { note: DiscussionNode; depth?: number }) {
+    const isReplyTarget = replyToId === note.id;
+    return (
+      <li
+        className={`rounded-lg border p-3 text-sm shadow-sm ${
+          depth === 0
+            ? "border-[var(--border)] bg-[var(--bg)]"
+            : "relative ml-4 border-[var(--border)]/70 bg-[var(--surface)]"
+        }`}
+      >
+        <div
+          className={
+            depth > 0
+              ? "relative pl-4 before:absolute before:left-0 before:top-0 before:h-full before:w-px before:bg-[var(--border)]"
+              : ""
+          }
+        >
+          <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
+            <span className="font-medium text-[var(--text)]">{note.author.name}</span>
+            <span className="rounded bg-[var(--bg)] px-1.5 py-0.5">
+              {note.author.role === "REVIEWER" ? tk("role_reviewer") : tk("role_annotator")}
+            </span>
+            <span>{formatDate(lang, new Date(note.createdAt))}</span>
+          </div>
+          {note.content ? (
+            <p className="mt-2 whitespace-pre-wrap text-[var(--text)]">{note.content}</p>
+          ) : null}
+          {note.images.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {note.images.map((image, index) => (
+                <NoteImageThumbnail key={`${note.id}-${index}`} lang={lang} src={image} alt="" />
+              ))}
+            </div>
+          ) : null}
+          {canPost && (
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                type="button"
+                className="rounded-md border border-[var(--border)] px-2 py-1 text-xs hover:border-[var(--accent)]"
+                onClick={() => {
+                  setErr(null);
+                  setReplyToId((prev) => (prev === note.id ? null : note.id));
+                }}
+              >
+                {tk("discussion_reply")}
+              </button>
+            </div>
+          )}
+          {isReplyTarget && <Composer parentNoteId={note.id} compact />}
+          {note.children.length > 0 && (
+            <ul className="mt-3 space-y-3">
+              {note.children.map((child) => (
+                <NoteItem key={child.id} note={child} depth={depth + 1} />
+              ))}
+            </ul>
+          )}
+        </div>
+      </li>
+    );
   }
 
   return (
     <div className="mt-4 border-t border-[var(--border)] pt-4">
       <h4 className="mb-2 font-medium">{tk("discussion_title")}</h4>
-      {notes.length === 0 ? (
+      {thread.length === 0 ? (
         <p className="mb-3 text-sm text-[var(--muted)]">{tk("discussion_empty")}</p>
       ) : (
         <ul className="mb-4 space-y-3">
-          {notes.map((n) => (
-            <li
-              key={n.id}
-              className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3 text-sm"
-            >
-              <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-                <span className="font-medium text-[var(--text)]">{n.author.name}</span>
-                <span className="rounded bg-[var(--surface)] px-1.5 py-0.5">
-                  {n.author.role === "REVIEWER" ? tk("role_reviewer") : tk("role_annotator")}
-                </span>
-                <span>{formatDate(lang, new Date(n.createdAt))}</span>
-              </div>
-              {n.content ? <p className="mt-2 whitespace-pre-wrap text-[var(--text)]">{n.content}</p> : null}
-              {n.images.length > 0 ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {n.images.map((image, index) => (
-                    <NoteImageThumbnail key={`${n.id}-${index}`} lang={lang} src={image} alt="" />
-                  ))}
-                </div>
-              ) : null}
-            </li>
+          {thread.map((n) => (
+            <NoteItem key={n.id} note={n} depth={0} />
           ))}
         </ul>
       )}
-      {canPost && (
-        <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3">
-          <p className="mb-2 text-xs text-[var(--muted)]">{tk("discussion_hint")}</p>
-          <label className="block">
-            <span className="text-sm text-[var(--muted)]">{tk("review_comment")}</span>
-            <textarea
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              onPaste={onPasteComposer}
-              rows={2}
-              className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
-            />
-          </label>
-          <div className="mt-2">
-            <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
-            <input type="file" accept="image/*" multiple onChange={onFile} className="mt-1 block text-sm" />
-          </div>
-          {images.length > 0 && (
-            <div className="mt-2 space-y-3">
-              {images.map((image, index) => (
-                <div key={`${image.slice(0, 32)}-${index}`} className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-2">
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <span className="text-xs text-[var(--muted)]">{tk("review_screenshot")} {index + 1}</span>
-                    <button
-                      type="button"
-                      onClick={() => removeImage(index)}
-                      className="rounded-md border border-[var(--border)] px-2 py-1 text-xs hover:border-[var(--accent)]"
-                    >
-                      {tk("remove_image")}
-                    </button>
-                  </div>
-                  <div className="mb-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={image} alt="" className="max-h-40 rounded border border-[var(--border)] object-contain" />
-                  </div>
-                  <ScreenshotDrawer
-                    lang={lang}
-                    imageDataUrl={image}
-                    onChange={(dataUrl) => updateImage(index, dataUrl)}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-          {err && <p className="mt-2 text-sm text-[var(--danger)]">{err}</p>}
-          <button
-            type="button"
-            disabled={pending}
-            onClick={post}
-            className="mt-3 rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
-          >
-            {tk("discussion_post")}
-          </button>
-        </div>
-      )}
+      {canPost && replyToId == null && <Composer parentNoteId={null} />}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   markAllNotificationsReadAction,
   markCaseNotificationsReadAction,
@@ -17,6 +17,7 @@ function typeLabel(lang: Lang, type: string): string {
     [NOTIF.CASE_ASSIGNED]: "notif_case_assigned",
     [NOTIF.NEW_COMMENT]: "notif_new_comment",
     [NOTIF.CASE_REJECTED]: "notif_case_rejected",
+    [NOTIF.CASE_SUBMITTED]: "notif_case_submitted",
   };
   return t(lang, (map[type] ?? "notif_new_case") as DictKey);
 }
@@ -24,6 +25,7 @@ function typeLabel(lang: Lang, type: string): string {
 function typeDot(type: string) {
   if (type === NOTIF.CASE_REJECTED) return "bg-[var(--danger)]";
   if (type === NOTIF.NEW_COMMENT) return "bg-blue-400";
+  if (type === NOTIF.CASE_SUBMITTED) return "bg-violet-400";
   if (type === NOTIF.CASE_ASSIGNED) return "bg-[var(--accent)]";
   return "bg-[var(--success)]";
 }
@@ -38,10 +40,20 @@ export function NotificationBell({
   const tk = (k: DictKey) => t(lang, k);
   const [open, setOpen] = useState(false);
   const [groups, setGroups] = useState(initialGroups);
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const [, start] = useTransition();
 
   const total = groups.reduce((n, g) => n + g.items.length, 0);
+
+  function openCase(annotationCaseId: string) {
+    setOpen(false);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("case", annotationCaseId);
+    const query = params.toString();
+    router.push(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }
 
   function dismissCase(annotationCaseId: string) {
     setGroups((prev) => prev.filter((g) => g.annotationCaseId !== annotationCaseId));
@@ -117,9 +129,16 @@ export function NotificationBell({
                 {groups.map((g) => (
                   <div key={g.annotationCaseId} className="px-3 py-2.5">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-sm font-semibold text-[var(--text)]">
-                        {g.caseLabel}
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => openCase(g.annotationCaseId)}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <span className="font-mono text-sm font-semibold text-[var(--text)] hover:text-[var(--accent)]">
+                          {g.caseLabel}
+                        </span>
+                        <span className="ml-2 text-[10px] text-[var(--muted)]">{tk("action_details")}</span>
+                      </button>
                       <button
                         type="button"
                         className="shrink-0 text-xs text-[var(--muted)] hover:text-[var(--text)]"
@@ -130,9 +149,15 @@ export function NotificationBell({
                     </div>
                     <ul className="mt-1.5 space-y-1">
                       {g.items.map((item) => (
-                        <li key={item.id} className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
-                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${typeDot(item.type)}`} />
-                          {typeLabel(lang, item.type)}
+                        <li key={item.id}>
+                          <button
+                            type="button"
+                            onClick={() => openCase(g.annotationCaseId)}
+                            className="flex w-full items-center gap-1.5 text-left text-xs text-[var(--muted)] hover:text-[var(--text)]"
+                          >
+                            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${typeDot(item.type)}`} />
+                            {typeLabel(lang, item.type)}
+                          </button>
                         </li>
                       ))}
                     </ul>

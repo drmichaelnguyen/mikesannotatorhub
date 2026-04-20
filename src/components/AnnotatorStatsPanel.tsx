@@ -12,6 +12,7 @@ export function AnnotatorStatsPanel({
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const fmt = (n: number) => formatCompensationAmount(lang, n);
+  const fmtRating = (n: number | null) => (n == null ? "—" : `${n.toFixed(1)} / 5`);
 
   return (
     <div className="space-y-6">
@@ -30,6 +31,27 @@ export function AnnotatorStatsPanel({
           <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
             <p className="text-xs text-[var(--muted)]">{tk("dash_all_time")}</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums">{fmt(summary.allTime)}</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2 className="mb-1 text-lg font-medium">{tk("dash_ratings")}</h2>
+        <p className="mb-3 text-xs text-[var(--muted)]">{tk("dash_ratings_hint")}</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+            <p className="text-xs text-[var(--muted)]">{tk("dash_avg_difficulty")}</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums">{fmtRating(summary.averageDifficulty)}</p>
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              {summary.difficultyCount} {tk("dash_rating_count")}
+            </p>
+          </div>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+            <p className="text-xs text-[var(--muted)]">{tk("dash_avg_quality")}</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums">{fmtRating(summary.averageQuality)}</p>
+            <p className="mt-1 text-xs text-[var(--muted)]">
+              {summary.qualityCount} {tk("dash_rating_count")}
+            </p>
           </div>
         </div>
       </section>

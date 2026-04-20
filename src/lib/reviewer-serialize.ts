@@ -4,6 +4,7 @@ import type { ReviewerCaseRow } from "@/lib/reviewer-types";
 
 export type SerializedDiscussionNote = {
   id: string;
+  parentNoteId: string | null;
   content: string | null;
   images: string[];
   createdAt: string;
@@ -22,9 +23,11 @@ export type SerializedReviewerCase = {
   compensationAmount: number;
   status: CaseStatus;
   annotationMinutes: number | null;
+  difficultyRating: number | null;
   assignedAt: string | null;
   completedAt: string | null;
   auditedAt: string | null;
+  qualityRating: number | null;
   annotator: { id: string; name: string; email: string } | null;
   auditedBy: { id: string; name: string; email: string } | null;
   reviews: { id: string; decision: string; comment: string | null; createdAt: string }[];
@@ -44,9 +47,11 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
     compensationAmount: c.compensationAmount,
     status: c.status,
     annotationMinutes: c.annotationMinutes,
+    difficultyRating: c.difficultyRating,
     assignedAt: c.assignedAt?.toISOString() ?? null,
     completedAt: c.completedAt?.toISOString() ?? null,
     auditedAt: c.auditedAt?.toISOString() ?? null,
+    qualityRating: c.qualityRating,
     annotator: c.annotator
       ? { id: c.annotator.id, name: c.annotator.name, email: c.annotator.email }
       : null,
@@ -61,6 +66,7 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
     })),
     caseNotes: c.caseNotes.map((n) => ({
       id: n.id,
+      parentNoteId: n.parentNoteId,
       content: n.content,
       images: getCaseNoteImages(n),
       createdAt: n.createdAt.toISOString(),

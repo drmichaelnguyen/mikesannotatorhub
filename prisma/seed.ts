@@ -338,6 +338,7 @@ async function upsertAnnotators(annotatorHash: string) {
             return tx.user.update({
               where: { id: existingAnnotator.id },
               data: {
+                passwordHash: annotatorHash,
                 name: annotator.name,
                 role: UserRole.ANNOTATOR,
               },
@@ -348,6 +349,7 @@ async function upsertAnnotators(annotatorHash: string) {
               where: { id: legacyAnnotator.id },
               data: {
                 email: annotator.email,
+                passwordHash: annotatorHash,
                 name: annotator.name,
                 role: UserRole.ANNOTATOR,
               },
@@ -356,6 +358,7 @@ async function upsertAnnotators(annotatorHash: string) {
             ? await prisma.user.update({
                 where: { id: existingAnnotator.id },
                 data: {
+                  passwordHash: annotatorHash,
                   name: annotator.name,
                   role: UserRole.ANNOTATOR,
                 },

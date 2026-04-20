@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { computeCompensation } from "@/lib/compensation";
 import { getCurrentUser, requireRole } from "@/lib/auth";
-import { pushNotification } from "@/app/actions/notifications";
+import { getReviewerNotificationRecipients, pushNotification } from "@/app/actions/notifications";
 import { NOTIF } from "@/lib/notification-types";
 
 const caseNoteInclude = {
@@ -354,10 +354,21 @@ export async function listAnnotatorsForAssignment() {
   });
 }
 
-export async function submitAnnotationAction(caseDbId: string, minutes: number) {
+export async function submitAnnotationAction(
+  caseDbId: string,
+  minutes: number,
+  difficultyRating: number,
+) {
   const user = await requireRole("ANNOTATOR");
   if (!Number.isFinite(minutes) || minutes <= 0) {
     return { ok: false as const, error: "minutes" };
+  }
+  if (
+    !Number.isInteger(difficultyRating) ||
+    difficultyRating < 1 ||
+    difficultyRating > 5
+  ) {
+    return { ok: false as const, error: "rating" as const };
   }
   const row = await prisma.annotationCase.findUnique({ where: { id: caseDbId } });
   if (!row || row.annotatorId !== user.id) {
@@ -371,9 +382,12 @@ export async function submitAnnotationAction(caseDbId: string, minutes: number) 
     data: {
       status: CaseStatus.SUBMITTED,
       annotationMinutes: Math.floor(minutes),
+      difficultyRating,
       completedAt: new Date(),
     },
   });
+  const reviewerIds = await getReviewerNotificationRecipients();
+  await pushNotification(reviewerIds, NOTIF.CASE_SUBMITTED, caseDbId, row.caseId);
   revalidatePath("/reviewer");
   revalidatePath("/annotator");
   return { ok: true as const };
@@ -384,8 +398,16 @@ export async function reviewCaseAction(input: {
   decision: "ACCEPT" | "REJECT";
   comment: string;
   screenshotData: string | null;
+  qualityRating: number;
 }) {
   const reviewer = await requireRole("REVIEWER");
+  if (
+    !Number.isInteger(input.qualityRating) ||
+    input.qualityRating < 1 ||
+    input.qualityRating > 5
+  ) {
+    return { ok: false as const, error: "rating" as const };
+  }
   const row = await prisma.annotationCase.findUnique({
     where: { id: input.caseDbId },
     include: { annotator: true },
@@ -413,11 +435,13 @@ export async function reviewCaseAction(input: {
             status: CaseStatus.AUDITED,
             auditedAt: new Date(),
             auditedById: reviewer.id,
+            qualityRating: input.qualityRating,
           }
         : {
             status: CaseStatus.REJECTED,
             auditedAt: null,
             auditedById: null,
+            qualityRating: input.qualityRating,
           },
     }),
   ]);
@@ -442,12 +466,23 @@ export async function addCaseNoteAction(input: {
   caseDbId: string;
   content: string;
   imageDataList: string[];
+  parentNoteId?: string | null;
 }) {
   const user = await getCurrentUser();
   if (!user) return { ok: false as const, error: "auth" as const };
 
   const row = await prisma.annotationCase.findUnique({ where: { id: input.caseDbId } });
   if (!row) return { ok: false as const, error: "notfound" as const };
+
+  if (input.parentNoteId) {
+    const parent = await prisma.caseNote.findUnique({
+      where: { id: input.parentNoteId },
+      select: { id: true, annotationCaseId: true },
+    });
+    if (!parent || parent.annotationCaseId !== row.id) {
+      return { ok: false as const, error: "invalid_parent" as const };
+    }
+  }
 
   if (user.role === "ANNOTATOR") {
     if (row.annotatorId !== user.id) {
@@ -466,6 +501,7 @@ export async function addCaseNoteAction(input: {
   await prisma.caseNote.create({
     data: {
       annotationCaseId: row.id,
+      parentNoteId: input.parentNoteId ?? null,
       authorId: user.id,
       content: text || null,
       imageData: images[0] ?? null,
@@ -475,6 +511,10 @@ export async function addCaseNoteAction(input: {
 
   if (user.role === "REVIEWER" && row.annotatorId) {
     await pushNotification([row.annotatorId], NOTIF.NEW_COMMENT, row.id, row.caseId);
+  }
+  if (user.role === "ANNOTATOR") {
+    const reviewerIds = await getReviewerNotificationRecipients();
+    await pushNotification(reviewerIds, NOTIF.NEW_COMMENT, row.id, row.caseId);
   }
 
   revalidatePath("/reviewer");
@@ -510,6 +550,10 @@ export type AnnotatorCompensationSummary = {
   thisMonth: number;
   priorMonths: number;
   allTime: number;
+  averageDifficulty: number | null;
+  difficultyCount: number;
+  averageQuality: number | null;
+  qualityCount: number;
   projects: AnnotatorProjectRow[];
 };
 
@@ -517,7 +561,7 @@ export type AnnotatorCompensationSummary = {
 export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompensationSummary> {
   const user = await requireRole("ANNOTATOR");
   const cases = await prisma.annotationCase.findMany({
-    where: { annotatorId: user.id, status: { in: [CaseStatus.AUDITED, CaseStatus.ACCEPTED] } },
+    where: { annotatorId: user.id },
     include: {
       reviews: {
         where: { decision: "ACCEPT" },
@@ -535,9 +579,26 @@ export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompen
 
   let thisMonth = 0;
   let priorMonths = 0;
+  let difficultyTotal = 0;
+  let difficultyCount = 0;
+  let qualityTotal = 0;
+  let qualityCount = 0;
   const byProject = new Map<string, { auditedCount: number; totalCompensation: number }>();
 
   for (const c of cases) {
+    if (c.difficultyRating != null) {
+      difficultyTotal += c.difficultyRating;
+      difficultyCount += 1;
+    }
+    if (c.qualityRating != null) {
+      qualityTotal += c.qualityRating;
+      qualityCount += 1;
+    }
+
+    if (c.status !== CaseStatus.AUDITED && c.status !== CaseStatus.ACCEPTED) {
+      continue;
+    }
+
     const amount = computeCompensation(
       c.compensationType,
       c.compensationAmount,
@@ -573,6 +634,10 @@ export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompen
     thisMonth: round2(thisMonth),
     priorMonths: round2(priorMonths),
     allTime: round2(thisMonth + priorMonths),
+    averageDifficulty: difficultyCount > 0 ? round2(difficultyTotal / difficultyCount) : null,
+    difficultyCount,
+    averageQuality: qualityCount > 0 ? round2(qualityTotal / qualityCount) : null,
+    qualityCount,
     projects,
   };
 }

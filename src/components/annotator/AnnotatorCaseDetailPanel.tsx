@@ -2,6 +2,7 @@
 
 import { CaseDiscussion, type CaseDiscussionNote } from "@/components/CaseDiscussion";
 import { CopyTextButton } from "@/components/CopyTextButton";
+import { StarRating } from "@/components/StarRating";
 import { getCaseNoteImages } from "@/lib/case-note-images";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate } from "@/lib/format";
@@ -19,6 +20,7 @@ export type AnnotatorCaseRow = AnnotationCase & {
 function toDiscussionNotes(notes: NonNullable<AnnotatorCaseRow["caseNotes"]>): CaseDiscussionNote[] {
   return notes.map((n) => ({
     id: n.id,
+    parentNoteId: n.parentNoteId ?? null,
     content: n.content,
     images: getCaseNoteImages(n),
     createdAt: n.createdAt instanceof Date ? n.createdAt.toISOString() : String(n.createdAt),
@@ -100,8 +102,38 @@ export function AnnotatorCaseDetailPanel({
           <dt className="text-[var(--muted)]">{tk("case_annotationMinutes")}</dt>
           <dd>{row.annotationMinutes ?? "—"}</dd>
         </div>
+        <div>
+          <dt className="text-[var(--muted)]">{tk("case_difficultyRating")}</dt>
+          <dd>
+            {row.difficultyRating == null ? (
+              "—"
+            ) : (
+              <StarRating label={tk("case_difficultyRating")} value={row.difficultyRating} />
+            )}
+          </dd>
+        </div>
         {showAuditedInfo && (
           <>
+            <div className="md:col-span-2">
+              <dt className="text-[var(--muted)]">{tk("case_compensation_earned")}</dt>
+              <dd className="font-medium tabular-nums text-[var(--success)]">
+                {formatCompensationAmount(lang, earned)}
+              </dd>
+            </div>
+          </>
+        )}
+        {row.status !== CaseStatus.SUBMITTED && (
+          <>
+            <div>
+              <dt className="text-[var(--muted)]">{tk("case_qualityRating")}</dt>
+              <dd>
+                {row.qualityRating == null ? (
+                  "—"
+                ) : (
+                  <StarRating label={tk("case_qualityRating")} value={row.qualityRating} />
+                )}
+              </dd>
+            </div>
             <div>
               <dt className="text-[var(--muted)]">{tk("case_audited_at")}</dt>
               <dd>{formatDate(lang, row.auditedAt)}</dd>
@@ -111,12 +143,6 @@ export function AnnotatorCaseDetailPanel({
               <dd>
                 {row.auditedBy?.name ??
                   (row.status === CaseStatus.ACCEPTED ? tk("case_audit_legacy") : "—")}
-              </dd>
-            </div>
-            <div className="md:col-span-2">
-              <dt className="text-[var(--muted)]">{tk("case_compensation_earned")}</dt>
-              <dd className="font-medium tabular-nums text-[var(--success)]">
-                {formatCompensationAmount(lang, earned)}
               </dd>
             </div>
           </>
