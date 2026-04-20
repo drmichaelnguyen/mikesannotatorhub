@@ -263,22 +263,8 @@ function CommentActionLabel({
   );
 }
 
-function PerformanceCard({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-}) {
-  return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3">
-      <p className="text-[11px] uppercase tracking-wide text-[var(--muted)]">{label}</p>
-      <p className="mt-1 text-xl font-semibold tabular-nums">{value}</p>
-      {hint && <p className="mt-1 text-xs text-[var(--muted)]">{hint}</p>}
-    </div>
-  );
+function formatRating(value: number | null) {
+  return value == null ? "—" : `${value.toFixed(1)} / 5`;
 }
 
 export function ReviewerWorkboard({
@@ -907,64 +893,46 @@ export function ReviewerWorkboard({
                   {annotatorPerformance.length === 0 ? (
                     <p className="text-sm text-[var(--muted)]">{tk("reviewer_perf_no_cases")}</p>
                   ) : (
-                    <div className="grid gap-3 xl:grid-cols-2">
-                      {annotatorPerformance.map((annotator) => (
-                        <button
-                          key={annotator.id}
-                          type="button"
-                          className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4 text-left transition hover:border-[var(--accent)] hover:shadow-sm"
-                          onClick={() => openAnnotatorPerformanceDetail(annotator.id)}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="font-medium">{annotator.name}</p>
-                              <p className="text-xs text-[var(--muted)]">{annotator.email}</p>
-                            </div>
-                            <span className="rounded-full border border-[var(--border)] px-2 py-0.5 text-[11px] text-[var(--muted)]">
-                              {annotator.projects.length} {tk("reviewer_perf_projects")}
-                            </span>
-                          </div>
-                          <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                            <PerformanceCard
-                              label={tk("reviewer_perf_total")}
-                              value={String(annotator.stats.totalCases)}
-                            />
-                            <PerformanceCard
-                              label={tk("reviewer_perf_completed")}
-                              value={String(annotator.stats.completedCases)}
-                            />
-                            <PerformanceCard
-                              label={tk("reviewer_perf_avg_time")}
-                              value={formatMinutes(lang, annotator.stats.averageTime)}
-                              hint={`${annotator.stats.timeCount} ${tk("dash_rating_count")}`}
-                            />
-                            <PerformanceCard
-                              label={tk("dash_avg_difficulty")}
-                              value={
-                                annotator.stats.averageDifficulty == null
-                                  ? "—"
-                                  : `${annotator.stats.averageDifficulty.toFixed(1)} / 5`
-                              }
-                              hint={`${annotator.stats.difficultyCount} ${tk("dash_rating_count")}`}
-                            />
-                          </div>
-                          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                            <PerformanceCard
-                              label={tk("dash_avg_quality")}
-                              value={
-                                annotator.stats.averageQuality == null
-                                  ? "—"
-                                  : `${annotator.stats.averageQuality.toFixed(1)} / 5`
-                              }
-                              hint={`${annotator.stats.qualityCount} ${tk("dash_rating_count")}`}
-                            />
-                            <PerformanceCard
-                              label={tk("reviewer_perf_submitted")}
-                              value={String(annotator.stats.submittedCases)}
-                            />
-                          </div>
-                        </button>
-                      ))}
+                    <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
+                      <table className="w-full min-w-[760px] text-left text-sm">
+                        <thead className="border-b border-[var(--border)] bg-[var(--bg)] text-[var(--muted)]">
+                          <tr>
+                            <th className="px-3 py-2 font-medium">{tk("reviewer_perf_annotator")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("reviewer_perf_projects")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("reviewer_perf_total")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("reviewer_perf_avg_time")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("dash_avg_difficulty")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("dash_avg_quality")}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {annotatorPerformance.map((annotator) => (
+                            <tr
+                              key={annotator.id}
+                              className="cursor-pointer border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg)]/80"
+                              onClick={() => openAnnotatorPerformanceDetail(annotator.id)}
+                            >
+                              <td className="px-3 py-2">
+                                <div className="font-medium">{annotator.name}</div>
+                                <div className="text-xs text-[var(--muted)]">{annotator.email}</div>
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
+                                {annotator.projects.length}
+                              </td>
+                              <td className="px-3 py-2 tabular-nums">{annotator.stats.totalCases}</td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
+                                {formatMinutes(lang, annotator.stats.averageTime)}
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
+                                {formatRating(annotator.stats.averageDifficulty)}
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
+                                {formatRating(annotator.stats.averageQuality)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                 </div>
@@ -976,66 +944,59 @@ export function ReviewerWorkboard({
                         <p className="text-lg font-medium">{selectedAnnotator.name}</p>
                         <p className="text-sm text-[var(--muted)]">{selectedAnnotator.email}</p>
                       </div>
-                      <button
-                        type="button"
-                        className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm hover:border-[var(--accent)]"
-                        onClick={() => setSelectedProject(null)}
-                      >
-                        {tk("reviewer_perf_overview")}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted)]">
+                          {selectedAnnotator.stats.totalCases} {tk("reviewer_perf_total")}
+                        </span>
+                        <span className="rounded-full border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted)]">
+                          {formatMinutes(lang, selectedAnnotator.stats.averageTime)} {tk("reviewer_perf_avg_time")}
+                        </span>
+                      </div>
                     </div>
-                    <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                      <PerformanceCard
-                        label={tk("reviewer_perf_total")}
-                        value={String(selectedAnnotator.stats.totalCases)}
-                      />
-                      <PerformanceCard
-                        label={tk("reviewer_perf_completed")}
-                        value={String(selectedAnnotator.stats.completedCases)}
-                      />
-                      <PerformanceCard
-                        label={tk("reviewer_perf_approved")}
-                        value={String(selectedAnnotator.stats.approvedCases)}
-                      />
-                      <PerformanceCard
-                        label={tk("reviewer_perf_rejected")}
-                        value={String(selectedAnnotator.stats.rejectedCases)}
-                      />
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("reviewer_perf_completed")}</p>
+                        <p className="mt-1 text-2xl font-semibold tabular-nums">{selectedAnnotator.stats.completedCases}</p>
+                      </div>
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("reviewer_perf_submitted")}</p>
+                        <p className="mt-1 text-2xl font-semibold tabular-nums">{selectedAnnotator.stats.submittedCases}</p>
+                      </div>
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("reviewer_perf_approved")}</p>
+                        <p className="mt-1 text-2xl font-semibold tabular-nums">{selectedAnnotator.stats.approvedCases}</p>
+                      </div>
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("reviewer_perf_rejected")}</p>
+                        <p className="mt-1 text-2xl font-semibold tabular-nums">{selectedAnnotator.stats.rejectedCases}</p>
+                      </div>
                     </div>
                     <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                      <PerformanceCard
-                        label={tk("reviewer_perf_avg_time")}
-                        value={formatMinutes(lang, selectedAnnotator.stats.averageTime)}
-                        hint={`${selectedAnnotator.stats.timeCount} ${tk("dash_rating_count")}`}
-                      />
-                      <PerformanceCard
-                        label={tk("dash_avg_difficulty")}
-                        value={
-                          selectedAnnotator.stats.averageDifficulty == null
-                            ? "—"
-                            : `${selectedAnnotator.stats.averageDifficulty.toFixed(1)} / 5`
-                        }
-                        hint={`${selectedAnnotator.stats.difficultyCount} ${tk("dash_rating_count")}`}
-                      />
-                      <PerformanceCard
-                        label={tk("dash_avg_quality")}
-                        value={
-                          selectedAnnotator.stats.averageQuality == null
-                            ? "—"
-                            : `${selectedAnnotator.stats.averageQuality.toFixed(1)} / 5`
-                        }
-                        hint={`${selectedAnnotator.stats.qualityCount} ${tk("dash_rating_count")}`}
-                      />
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("reviewer_perf_avg_time")}</p>
+                        <p className="mt-1 text-2xl font-semibold tabular-nums">{formatMinutes(lang, selectedAnnotator.stats.averageTime)}</p>
+                        <p className="mt-1 text-xs text-[var(--muted)]">
+                          {selectedAnnotator.stats.timeCount} {tk("dash_rating_count")}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("dash_avg_difficulty")}</p>
+                        <p className="mt-1 text-2xl font-semibold tabular-nums">{formatRating(selectedAnnotator.stats.averageDifficulty)}</p>
+                        <p className="mt-1 text-xs text-[var(--muted)]">
+                          {selectedAnnotator.stats.difficultyCount} {tk("dash_rating_count")}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("dash_avg_quality")}</p>
+                        <p className="mt-1 text-2xl font-semibold tabular-nums">{formatRating(selectedAnnotator.stats.averageQuality)}</p>
+                        <p className="mt-1 text-xs text-[var(--muted)]">
+                          {selectedAnnotator.stats.qualityCount} {tk("dash_rating_count")}
+                        </p>
+                      </div>
                     </div>
                   </div>
 
                   <section className="space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <h3 className="text-sm font-medium">{tk("reviewer_perf_projects")}</h3>
-                      <span className="text-xs text-[var(--muted)]">
-                        {selectedAnnotator.projects.length} {tk("reviewer_perf_projects")}
-                      </span>
-                    </div>
                     {selectedAnnotator.projects.length === 0 ? (
                       <p className="text-sm text-[var(--muted)]">{tk("reviewer_perf_no_cases")}</p>
                     ) : (
@@ -1043,105 +1004,150 @@ export function ReviewerWorkboard({
                         {selectedAnnotator.projects.map((project) => {
                           const isOpen = selectedProject === project.project;
                           return (
-                            <div
+                            <details
                               key={project.project}
+                              open={isOpen}
                               className="rounded-xl border border-[var(--border)] bg-[var(--bg)]"
                             >
-                              <button
-                                type="button"
-                                className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left hover:bg-[var(--surface)]"
-                                onClick={() => openAnnotatorProject(project.project)}
+                              <summary
+                                className="cursor-pointer select-none px-4 py-3 text-left hover:bg-[var(--surface)]"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  openAnnotatorProject(project.project);
+                                }}
                               >
-                                <div>
-                                  <p className="font-medium">{project.project}</p>
-                                  <p className="text-xs text-[var(--muted)]">
-                                    {project.stats.totalCases} {tk("reviewer_perf_total")}
-                                  </p>
-                                </div>
-                                <div className="text-right text-xs text-[var(--muted)]">
-                                  <p>
-                                    {tk("reviewer_perf_avg_time")}:{" "}
-                                    {formatMinutes(lang, project.stats.averageTime)}
-                                  </p>
-                                  <p>
-                                    {tk("dash_avg_quality")}:{" "}
-                                    {project.stats.averageQuality == null
-                                      ? "—"
-                                      : `${project.stats.averageQuality.toFixed(1)} / 5`}
-                                  </p>
-                                </div>
-                              </button>
-                              {isOpen && (
-                                <div className="border-t border-[var(--border)] p-4">
-                                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                                    <PerformanceCard
-                                      label={tk("reviewer_perf_completed")}
-                                      value={String(project.stats.completedCases)}
-                                    />
-                                    <PerformanceCard
-                                      label={tk("reviewer_perf_submitted")}
-                                      value={String(project.stats.submittedCases)}
-                                    />
-                                    <PerformanceCard
-                                      label={tk("reviewer_perf_approved")}
-                                      value={String(project.stats.approvedCases)}
-                                    />
-                                    <PerformanceCard
-                                      label={tk("reviewer_perf_rejected")}
-                                      value={String(project.stats.rejectedCases)}
-                                    />
-                                    <PerformanceCard
-                                      label={tk("reviewer_perf_avg_time")}
-                                      value={formatMinutes(lang, project.stats.averageTime)}
-                                      hint={`${project.stats.timeCount} ${tk("dash_rating_count")}`}
-                                    />
-                                    <PerformanceCard
-                                      label={tk("dash_avg_difficulty")}
-                                      value={
-                                        project.stats.averageDifficulty == null
-                                          ? "—"
-                                          : `${project.stats.averageDifficulty.toFixed(1)} / 5`
-                                      }
-                                      hint={`${project.stats.difficultyCount} ${tk("dash_rating_count")}`}
-                                    />
-                                    <PerformanceCard
-                                      label={tk("dash_avg_quality")}
-                                      value={
-                                        project.stats.averageQuality == null
-                                          ? "—"
-                                          : `${project.stats.averageQuality.toFixed(1)} / 5`
-                                      }
-                                      hint={`${project.stats.qualityCount} ${tk("dash_rating_count")}`}
-                                    />
-                                  </div>
-                                  <div className="mt-4">
-                                    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
-                                      {tk("reviewer_annotator_view_cases")}
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div>
+                                    <p className="font-medium">{project.project}</p>
+                                    <p className="text-xs text-[var(--muted)]">
+                                      {project.stats.totalCases} {tk("reviewer_perf_total")}
                                     </p>
-                                    {project.cases.length === 0 ? (
-                                      <p className="text-sm text-[var(--muted)]">
-                                        {tk("reviewer_perf_no_project")}
-                                      </p>
-                                    ) : (
-                                      <div className="flex flex-wrap gap-2">
-                                        {project.cases.map((c) => (
-                                          <button
-                                            key={c.id}
-                                            type="button"
-                                            className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1 text-xs font-mono hover:border-[var(--accent)] hover:text-[var(--accent)]"
-                                            onClick={() => {
-                                              openCaseFromPerformance(c.id);
-                                            }}
-                                          >
-                                            {c.caseId}
-                                          </button>
-                                        ))}
-                                      </div>
-                                    )}
+                                  </div>
+                                  <div className="text-right text-xs text-[var(--muted)]">
+                                    <p>
+                                      {tk("reviewer_perf_avg_time")}: {formatMinutes(lang, project.stats.averageTime)}
+                                    </p>
+                                    <p>
+                                      {tk("dash_avg_quality")}: {formatRating(project.stats.averageQuality)}
+                                    </p>
                                   </div>
                                 </div>
-                              )}
-                            </div>
+                              </summary>
+                              <div className="border-t border-[var(--border)] p-3">
+                                {project.cases.length === 0 ? (
+                                  <p className="text-sm text-[var(--muted)]">{tk("reviewer_perf_no_project")}</p>
+                                ) : (
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full min-w-[1280px] border-collapse text-left text-xs">
+                                      <thead>
+                                        <tr className="border-b border-[var(--border)] text-[var(--muted)]">
+                                          <th className="py-1.5 pr-2 font-medium">{tk("col_case_id")}</th>
+                                          <th className="py-1.5 pr-2 font-medium">{tk("case_scope")}</th>
+                                          <th className="py-1.5 pr-2 font-medium">{tk("col_submittedAt")}</th>
+                                          <th className="py-1.5 pr-2 font-medium">{tk("case_difficultyRating")}</th>
+                                          <th className="py-1.5 pr-2 font-medium">{tk("case_qualityRating")}</th>
+                                          <th className="py-1.5 pr-2 font-medium">{tk("case_annotator")}</th>
+                                          <th className="py-1.5 pr-2 font-medium">{tk("case_status")}</th>
+                                          <th className="py-1.5 pr-2 font-medium">{tk("col_compensation")}</th>
+                                          <th className="py-1.5 font-medium">{tk("col_actions")}</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {project.cases.map((c) => (
+                                          <tr
+                                            key={c.id}
+                                            className={`border-b border-[var(--border)]/50 hover:bg-[var(--surface)]/80 ${
+                                              c.status === CaseStatus.SUBMITTED
+                                                ? "bg-blue-400/5"
+                                                : ""
+                                            }`}
+                                          >
+                                            <td className="py-1.5 pr-2 font-mono font-medium text-[var(--text)]">
+                                              <button
+                                                type="button"
+                                                className="rounded px-0.5 hover:text-[var(--accent)]"
+                                                onClick={() => openCaseFromPerformance(c.id)}
+                                              >
+                                                {c.caseId}
+                                              </button>
+                                            </td>
+                                            <td className="py-1.5 pr-2 text-[var(--muted)]">{c.scopeOfWork}</td>
+                                            <td className="py-1.5 pr-2 tabular-nums text-[var(--muted)]">
+                                              {formatDate(lang, c.completedAt)}
+                                            </td>
+                                            <td className="py-1.5 pr-2">
+                                              {c.difficultyRating == null ? "—" : <StarRating label={tk("case_difficultyRating")} value={c.difficultyRating} />}
+                                            </td>
+                                            <td className="py-1.5 pr-2">
+                                              {c.qualityRating == null ? "—" : <StarRating label={tk("case_qualityRating")} value={c.qualityRating} />}
+                                            </td>
+                                            <td className="py-1.5 pr-2 text-[var(--muted)]">
+                                              {c.annotator ? `${c.annotator.name}` : t(lang, "unassigned")}
+                                            </td>
+                                            <td className="py-1.5 pr-2">
+                                              {tk(`status_${c.status}` as DictKey)}
+                                            </td>
+                                            <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
+                                              {formatRowCompensation(lang, c)}
+                                            </td>
+                                            <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
+                                              <div className="flex flex-wrap gap-1">
+                                                <button
+                                                  type="button"
+                                                  className="rounded border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 hover:border-[var(--accent)]"
+                                                  onClick={() => openCaseFromPerformance(c.id)}
+                                                >
+                                                  {tk("reviewer_perf_see_comments")}
+                                                </button>
+                                                {c.status === CaseStatus.AVAILABLE && (
+                                                  <button
+                                                    type="button"
+                                                    className="rounded border border-[var(--accent)]/50 bg-[var(--accent)]/10 px-1.5 py-0.5 text-[var(--accent)] hover:bg-[var(--accent)]/20"
+                                                    onClick={() => {
+                                                      setErr(null);
+                                                      setAssignAnnotatorId("");
+                                                      setAssignCaseId(c.id);
+                                                    }}
+                                                  >
+                                                    {tk("action_assign")}
+                                                  </button>
+                                                )}
+                                                {c.status === CaseStatus.SUBMITTED && (
+                                                  <>
+                                                    <button
+                                                      type="button"
+                                                      className="rounded border border-[var(--success)]/50 bg-[var(--success)]/15 px-1.5 py-0.5 text-[var(--success)] hover:bg-[var(--success)]/25"
+                                                      onClick={() => {
+                                                        setErr(null);
+                                                        setAudit({ caseId: c.id, decision: "ACCEPT" });
+                                                        resetAuditComposer();
+                                                      }}
+                                                    >
+                                                      {tk("action_approve")}
+                                                    </button>
+                                                    <button
+                                                      type="button"
+                                                      className="rounded border border-[var(--danger)]/50 bg-[var(--danger)]/15 px-1.5 py-0.5 text-[var(--danger)] hover:bg-[var(--danger)]/25"
+                                                      onClick={() => {
+                                                        setErr(null);
+                                                        setAudit({ caseId: c.id, decision: "REJECT" });
+                                                        resetAuditComposer();
+                                                      }}
+                                                    >
+                                                      {tk("action_reject")}
+                                                    </button>
+                                                  </>
+                                                )}
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </div>
+                            </details>
                           );
                         })}
                       </div>
