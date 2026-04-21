@@ -745,14 +745,19 @@ export type AnnotatorAvailabilitySummary = {
   assignedCaseCount: number;
 };
 
+export type AnnotatorCapacityWindow = {
+  key: "24h" | "72h" | "7d";
+  days: number;
+  availableHours: number;
+  assignedEstimateHours: number;
+  remainingHours: number;
+};
+
 export type AnnotatorCapacityRow = {
   id: string;
   name: string;
   email: string;
-  availabilityHours: number;
-  assignedEstimateHours: number;
-  remainingHours: number;
-  assignedCaseCount: number;
+  windows: AnnotatorCapacityWindow[];
   days: AnnotatorAvailabilityDay[];
 };
 
@@ -796,6 +801,29 @@ function buildAvailabilitySummary(
     remainingHours: round1(availableHours - assignedEstimateHours),
     assignedCaseCount: assignedCases.length,
   };
+}
+
+function buildCapacityWindows(
+  days: string[],
+  rows: { day: string; availableHours: number }[],
+  assignedCases: { minMinutesPerCase: number; maxMinutesPerCase: number }[],
+): AnnotatorCapacityWindow[] {
+  const windows: AnnotatorCapacityWindow[] = [
+    { key: "24h", days: 1, availableHours: 0, assignedEstimateHours: 0, remainingHours: 0 },
+    { key: "72h", days: 3, availableHours: 0, assignedEstimateHours: 0, remainingHours: 0 },
+    { key: "7d", days: 7, availableHours: 0, assignedEstimateHours: 0, remainingHours: 0 },
+  ];
+  const byDay = new Map(rows.map((r) => [r.day, r.availableHours] as const));
+  for (const window of windows) {
+    const selectedDays = days.slice(0, window.days);
+    const availableHours = selectedDays.reduce((sum, day) => sum + (byDay.get(day) ?? 0), 0);
+    const assignedEstimateHours =
+      assignedCases.reduce((sum, c) => sum + estimateCaseHours(c), 0);
+    window.availableHours = round1(availableHours);
+    window.assignedEstimateHours = round1(assignedEstimateHours);
+    window.remainingHours = round1(window.availableHours - window.assignedEstimateHours);
+  }
+  return windows;
 }
 
 /** Audited (and legacy accepted) cases; month boundaries use the viewer's local calendar. */
@@ -946,14 +974,16 @@ export async function getAnnotatorCapacityRows(): Promise<AnnotatorCapacityRow[]
       availabilityByUser.get(annotator.id) ?? [],
       assignedByUser.get(annotator.id) ?? [],
     );
+    const windows = buildCapacityWindows(
+      days,
+      availabilityByUser.get(annotator.id) ?? [],
+      assignedByUser.get(annotator.id) ?? [],
+    );
     return {
       id: annotator.id,
       name: annotator.name,
       email: annotator.email,
-      availabilityHours: availability.availableHours,
-      assignedEstimateHours: availability.assignedEstimateHours,
-      remainingHours: availability.remainingHours,
-      assignedCaseCount: availability.assignedCaseCount,
+      windows,
       days: availability.days,
     };
   });

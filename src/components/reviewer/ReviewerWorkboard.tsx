@@ -70,10 +70,7 @@ type AnnotatorPerformanceSummary = {
   name: string;
   email: string;
   stats: AnnotatorPerformanceStats;
-  availabilityHours: number;
-  assignedEstimateHours: number;
-  remainingHours: number;
-  assignedCaseCount: number;
+  capacityWindows: AnnotatorCapacityRow["windows"];
   projects: AnnotatorPerformanceProject[];
 };
 
@@ -227,14 +224,24 @@ function buildAnnotatorPerformance(
       return {
         ...annotator,
         stats: buildPerformanceStats(mine),
-        availabilityHours: capacity?.availabilityHours ?? 0,
-        assignedEstimateHours: capacity?.assignedEstimateHours ?? 0,
-        remainingHours: capacity?.remainingHours ?? 0,
-        assignedCaseCount: capacity?.assignedCaseCount ?? 0,
+        capacityWindows: capacity?.windows ?? [],
         projects,
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function getCapacityWindow(
+  annotator: AnnotatorPerformanceSummary,
+  key: "24h" | "72h" | "7d",
+) {
+  return annotator.capacityWindows.find((window) => window.key === key) ?? {
+    key,
+    days: key === "24h" ? 1 : key === "72h" ? 3 : 7,
+    availableHours: 0,
+    assignedEstimateHours: 0,
+    remainingHours: 0,
+  };
 }
 
 function ReviewerStatusCounts({ cases }: { cases: SerializedReviewerCase[] }) {
@@ -935,9 +942,9 @@ export function ReviewerWorkboard({
                             <th className="px-3 py-2 font-medium">{tk("reviewer_perf_annotator")}</th>
                             <th className="px-3 py-2 font-medium">{tk("reviewer_perf_projects")}</th>
                             <th className="px-3 py-2 font-medium">{tk("reviewer_perf_total")}</th>
-                            <th className="px-3 py-2 font-medium">{tk("availability_total")}</th>
-                            <th className="px-3 py-2 font-medium">{tk("availability_assigned")}</th>
-                            <th className="px-3 py-2 font-medium">{tk("availability_remaining")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("availability_24h")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("availability_72h")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("availability_7d")}</th>
                             <th className="px-3 py-2 font-medium">{tk("reviewer_perf_avg_time")}</th>
                             <th className="px-3 py-2 font-medium">{tk("dash_avg_difficulty")}</th>
                             <th className="px-3 py-2 font-medium">{tk("dash_avg_quality")}</th>
@@ -958,21 +965,25 @@ export function ReviewerWorkboard({
                                 {annotator.projects.length}
                               </td>
                               <td className="px-3 py-2 tabular-nums">{annotator.stats.totalCases}</td>
-                              <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
-                                {annotator.availabilityHours.toFixed(1)}h
-                              </td>
-                              <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
-                                {annotator.assignedEstimateHours.toFixed(1)}h
-                              </td>
-                              <td
-                                className={`px-3 py-2 tabular-nums font-medium ${
-                                  annotator.remainingHours < 0
-                                    ? "text-[var(--danger)]"
-                                    : "text-[var(--success)]"
-                                }`}
-                              >
-                                {annotator.remainingHours.toFixed(1)}h
-                              </td>
+                              {[("24h" as const), ("72h" as const), ("7d" as const)].map((key) => {
+                                const window = getCapacityWindow(annotator, key);
+                                return (
+                                  <td key={key} className="px-3 py-2">
+                                    <div className="font-medium tabular-nums text-[var(--text)]">
+                                      {window.availableHours.toFixed(1)}h
+                                    </div>
+                                    <div
+                                      className={`text-xs tabular-nums ${
+                                        window.remainingHours < 0
+                                          ? "text-[var(--danger)]"
+                                          : "text-[var(--muted)]"
+                                      }`}
+                                    >
+                                      {window.remainingHours.toFixed(1)}h {tk("availability_left")}
+                                    </div>
+                                  </td>
+                                );
+                              })}
                               <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
                                 {formatMinutes(lang, annotator.stats.averageTime)}
                               </td>
@@ -1007,23 +1018,26 @@ export function ReviewerWorkboard({
                       </div>
                     </div>
                     <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
-                        <p className="text-xs text-[var(--muted)]">{tk("availability_total")}</p>
-                        <p className="mt-1 text-2xl font-semibold tabular-nums">{selectedAnnotator.availabilityHours.toFixed(1)}h</p>
-                      </div>
-                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
-                        <p className="text-xs text-[var(--muted)]">{tk("availability_assigned")}</p>
-                        <p className="mt-1 text-2xl font-semibold tabular-nums">{selectedAnnotator.assignedEstimateHours.toFixed(1)}h</p>
-                        <p className="mt-1 text-xs text-[var(--muted)]">
-                          {selectedAnnotator.assignedCaseCount} {tk("availability_cases")}
-                        </p>
-                      </div>
-                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
-                        <p className="text-xs text-[var(--muted)]">{tk("availability_remaining")}</p>
-                        <p className={`mt-1 text-2xl font-semibold tabular-nums ${selectedAnnotator.remainingHours < 0 ? "text-[var(--danger)]" : "text-[var(--success)]"}`}>
-                          {selectedAnnotator.remainingHours.toFixed(1)}h
-                        </p>
-                      </div>
+                      {[("24h" as const), ("72h" as const), ("7d" as const)].map((key) => {
+                        const window = getCapacityWindow(selectedAnnotator, key);
+                        return (
+                          <div key={key} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                            <p className="text-xs text-[var(--muted)]">
+                              {tk(`availability_${key}` as DictKey)}
+                            </p>
+                            <p className="mt-1 text-2xl font-semibold tabular-nums">
+                              {window.availableHours.toFixed(1)}h
+                            </p>
+                            <p
+                              className={`mt-1 text-xs tabular-nums ${
+                                window.remainingHours < 0 ? "text-[var(--danger)]" : "text-[var(--muted)]"
+                              }`}
+                            >
+                              {window.remainingHours.toFixed(1)}h {tk("availability_left")}
+                            </p>
+                          </div>
+                        );
+                      })}
                     </div>
                     <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                       <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
