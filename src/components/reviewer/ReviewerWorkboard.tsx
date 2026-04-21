@@ -14,6 +14,7 @@ import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate, formatMinutes } from "@/lib/format";
 import { buildMentionOptionsForProject, type GuideOption, type TopicOption } from "@/lib/guide-topic";
 import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
+import type { AnnotatorCapacityRow } from "@/app/actions/cases";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import { CaseStatus, CompensationType } from "@prisma/client";
@@ -69,6 +70,10 @@ type AnnotatorPerformanceSummary = {
   name: string;
   email: string;
   stats: AnnotatorPerformanceStats;
+  availabilityHours: number;
+  assignedEstimateHours: number;
+  remainingHours: number;
+  assignedCaseCount: number;
   projects: AnnotatorPerformanceProject[];
 };
 
@@ -199,7 +204,9 @@ function buildPerformanceStats(cases: SerializedReviewerCase[]): AnnotatorPerfor
 function buildAnnotatorPerformance(
   annotators: { id: string; name: string; email: string }[],
   cases: SerializedReviewerCase[],
+  capacityRows: AnnotatorCapacityRow[],
 ): AnnotatorPerformanceSummary[] {
+  const capacityById = new Map(capacityRows.map((row) => [row.id, row] as const));
   return annotators
     .map((annotator) => {
       const mine = cases.filter((c) => c.annotator?.id === annotator.id);
@@ -216,9 +223,14 @@ function buildAnnotatorPerformance(
           stats: buildPerformanceStats(list),
           cases: [...list].sort((a, b) => a.caseId.localeCompare(b.caseId)),
         }));
+      const capacity = capacityById.get(annotator.id);
       return {
         ...annotator,
         stats: buildPerformanceStats(mine),
+        availabilityHours: capacity?.availabilityHours ?? 0,
+        assignedEstimateHours: capacity?.assignedEstimateHours ?? 0,
+        remainingHours: capacity?.remainingHours ?? 0,
+        assignedCaseCount: capacity?.assignedCaseCount ?? 0,
         projects,
       };
     })
@@ -273,12 +285,14 @@ export function ReviewerWorkboard({
   lang,
   cases,
   annotators,
+  capacityRows,
   guides,
   topics,
 }: {
   lang: Lang;
   cases: SerializedReviewerCase[];
   annotators: { id: string; name: string; email: string }[];
+  capacityRows: AnnotatorCapacityRow[];
   guides: GuideOption[];
   topics: TopicOption[];
 }) {
@@ -318,7 +332,10 @@ export function ReviewerWorkboard({
   const noteCase = noteCaseId ? cases.find((c) => c.id === noteCaseId) ?? null : null;
   const assignCase = assignCaseId ? cases.find((c) => c.id === assignCaseId) ?? null : null;
   const annotatorFocus = annotatorFocusId ? buildAnnotatorFocus(cases, annotatorFocusId) : null;
-  const annotatorPerformance = useMemo(() => buildAnnotatorPerformance(annotators, cases), [annotators, cases]);
+  const annotatorPerformance = useMemo(
+    () => buildAnnotatorPerformance(annotators, cases, capacityRows),
+    [annotators, cases, capacityRows],
+  );
   const selectedAnnotator = selectedAnnotatorId
     ? annotatorPerformance.find((annotator) => annotator.id === selectedAnnotatorId) ?? null
     : null;
@@ -912,12 +929,15 @@ export function ReviewerWorkboard({
                     <p className="text-sm text-[var(--muted)]">{tk("reviewer_perf_no_cases")}</p>
                   ) : (
                     <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
-                      <table className="w-full min-w-[760px] text-left text-sm">
+                      <table className="w-full min-w-[1040px] text-left text-sm">
                         <thead className="border-b border-[var(--border)] bg-[var(--bg)] text-[var(--muted)]">
                           <tr>
                             <th className="px-3 py-2 font-medium">{tk("reviewer_perf_annotator")}</th>
                             <th className="px-3 py-2 font-medium">{tk("reviewer_perf_projects")}</th>
                             <th className="px-3 py-2 font-medium">{tk("reviewer_perf_total")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("availability_total")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("availability_assigned")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("availability_remaining")}</th>
                             <th className="px-3 py-2 font-medium">{tk("reviewer_perf_avg_time")}</th>
                             <th className="px-3 py-2 font-medium">{tk("dash_avg_difficulty")}</th>
                             <th className="px-3 py-2 font-medium">{tk("dash_avg_quality")}</th>
@@ -938,6 +958,21 @@ export function ReviewerWorkboard({
                                 {annotator.projects.length}
                               </td>
                               <td className="px-3 py-2 tabular-nums">{annotator.stats.totalCases}</td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
+                                {annotator.availabilityHours.toFixed(1)}h
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
+                                {annotator.assignedEstimateHours.toFixed(1)}h
+                              </td>
+                              <td
+                                className={`px-3 py-2 tabular-nums font-medium ${
+                                  annotator.remainingHours < 0
+                                    ? "text-[var(--danger)]"
+                                    : "text-[var(--success)]"
+                                }`}
+                              >
+                                {annotator.remainingHours.toFixed(1)}h
+                              </td>
                               <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
                                 {formatMinutes(lang, annotator.stats.averageTime)}
                               </td>
@@ -969,6 +1004,25 @@ export function ReviewerWorkboard({
                         <span className="rounded-full border border-[var(--border)] px-2 py-1 text-xs text-[var(--muted)]">
                           {formatMinutes(lang, selectedAnnotator.stats.averageTime)} {tk("reviewer_perf_avg_time")}
                         </span>
+                      </div>
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("availability_total")}</p>
+                        <p className="mt-1 text-2xl font-semibold tabular-nums">{selectedAnnotator.availabilityHours.toFixed(1)}h</p>
+                      </div>
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("availability_assigned")}</p>
+                        <p className="mt-1 text-2xl font-semibold tabular-nums">{selectedAnnotator.assignedEstimateHours.toFixed(1)}h</p>
+                        <p className="mt-1 text-xs text-[var(--muted)]">
+                          {selectedAnnotator.assignedCaseCount} {tk("availability_cases")}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("availability_remaining")}</p>
+                        <p className={`mt-1 text-2xl font-semibold tabular-nums ${selectedAnnotator.remainingHours < 0 ? "text-[var(--danger)]" : "text-[var(--success)]"}`}>
+                          {selectedAnnotator.remainingHours.toFixed(1)}h
+                        </p>
                       </div>
                     </div>
                     <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">

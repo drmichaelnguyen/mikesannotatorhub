@@ -732,6 +732,72 @@ export type AnnotatorCompensationSummary = {
   projects: AnnotatorProjectRow[];
 };
 
+export type AnnotatorAvailabilityDay = {
+  day: string;
+  availableHours: number;
+};
+
+export type AnnotatorAvailabilitySummary = {
+  days: AnnotatorAvailabilityDay[];
+  availableHours: number;
+  assignedEstimateHours: number;
+  remainingHours: number;
+  assignedCaseCount: number;
+};
+
+export type AnnotatorCapacityRow = {
+  id: string;
+  name: string;
+  email: string;
+  availabilityHours: number;
+  assignedEstimateHours: number;
+  remainingHours: number;
+  assignedCaseCount: number;
+  days: AnnotatorAvailabilityDay[];
+};
+
+function getNextSevenDays() {
+  const today = new Date();
+  const days: string[] = [];
+  for (let i = 0; i < 7; i += 1) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+  return days;
+}
+
+function round1(n: number) {
+  return Math.round(n * 10) / 10;
+}
+
+function estimateCaseHours(c: {
+  minMinutesPerCase: number;
+  maxMinutesPerCase: number;
+}) {
+  return ((c.minMinutesPerCase + c.maxMinutesPerCase) / 2) / 60;
+}
+
+function buildAvailabilitySummary(
+  days: string[],
+  rows: { day: string; availableHours: number }[],
+  assignedCases: { minMinutesPerCase: number; maxMinutesPerCase: number }[],
+): AnnotatorAvailabilitySummary {
+  const byDay = new Map(rows.map((r) => [r.day, r.availableHours] as const));
+  const normalizedDays = days.map((day) => ({ day, availableHours: round1(byDay.get(day) ?? 0) }));
+  const availableHours = round1(normalizedDays.reduce((sum, d) => sum + d.availableHours, 0));
+  const assignedEstimateHours = round1(
+    assignedCases.reduce((sum, c) => sum + estimateCaseHours(c), 0),
+  );
+  return {
+    days: normalizedDays,
+    availableHours,
+    assignedEstimateHours,
+    remainingHours: round1(availableHours - assignedEstimateHours),
+    assignedCaseCount: assignedCases.length,
+  };
+}
+
 /** Audited (and legacy accepted) cases; month boundaries use the viewer's local calendar. */
 export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompensationSummary> {
   const user = await requireRole("ANNOTATOR");
@@ -815,6 +881,113 @@ export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompen
     qualityCount,
     projects,
   };
+}
+
+export async function getAnnotatorAvailabilitySummary(): Promise<AnnotatorAvailabilitySummary> {
+  const user = await requireRole("ANNOTATOR");
+  const days = getNextSevenDays();
+  const [availabilityRows, assignedCases] = await Promise.all([
+    prisma.annotatorAvailability.findMany({
+      where: { userId: user.id, day: { in: days } },
+      select: { day: true, availableHours: true },
+    }),
+    prisma.annotationCase.findMany({
+      where: {
+        annotatorId: user.id,
+        status: { in: [CaseStatus.ASSIGNED, CaseStatus.SUBMITTED, CaseStatus.REJECTED] },
+      },
+      select: { minMinutesPerCase: true, maxMinutesPerCase: true },
+    }),
+  ]);
+  return buildAvailabilitySummary(days, availabilityRows, assignedCases);
+}
+
+export async function getAnnotatorCapacityRows(): Promise<AnnotatorCapacityRow[]> {
+  await requireRole("REVIEWER");
+  const days = getNextSevenDays();
+  const [annotators, availabilityRows, assignedCases] = await Promise.all([
+    prisma.user.findMany({
+      where: { role: "ANNOTATOR" },
+      select: { id: true, name: true, email: true },
+      orderBy: [{ name: "asc" }, { email: "asc" }],
+    }),
+    prisma.annotatorAvailability.findMany({
+      where: { day: { in: days } },
+      select: { userId: true, day: true, availableHours: true },
+    }),
+    prisma.annotationCase.findMany({
+      where: {
+        annotatorId: { not: null },
+        status: { in: [CaseStatus.ASSIGNED, CaseStatus.SUBMITTED, CaseStatus.REJECTED] },
+      },
+      select: { annotatorId: true, minMinutesPerCase: true, maxMinutesPerCase: true },
+    }),
+  ]);
+
+  const availabilityByUser = new Map<string, { day: string; availableHours: number }[]>();
+  for (const row of availabilityRows) {
+    if (!availabilityByUser.has(row.userId)) availabilityByUser.set(row.userId, []);
+    availabilityByUser.get(row.userId)!.push({ day: row.day, availableHours: row.availableHours });
+  }
+
+  const assignedByUser = new Map<string, { minMinutesPerCase: number; maxMinutesPerCase: number }[]>();
+  for (const row of assignedCases) {
+    if (!row.annotatorId) continue;
+    if (!assignedByUser.has(row.annotatorId)) assignedByUser.set(row.annotatorId, []);
+    assignedByUser.get(row.annotatorId)!.push({
+      minMinutesPerCase: row.minMinutesPerCase,
+      maxMinutesPerCase: row.maxMinutesPerCase,
+    });
+  }
+
+  return annotators.map((annotator) => {
+    const availability = buildAvailabilitySummary(
+      days,
+      availabilityByUser.get(annotator.id) ?? [],
+      assignedByUser.get(annotator.id) ?? [],
+    );
+    return {
+      id: annotator.id,
+      name: annotator.name,
+      email: annotator.email,
+      availabilityHours: availability.availableHours,
+      assignedEstimateHours: availability.assignedEstimateHours,
+      remainingHours: availability.remainingHours,
+      assignedCaseCount: availability.assignedCaseCount,
+      days: availability.days,
+    };
+  });
+}
+
+export async function saveAnnotatorAvailabilityAction(formData: FormData) {
+  const user = await requireRole("ANNOTATOR");
+  const days = getNextSevenDays();
+  const entries = days.map((day) => {
+    const raw = String(formData.get(`availability_${day}`) ?? "").trim();
+    const hours = raw === "" ? 0 : Number(raw);
+    return {
+      day,
+      availableHours: Number.isFinite(hours) && hours >= 0 ? round1(hours) : 0,
+    };
+  });
+  await prisma.$transaction(
+    entries.map((entry) =>
+      prisma.annotatorAvailability.upsert({
+        where: { userId_day: { userId: user.id, day: entry.day } },
+        create: {
+          userId: user.id,
+          day: entry.day,
+          availableHours: entry.availableHours,
+        },
+        update: {
+          availableHours: entry.availableHours,
+        },
+      }),
+    ),
+  );
+  revalidatePath("/annotator");
+  revalidatePath("/reviewer");
+  return { ok: true as const };
 }
 
 export async function listCasesForAnnotator(userId: string) {

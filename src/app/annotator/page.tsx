@@ -2,9 +2,11 @@ import { redirect } from "next/navigation";
 import { getLangFromCookies } from "@/app/actions/lang";
 import {
   getAnnotatorBoard,
+  getAnnotatorAvailabilitySummary,
   getAnnotatorCompensationSummary,
   listGuidesAndTopics,
 } from "@/app/actions/cases";
+import { AnnotatorAvailabilityPanel } from "@/components/AnnotatorAvailabilityPanel";
 import { getNotifications } from "@/app/actions/notifications";
 import { AnnotatorStatsPanel } from "@/components/AnnotatorStatsPanel";
 import { AnnotatorWorkboard } from "@/components/annotator/AnnotatorWorkboard";
@@ -23,12 +25,14 @@ export default async function AnnotatorPage() {
 
   let board;
   let summary;
+  let availability;
   let guidesAndTopics;
   let notifGroups;
   try {
-    [board, summary, guidesAndTopics, notifGroups] = await Promise.all([
+    [board, summary, availability, guidesAndTopics, notifGroups] = await Promise.all([
       getAnnotatorBoard(),
       getAnnotatorCompensationSummary(),
+      getAnnotatorAvailabilitySummary(),
       listGuidesAndTopics(),
       getNotifications(),
     ]);
@@ -50,6 +54,7 @@ export default async function AnnotatorPage() {
           <p className="text-sm text-[var(--muted)]">{user.email}</p>
         </div>
         <AnnotatorStatsPanel lang={lang} summary={summary} />
+        <AnnotatorAvailabilityPanel lang={lang} summary={availability} />
         <section>
           <h2 className="mb-3 text-lg font-medium">{tk("dash_cases_heading")}</h2>
           <AnnotatorWorkboard

@@ -494,12 +494,14 @@ export function AnnotatorWorkboard({
             <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 shadow-sm shadow-amber-500/10">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h3 className="text-sm font-semibold text-amber-950">{tk("annotator_section_pool")}</h3>
-                  <p className="mt-0.5 text-xs text-amber-950/80">
+                  <h3 className="text-sm font-semibold text-amber-800">
+                    {tk("annotator_section_pool")}
+                  </h3>
+                  <p className="mt-0.5 text-xs font-medium text-amber-800/90">
                     Available work waiting for assignment
                   </p>
                 </div>
-                <span className="rounded-full bg-amber-500 px-2.5 py-1 text-xs font-semibold text-white">
+                <span className="rounded-full bg-amber-600 px-2.5 py-1 text-xs font-semibold text-white">
                   {openPoolCount} available
                 </span>
               </div>

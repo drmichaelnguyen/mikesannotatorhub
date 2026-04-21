@@ -39,6 +39,7 @@ model User {
   reviews         Review[]
   caseNotes       CaseNote[]
   notifications   Notification[]
+  availabilityDays AnnotatorAvailability[]
 }
 
 model Notification {
@@ -94,6 +95,19 @@ model Guide {
   updatedAt       DateTime        @updatedAt
 
   cases           AnnotationCase[]
+}
+
+model AnnotatorAvailability {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  day            String
+  availableHours Float    @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([userId, day])
+  @@index([userId, day])
 }
 
 model Topic {

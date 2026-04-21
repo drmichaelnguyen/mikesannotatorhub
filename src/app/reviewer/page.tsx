@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getLangFromCookies } from "@/app/actions/lang";
 import {
+  getAnnotatorCapacityRows,
   listAnnotatorsForAssignment,
   listCasesForReviewer,
   listGuidesAndTopics,
@@ -30,12 +31,14 @@ export default async function ReviewerPage() {
 
   let cases: ReviewerCaseRow[];
   let annotators: Awaited<ReturnType<typeof listAnnotatorsForAssignment>>;
+  let capacityRows: Awaited<ReturnType<typeof getAnnotatorCapacityRows>>;
   let guidesAndTopics: Awaited<ReturnType<typeof listGuidesAndTopics>>;
   let notifGroups;
   try {
-    [cases, annotators, guidesAndTopics, notifGroups] = await Promise.all([
+    [cases, annotators, capacityRows, guidesAndTopics, notifGroups] = await Promise.all([
       listCasesForReviewer() as Promise<ReviewerCaseRow[]>,
       listAnnotatorsForAssignment(),
+      getAnnotatorCapacityRows(),
       listGuidesAndTopics(),
       getNotifications(),
     ]);
@@ -106,6 +109,7 @@ export default async function ReviewerPage() {
             lang={lang}
             cases={serialized}
             annotators={annotators}
+            capacityRows={capacityRows}
             guides={guidesAndTopics.guides}
             topics={guidesAndTopics.topics}
           />
