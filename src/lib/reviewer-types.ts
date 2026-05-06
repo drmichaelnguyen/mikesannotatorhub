@@ -1,4 +1,4 @@
-import type { AnnotationCase, CaseNote, Guide, Review, Topic, TopicProject, User } from "@prisma/client";
+import type { AnnotationCase, Guide, Review, Topic, TopicProject, User } from "@prisma/client";
 
 export type ReviewerCaseRow = AnnotationCase & {
   guide: Pick<Guide, "id" | "title" | "content"> | null;
@@ -8,5 +8,5 @@ export type ReviewerCaseRow = AnnotationCase & {
   annotator: User | null;
   auditedBy: Pick<User, "id" | "name" | "email"> | null;
   reviews: Review[];
-  caseNotes: (CaseNote & { author: Pick<User, "id" | "name" | "role"> })[];
+  _count: { caseNotes: number };
 };

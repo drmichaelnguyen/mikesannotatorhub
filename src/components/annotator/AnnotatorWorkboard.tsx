@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useActionState, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { addCaseNoteAction, assignCaseAction, submitAnnotationAction } from "@/app/actions/cases";
+import { assignCaseAction, submitAnnotationAction } from "@/app/actions/cases";
 import { MentionTextarea } from "@/components/CaseDiscussion";
 import {
   AnnotatorCaseDetailPanel,
@@ -11,6 +11,7 @@ import {
 } from "@/components/annotator/AnnotatorCaseDetailPanel";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
+import { createCaseNote } from "@/lib/case-note-api";
 import { StarRating } from "@/components/StarRating";
 import { getClipboardImageFiles, readFilesAsDataUrls } from "@/lib/client-image-data";
 import { computeCompensation } from "@/lib/compensation";
@@ -187,6 +188,7 @@ export function AnnotatorWorkboard({
   available,
   mine,
   rejected,
+  reference,
   guides,
   topics,
 }: {
@@ -194,6 +196,7 @@ export function AnnotatorWorkboard({
   available: AnnotatorCaseRow[];
   mine: AnnotatorCaseRow[];
   rejected: AnnotatorCaseRow[];
+  reference: AnnotatorCaseRow[];
   guides: GuideOption[];
   topics: TopicOption[];
 }) {
@@ -220,16 +223,38 @@ export function AnnotatorWorkboard({
   const poolGroups = useMemo(() => groupByProject(available), [available]);
   const activeGroups = useMemo(() => groupByProject(inProgress), [inProgress]);
   const doneGroups = useMemo(() => groupByProject(completed), [completed]);
-
+  const referenceGroups = useMemo(() => groupByProject(reference), [reference]);
   const allRows = useMemo(
-    () => [...available, ...inProgress, ...completed],
-    [available, inProgress, completed],
+    () => [...available, ...inProgress, ...completed, ...reference],
+    [available, inProgress, completed, reference],
+  );
+  const projectActivity = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const row of allRows) {
+      const project = (row.redbrickProject || "").trim() || "—";
+      const current = map.get(project) ?? false;
+      map.set(
+        project,
+        current ||
+          (row.status !== CaseStatus.AUDITED && row.status !== CaseStatus.ACCEPTED),
+      );
+    }
+    return map;
+  }, [allRows]);
+  const doneActiveGroups = useMemo(
+    () => doneGroups.filter((g) => projectActivity.get(g.project)),
+    [doneGroups, projectActivity],
+  );
+  const doneInactiveGroups = useMemo(
+    () => doneGroups.filter((g) => !projectActivity.get(g.project)),
+    [doneGroups, projectActivity],
   );
 
   const [detailId, setDetailId] = useState<string | null>(null);
   const [noteCaseId, setNoteCaseId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
   const [noteImages, setNoteImages] = useState<string[]>([]);
+  const [showInactiveProjects, setShowInactiveProjects] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -317,7 +342,7 @@ export function AnnotatorWorkboard({
     }
     setErr(null);
     start(async () => {
-      const res = await addCaseNoteAction({
+      const res = await createCaseNote({
         caseDbId: noteCaseId,
         content: text,
         imageDataList: noteImages,
@@ -334,21 +359,27 @@ export function AnnotatorWorkboard({
 
   function canPostInDetail(row: AnnotatorCaseRow | null): boolean {
     if (!row) return false;
+    if (row.isReference) return true;
     if (row.status === CaseStatus.AVAILABLE) return false;
     return true;
   }
 
   function renderProjectTable(
     cases: AnnotatorCaseRow[],
-    mode: "pool" | "active" | "done",
+    mode: "pool" | "active" | "done" | "reference",
   ) {
+    const isPool = mode === "pool";
     return (
       <div className="overflow-x-auto px-1 pb-1">
-        <table className="w-full min-w-[560px] border-collapse text-left text-xs">
+        <table
+          className={`w-full min-w-[560px] border-collapse text-left text-xs ${
+            isPool ? "text-slate-900" : "text-[var(--text)]"
+          }`}
+        >
           <thead>
             <tr
               className={`border-b ${
-                mode === "pool"
+                isPool
                   ? "border-amber-300 text-amber-900"
                   : "border-[var(--border)] text-[var(--muted)]"
               }`}
@@ -369,20 +400,19 @@ export function AnnotatorWorkboard({
           </thead>
           <tbody>
             {cases.map((c) => {
-              const highlightReviewedComment = mode === "done" && (c.caseNotes?.length ?? 0) > 0;
+              const highlightReviewedComment =
+                (mode === "done" || mode === "reference") && (c._count?.caseNotes ?? 0) > 0;
               return (
               <tr
                 key={c.id}
                 tabIndex={0}
                 className={`cursor-pointer border-b ${
-                  mode === "pool"
-                    ? "border-amber-200/80 bg-amber-50/90 hover:bg-amber-100/90"
-                    : ""
-                } ${
-                  highlightReviewedComment
-                    ? "border-[var(--danger)]/30 bg-[var(--danger)]/8"
-                    : "border-[var(--border)]/50"
-                } hover:bg-[var(--bg)]/80`}
+                  isPool
+                      ? "border-amber-200/80 bg-amber-50/90 hover:bg-amber-100/90"
+                      : highlightReviewedComment
+                        ? "border-[var(--danger)]/30 bg-[var(--danger)]/8 hover:bg-[var(--bg)]/80"
+                        : "border-[var(--border)]/50 hover:bg-[var(--bg)]/80"
+                }`}
                 onClick={() => openDetail(c.id)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
@@ -391,13 +421,29 @@ export function AnnotatorWorkboard({
                   }
                 }}
               >
-                <td className={`py-1.5 pr-2 font-mono font-medium ${c.status === CaseStatus.REJECTED ? "text-[var(--danger)]" : "text-[var(--text)]"}`}>
+                <td
+                  className={`py-1.5 pr-2 font-mono font-medium ${
+                    c.status === CaseStatus.REJECTED
+                      ? "text-[var(--danger)]"
+                      : isPool
+                        ? "text-slate-900"
+                        : "text-[var(--text)]"
+                  }`}
+                >
                   <div className="flex flex-wrap items-center gap-1">
+                    {c.isReference && (
+                      <span
+                        title={tk("case_reference")}
+                        className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-yellow-500 bg-yellow-300 px-1 text-[11px] font-bold leading-none text-yellow-950 shadow-sm"
+                      >
+                        ★
+                      </span>
+                    )}
                     <span>{c.caseId}</span>
                     <CopyTextButton lang={lang} value={c.caseId} />
                   </div>
                 </td>
-                <td className="py-1.5 pr-2 text-[var(--muted)]">
+                <td className={`py-1.5 pr-2 ${isPool ? "text-slate-700" : "text-[var(--muted)]"}`}>
                   <div className="flex flex-wrap items-center gap-1">
                     <span className="max-w-[200px] truncate" title={c.redbrickProject}>
                       {c.redbrickProject}
@@ -423,6 +469,8 @@ export function AnnotatorWorkboard({
                         c.compensationType,
                         c.compensationAmount,
                         c.annotationMinutes,
+                        c.maxMinutesPerCase,
+                        c.annotatorBonus,
                       ),
                     )}
                   </td>
@@ -442,10 +490,14 @@ export function AnnotatorWorkboard({
                     {mode === "active" && c.status === CaseStatus.SUBMITTED && (
                       <span className="text-[var(--muted)]">—</span>
                     )}
-                    {(mode === "active" || mode === "done") && (
+                    {(mode === "active" || mode === "done" || mode === "reference") && (
                       <button
                         type="button"
-                        className="rounded border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 hover:border-[var(--accent)]"
+                        className={`rounded border px-1.5 py-0.5 hover:border-[var(--accent)] ${
+                          isPool
+                            ? "border-slate-300 bg-white text-slate-900"
+                            : "border-[var(--border)] bg-[var(--bg)]"
+                        }`}
                         onClick={() => {
                           setErr(null);
                           setNoteCaseId(c.id);
@@ -454,13 +506,17 @@ export function AnnotatorWorkboard({
                       >
                         <CommentActionLabel
                           label={tk("action_comment")}
-                          count={c.caseNotes?.length ?? 0}
+                          count={c._count?.caseNotes ?? 0}
                         />
                       </button>
                     )}
                     <button
                       type="button"
-                      className="rounded border border-[var(--border)] px-1.5 py-0.5 hover:border-[var(--accent)]"
+                      className={`rounded border px-1.5 py-0.5 hover:border-[var(--accent)] ${
+                        isPool
+                          ? "border-slate-300 bg-white text-slate-900"
+                          : "border-[var(--border)]"
+                      }`}
                       onClick={() => openDetail(c.id)}
                     >
                       {tk("action_details")}
@@ -476,7 +532,10 @@ export function AnnotatorWorkboard({
   }
 
   const emptyAll =
-    available.length === 0 && inProgress.length === 0 && completed.length === 0;
+    available.length === 0 &&
+    inProgress.length === 0 &&
+    completed.length === 0 &&
+    reference.length === 0;
   const openPoolCount = available.length;
 
   return (
@@ -490,6 +549,31 @@ export function AnnotatorWorkboard({
         <p className="text-[var(--muted)]">{tk("no_cases")}</p>
       ) : (
         <>
+          <section className="space-y-2">
+            <h3 className="text-sm font-semibold text-[var(--text)]">{tk("annotator_section_reference")}</h3>
+            {reference.length === 0 ? (
+              <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
+            ) : (
+              <div className="space-y-2">
+                {referenceGroups.map((g) => (
+                  <details
+                    key={g.project}
+                    className="rounded-lg border border-[var(--accent)]/35 bg-[var(--accent)]/5"
+                  >
+                    <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
+                      <span className="inline-flex flex-wrap items-center gap-2">
+                        <span>{g.project}</span>
+                        <CopyTextButton lang={lang} value={g.project === "—" ? "" : g.project} />
+                        <span>(</span><StatusCountBadges cases={g.cases} /><span>)</span>
+                      </span>
+                    </summary>
+                    <div className="border-t border-[var(--accent)]/25">{renderProjectTable(g.cases, "reference")}</div>
+                  </details>
+                ))}
+              </div>
+            )}
+          </section>
+
           <section className="space-y-2">
             <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 shadow-sm shadow-amber-500/10">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -561,22 +645,73 @@ export function AnnotatorWorkboard({
             {completed.length === 0 ? (
               <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
             ) : (
-              <div className="space-y-2">
-                {doneGroups.map((g) => (
-                  <details
-                    key={g.project}
-                    className="rounded-lg border border-[var(--border)] bg-[var(--surface)]"
-                  >
-                    <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
-                      <span className="inline-flex flex-wrap items-center gap-2">
-                        <span>{g.project}</span>
-                        <CopyTextButton lang={lang} value={g.project === "—" ? "" : g.project} />
-                        <span>(</span><StatusCountBadges cases={g.cases} /><span>)</span>
-                      </span>
-                    </summary>
-                    <div className="border-t border-[var(--border)]">{renderProjectTable(g.cases, "done")}</div>
-                  </details>
-                ))}
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+                      {tk("annotator_projects_active")}
+                    </h4>
+                    <label className="inline-flex items-center gap-2 text-xs text-[var(--muted)]">
+                      <input
+                        type="checkbox"
+                        checked={showInactiveProjects}
+                        onChange={(e) => setShowInactiveProjects(e.target.checked)}
+                        className="h-4 w-4 rounded border-[var(--border)] bg-[var(--bg)]"
+                      />
+                      <span>{tk("annotator_show_inactive_projects")}</span>
+                    </label>
+                  </div>
+                  {doneActiveGroups.length === 0 ? (
+                    <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {doneActiveGroups.map((g) => (
+                        <details
+                          key={g.project}
+                          className="rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                        >
+                          <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
+                            <span className="inline-flex flex-wrap items-center gap-2">
+                              <span>{g.project}</span>
+                              <CopyTextButton lang={lang} value={g.project === "—" ? "" : g.project} />
+                              <span>(</span><StatusCountBadges cases={g.cases} /><span>)</span>
+                            </span>
+                          </summary>
+                          <div className="border-t border-[var(--border)]">
+                            {renderProjectTable(g.cases, "done")}
+                          </div>
+                        </details>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {showInactiveProjects && doneInactiveGroups.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+                      {tk("annotator_projects_inactive")}
+                    </h4>
+                    <div className="space-y-2">
+                      {doneInactiveGroups.map((g) => (
+                        <details
+                          key={g.project}
+                          className="rounded-lg border border-[var(--border)] bg-[var(--surface)] opacity-90"
+                        >
+                          <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
+                            <span className="inline-flex flex-wrap items-center gap-2">
+                              <span>{g.project}</span>
+                              <CopyTextButton lang={lang} value={g.project === "—" ? "" : g.project} />
+                              <span>(</span><StatusCountBadges cases={g.cases} /><span>)</span>
+                            </span>
+                          </summary>
+                          <div className="border-t border-[var(--border)]">
+                            {renderProjectTable(g.cases, "done")}
+                          </div>
+                        </details>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </section>

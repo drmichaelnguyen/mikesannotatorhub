@@ -5,8 +5,17 @@ export function computeCompensation(
   type: CompensationType,
   amount: number,
   minutes: number | null,
+  maxMinutes?: number | null,
+  annotatorBonus = 0,
 ): number {
-  if (type === "PER_CASE") return amount;
-  const m = minutes ?? 0;
-  return Math.round(amount * m * 100) / 100;
+  if (!Number.isFinite(annotatorBonus) || annotatorBonus < 0) {
+    annotatorBonus = 0;
+  }
+  if (type === "PER_CASE") return amount + annotatorBonus;
+  const submittedMinutes = minutes ?? 0;
+  const m =
+    typeof maxMinutes === "number" && Number.isFinite(maxMinutes)
+      ? Math.min(submittedMinutes, maxMinutes)
+      : submittedMinutes;
+  return Math.round((amount * m + annotatorBonus) * 100) / 100;
 }

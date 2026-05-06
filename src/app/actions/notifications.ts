@@ -37,7 +37,16 @@ export async function getNotifications(): Promise<NotificationGroup[]> {
       createdAt: r.createdAt.toISOString(),
     });
   }
-  return [...map.values()];
+  return [...map.values()]
+    .map((group) => ({
+      ...group,
+      items: [...group.items].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    }))
+    .sort((a, b) => {
+      const aLatest = a.items[0]?.createdAt ?? "";
+      const bLatest = b.items[0]?.createdAt ?? "";
+      return bLatest.localeCompare(aLatest);
+    });
 }
 
 export async function markCaseNotificationsReadAction(annotationCaseDbId: string) {

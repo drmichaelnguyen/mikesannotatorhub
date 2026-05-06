@@ -12,16 +12,19 @@ export function ReviewerCompensationEditor({
   caseDbId,
   initialType,
   initialAmount,
+  initialBonus,
 }: {
   lang: Lang;
   caseDbId: string;
   initialType: CompensationType;
   initialAmount: number;
+  initialBonus: number;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
   const [compType, setCompType] = useState<CompensationType>(initialType);
   const [amountStr, setAmountStr] = useState(String(initialAmount));
+  const [bonusStr, setBonusStr] = useState(String(initialBonus));
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -29,15 +32,22 @@ export function ReviewerCompensationEditor({
   useEffect(() => {
     setCompType(initialType);
     setAmountStr(String(initialAmount));
+    setBonusStr(String(initialBonus));
     setMsg(null);
     setErr(null);
-  }, [caseDbId, initialType, initialAmount]);
+  }, [caseDbId, initialType, initialAmount, initialBonus]);
 
   function save() {
     setErr(null);
     setMsg(null);
     const compensationAmount = Number(amountStr);
-    if (!Number.isFinite(compensationAmount) || compensationAmount < 0) {
+    const annotatorBonus = Number(bonusStr);
+    if (
+      !Number.isFinite(compensationAmount) ||
+      compensationAmount < 0 ||
+      !Number.isFinite(annotatorBonus) ||
+      annotatorBonus < 0
+    ) {
       setErr(tk("required"));
       return;
     }
@@ -46,6 +56,7 @@ export function ReviewerCompensationEditor({
         caseDbId,
         compensationType: compType,
         compensationAmount,
+        annotatorBonus,
       });
       if (!res.ok) {
         setErr(tk("required"));
@@ -80,6 +91,17 @@ export function ReviewerCompensationEditor({
             step="0.01"
             value={amountStr}
             onChange={(e) => setAmountStr(e.target.value)}
+            className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 tabular-nums"
+          />
+        </label>
+        <label className="min-w-[140px] flex-1 text-sm">
+          <span className="text-[var(--muted)]">{tk("case_annotatorBonus")}</span>
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            value={bonusStr}
+            onChange={(e) => setBonusStr(e.target.value)}
             className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 tabular-nums"
           />
         </label>

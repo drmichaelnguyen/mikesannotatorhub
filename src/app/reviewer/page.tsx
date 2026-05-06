@@ -47,6 +47,13 @@ export default async function ReviewerPage() {
   }
 
   const serialized = cases.map(serializeReviewerCase);
+  const scopeOptions = Array.from(
+    new Set(
+      cases
+        .map((c) => c.scopeOfWork.trim())
+        .filter(Boolean),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
   const caseDone = cases.filter((c) => c.completedAt != null).length;
   const caseSubmittedPendingReview = cases.filter((c) => c.status === CaseStatus.SUBMITTED).length;
   const caseApproved = cases.filter(
@@ -101,6 +108,7 @@ export default async function ReviewerPage() {
               annotators={annotators}
               guides={guidesAndTopics.guides}
               topics={guidesAndTopics.topics}
+              scopeOptions={scopeOptions}
             />
           </CollapsibleSection>
         </section>

@@ -1,6 +1,8 @@
 "use client";
 
+import { memo, useMemo } from "react";
 import { CaseDiscussion } from "@/components/CaseDiscussion";
+import { CaseVideoGuidesSection } from "@/components/CaseVideoGuides";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ReviewCasePanel } from "@/components/ReviewCasePanel";
 import { RichTextContent } from "@/components/RichTextContent";
@@ -27,17 +29,19 @@ function htmlToPlainText(html: string) {
   return (doc.body.textContent ?? "").replace(/\s+\n/g, "\n").trim();
 }
 
-export function ReviewerCaseDetailPanel({
+function ReviewerCaseDetailPanelImpl({
   lang,
   c,
   annotators,
   guides = [],
+  scopeOptions = [],
   mentionOptions = [],
 }: {
   lang: Lang;
   c: SerializedReviewerCase;
   annotators: { id: string; name: string; email: string }[];
   guides?: GuideOption[];
+  scopeOptions?: string[];
   mentionOptions?: MentionOption[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
@@ -47,10 +51,14 @@ export function ReviewerCaseDetailPanel({
     c.compensationType,
     c.compensationAmount,
     c.annotationMinutes,
+    c.maxMinutesPerCase,
+    c.annotatorBonus,
   );
-  const guideGuideline = c.guide ? htmlToPlainText(c.guide.content) : "";
+  const guideGuideline = useMemo(
+    () => (c.guide ? htmlToPlainText(c.guide.content) : ""),
+    [c.guide],
+  );
   const showGuideline = !c.guide || c.guideline.trim() !== guideGuideline;
-
   return (
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[var(--border)] pb-3">
@@ -60,6 +68,12 @@ export function ReviewerCaseDetailPanel({
             <CopyTextButton lang={lang} value={c.caseId} />
           </div>
           <p className="text-sm text-[var(--muted)]">{c.redbrickProject}</p>
+          {c.isReference && (
+            <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-yellow-500 bg-yellow-300 px-2 py-0.5 text-xs font-semibold text-yellow-950">
+              <span aria-hidden>★</span>
+              <span>{tk("case_reference")}</span>
+            </span>
+          )}
         </div>
         <span className="rounded-full bg-[var(--bg)] px-2 py-0.5 text-xs">
           {tk(`status_${c.status}` as DictKey)}
@@ -79,10 +93,20 @@ export function ReviewerCaseDetailPanel({
             </dd>
           </div>
         )}
-        {showGuideline && (
+        <CaseVideoGuidesSection lang={lang} urls={c.videoGuideUrls} />
+        {showGuideline && c.guideline.trim() !== "" && (
           <div className="md:col-span-2">
-            <dt className="text-[var(--muted)]">{tk("case_guideline")}</dt>
-            <dd>{c.guideline}</dd>
+            <dt className="sr-only">{tk("case_guideline")}</dt>
+            <dd className="m-0">
+              <details className="rounded-md border border-[var(--border)] bg-[var(--bg)]">
+                <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-[var(--muted)] hover:bg-[var(--surface)]">
+                  {tk("case_guideline")}
+                </summary>
+                <div className="border-t border-[var(--border)] px-3 py-2 text-sm whitespace-pre-wrap text-[var(--text)]">
+                  {c.guideline}
+                </div>
+              </details>
+            </dd>
           </div>
         )}
         {c.topic && (
@@ -111,6 +135,10 @@ export function ReviewerCaseDetailPanel({
         <div>
           <dt className="text-[var(--muted)]">{tk("case_compAmount")}</dt>
           <dd>{compLabel(lang, c.compensationType, c.compensationAmount)}</dd>
+        </div>
+        <div>
+          <dt className="text-[var(--muted)]">{tk("case_annotatorBonus")}</dt>
+          <dd>{c.annotatorBonus}</dd>
         </div>
         <div>
           <dt className="text-[var(--muted)]">{tk("case_annotator")}</dt>
@@ -168,22 +196,15 @@ export function ReviewerCaseDetailPanel({
           </>
         )}
       </dl>
-      <ReviewerCaseEditor lang={lang} c={c} guides={guides} />
+      <ReviewerCaseEditor lang={lang} c={c} guides={guides} scopeOptions={scopeOptions} />
       <div>
         <h3 className="mb-2 text-sm font-medium text-[var(--muted)]">{tk("discussion_title")}</h3>
         <CaseDiscussion
           lang={lang}
           caseDbId={c.id}
+          caseLabel={c.caseId}
           canPost
           mentionOptions={mentionOptions}
-          notes={c.caseNotes.map((n) => ({
-            id: n.id,
-            parentNoteId: n.parentNoteId,
-            content: n.content,
-            images: n.images,
-            createdAt: n.createdAt,
-            author: n.author,
-          }))}
         />
       </div>
       {c.reviews[0]?.comment && c.status !== CaseStatus.SUBMITTED && (
@@ -204,3 +225,5 @@ export function ReviewerCaseDetailPanel({
     </div>
   );
 }
+
+export const ReviewerCaseDetailPanel = memo(ReviewerCaseDetailPanelImpl);

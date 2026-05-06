@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import { createCaseAction, type CreateCaseActionResult } from "@/app/actions/cases";
 import type { GuideOption, TopicOption } from "@/lib/guide-topic";
 import type { DictKey, Lang } from "@/lib/i18n";
@@ -14,13 +14,6 @@ function formatIdList(ids: string[], max = 40) {
   return `${shown.join(", ")}${extra}`;
 }
 
-function htmlToPlainText(html: string) {
-  if (!html) return "";
-  if (typeof window === "undefined") return html;
-  const doc = new DOMParser().parseFromString(html, "text/html");
-  return (doc.body.textContent ?? "").replace(/\s+\n/g, "\n").trim();
-}
-
 type Annotator = { id: string; name: string; email: string };
 
 type GuideSelectOption = GuideOption;
@@ -30,11 +23,13 @@ export function CreateCaseForm({
   annotators = [],
   guides = [],
   topics = [],
+  scopeOptions = [],
 }: {
   lang: Lang;
   annotators?: Annotator[];
   guides?: GuideSelectOption[];
   topics?: TopicOption[];
+  scopeOptions?: string[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
@@ -47,8 +42,8 @@ export function CreateCaseForm({
   const [maxMinutesPerCase, setMaxMinutesPerCase] = useState("");
   const [compensationType, setCompensationType] = useState<"PER_CASE" | "PER_MINUTE">("PER_CASE");
   const [compensationAmount, setCompensationAmount] = useState("");
+  const [annotatorBonus, setAnnotatorBonus] = useState("");
   const [assignEmail, setAssignEmail] = useState("");
-  const lastGuideId = useRef("");
 
   const visibleGuides = guides;
   const visibleTopics = useMemo(
@@ -72,13 +67,6 @@ export function CreateCaseForm({
   useEffect(() => {
     if (state?.ok) router.refresh();
   }, [state, router]);
-
-  useEffect(() => {
-    if (guideId === lastGuideId.current) return;
-    lastGuideId.current = guideId;
-    const selected = visibleGuides.find((guide) => guide.id === guideId);
-    setGuideline(selected ? htmlToPlainText(selected.content) : "");
-  }, [guideId, visibleGuides]);
 
   return (
     <form action={formAction} className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 md:grid-cols-2">
@@ -139,7 +127,6 @@ export function CreateCaseForm({
         <span className="text-sm text-[var(--muted)]">{tk("case_guideline")}</span>
         <textarea
           name="guideline"
-          required
           rows={3}
           value={guideline}
           onChange={(e) => setGuideline(e.target.value)}
@@ -147,15 +134,31 @@ export function CreateCaseForm({
         />
       </label>
       <label className="md:col-span-2">
-        <span className="text-sm text-[var(--muted)]">{tk("case_scope")}</span>
+        <span className="text-sm text-[var(--muted)]">{tk("case_videos")}</span>
         <textarea
+          name="videoGuideUrls"
+          rows={3}
+          placeholder="https://..."
+          className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono text-sm"
+        />
+        <p className="mt-1 text-xs text-[var(--muted)]">{tk("case_video_guides_hint")}</p>
+      </label>
+      <label className="md:col-span-2">
+        <span className="text-sm text-[var(--muted)]">{tk("case_scope")}</span>
+        <input
+          list="scope-options-create"
           name="scopeOfWork"
           required
-          rows={3}
           value={scopeOfWork}
           onChange={(e) => setScopeOfWork(e.target.value)}
           className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
         />
+        <datalist id="scope-options-create">
+          {scopeOptions.map((scope) => (
+            <option key={scope} value={scope} />
+          ))}
+        </datalist>
+        <p className="mt-1 text-xs text-[var(--muted)]">{tk("case_scope_hint")}</p>
       </label>
       <label>
         <span className="text-sm text-[var(--muted)]">{tk("case_minMinutes_recommended")}</span>
@@ -207,6 +210,19 @@ export function CreateCaseForm({
         />
       </label>
       <label>
+        <span className="text-sm text-[var(--muted)]">{tk("case_annotatorBonus")}</span>
+        <input
+          name="annotatorBonus"
+          type="number"
+          min={0}
+          step="0.01"
+          required
+          value={annotatorBonus}
+          onChange={(e) => setAnnotatorBonus(e.target.value)}
+          className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
+        />
+      </label>
+      <label>
         <span className="text-sm text-[var(--muted)]">{tk("assign_email")}</span>
         <select
           name="assignEmail"
@@ -228,6 +244,8 @@ export function CreateCaseForm({
             ? tk("no_valid_ids")
             : state.error === "limits"
               ? tk("case_limits_invalid")
+              : state.error === "scope_words"
+                ? tk("scope_word_limit")
               : tk("required")}
         </p>
       )}

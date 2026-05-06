@@ -5,7 +5,12 @@ import { UserRole } from "@prisma/client";
 export async function getCurrentUser() {
   const s = await readSession();
   if (!s) return null;
-  return prisma.user.findUnique({ where: { id: s.userId } });
+  try {
+    return await prisma.user.findUnique({ where: { id: s.userId } });
+  } catch (error) {
+    console.error("Failed to load current user from session", error);
+    return null;
+  }
 }
 
 export async function requireUser() {

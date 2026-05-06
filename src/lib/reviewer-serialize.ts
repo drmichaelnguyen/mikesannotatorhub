@@ -1,15 +1,6 @@
-import type { CaseStatus, CompensationType, UserRole } from "@prisma/client";
-import { getCaseNoteImages } from "@/lib/case-note-images";
+import type { CaseStatus, CompensationType } from "@prisma/client";
 import type { ReviewerCaseRow } from "@/lib/reviewer-types";
-
-export type SerializedDiscussionNote = {
-  id: string;
-  parentNoteId: string | null;
-  content: string | null;
-  images: string[];
-  createdAt: string;
-  author: { name: string; role: UserRole };
-};
+import { videoGuideUrlsFromDb } from "@/lib/video-guides";
 
 export type SerializedReviewerCase = {
   id: string;
@@ -20,11 +11,13 @@ export type SerializedReviewerCase = {
     | { id: string; name: string; description: string | null; projects: { id: string; redbrickProject: string }[] }
     | null;
   guideline: string;
+  videoGuideUrls: string[];
   scopeOfWork: string;
   minMinutesPerCase: number;
   maxMinutesPerCase: number;
   compensationType: CompensationType;
   compensationAmount: number;
+  annotatorBonus: number;
   status: CaseStatus;
   annotationMinutes: number | null;
   difficultyRating: number | null;
@@ -32,10 +25,11 @@ export type SerializedReviewerCase = {
   completedAt: string | null;
   auditedAt: string | null;
   qualityRating: number | null;
+  isReference: boolean;
   annotator: { id: string; name: string; email: string } | null;
   auditedBy: { id: string; name: string; email: string } | null;
   reviews: { id: string; decision: string; comment: string | null; createdAt: string }[];
-  caseNotes: SerializedDiscussionNote[];
+  caseNoteCount: number;
 };
 
 export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCase {
@@ -62,11 +56,13 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
         }
       : null,
     guideline: c.guideline,
+    videoGuideUrls: videoGuideUrlsFromDb(c.videoGuideUrls),
     scopeOfWork: c.scopeOfWork,
     minMinutesPerCase: c.minMinutesPerCase,
     maxMinutesPerCase: c.maxMinutesPerCase,
     compensationType: c.compensationType,
     compensationAmount: c.compensationAmount,
+    annotatorBonus: c.annotatorBonus,
     status: c.status,
     annotationMinutes: c.annotationMinutes,
     difficultyRating: c.difficultyRating,
@@ -74,6 +70,7 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
     completedAt: c.completedAt?.toISOString() ?? null,
     auditedAt: c.auditedAt?.toISOString() ?? null,
     qualityRating: c.qualityRating,
+    isReference: c.isReference,
     annotator: c.annotator
       ? { id: c.annotator.id, name: c.annotator.name, email: c.annotator.email }
       : null,
@@ -86,13 +83,6 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
       comment: r.comment,
       createdAt: r.createdAt.toISOString(),
     })),
-    caseNotes: c.caseNotes.map((n) => ({
-      id: n.id,
-      parentNoteId: n.parentNoteId,
-      content: n.content,
-      images: getCaseNoteImages(n),
-      createdAt: n.createdAt.toISOString(),
-      author: { name: n.author.name, role: n.author.role },
-    })),
+    caseNoteCount: c._count.caseNotes,
   };
 }

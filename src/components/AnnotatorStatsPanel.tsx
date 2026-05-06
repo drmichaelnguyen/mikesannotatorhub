@@ -33,6 +33,20 @@ export function AnnotatorStatsPanel({
             <p className="mt-1 text-2xl font-semibold tabular-nums">{fmt(summary.allTime)}</p>
           </div>
         </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+            <p className="text-xs text-[var(--muted)]">{tk("dash_base_compensation")}</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums">{fmt(summary.baseAllTime)}</p>
+          </div>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+            <p className="text-xs text-[var(--muted)]">{tk("dash_bonus_compensation")}</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums">{fmt(summary.bonusAllTime)}</p>
+          </div>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+            <p className="text-xs text-[var(--muted)]">{tk("dash_cases_done")}</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums">{summary.auditedCount}</p>
+          </div>
+        </div>
       </section>
 
       <section>
@@ -67,6 +81,8 @@ export function AnnotatorStatsPanel({
                 <tr>
                   <th className="px-3 py-2 font-medium">{tk("dash_project_col")}</th>
                   <th className="px-3 py-2 font-medium">{tk("dash_audited_cases")}</th>
+                  <th className="px-3 py-2 font-medium">{tk("dash_base_compensation")}</th>
+                  <th className="px-3 py-2 font-medium">{tk("dash_bonus_compensation")}</th>
                   <th className="px-3 py-2 font-medium">{tk("dash_project_total")}</th>
                 </tr>
               </thead>
@@ -75,6 +91,8 @@ export function AnnotatorStatsPanel({
                   <tr key={p.name} className="border-b border-[var(--border)] last:border-0">
                     <td className="px-3 py-2 font-medium text-[var(--text)]">{p.name}</td>
                     <td className="px-3 py-2 tabular-nums text-[var(--muted)]">{p.auditedCount}</td>
+                    <td className="px-3 py-2 tabular-nums">{fmt(p.baseCompensation)}</td>
+                    <td className="px-3 py-2 tabular-nums">{fmt(p.bonusCompensation)}</td>
                     <td className="px-3 py-2 tabular-nums">{fmt(p.totalCompensation)}</td>
                   </tr>
                 ))}

@@ -35,7 +35,7 @@ export function CopyTextButton({
     <button
       type="button"
       onClick={onCopy}
-      className={`rounded border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--text)] ${className}`.trim()}
+      className={`rounded border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--text)] hover:border-[var(--accent)] hover:text-[var(--accent)] ${className}`.trim()}
       aria-label={`${tk("copy")} ${value}`}
       title={copied ? tk("copied") : tk("copy")}
     >

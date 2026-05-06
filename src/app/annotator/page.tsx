@@ -62,6 +62,7 @@ export default async function AnnotatorPage() {
             available={board.available}
             mine={board.mine}
             rejected={board.rejected}
+            reference={board.reference}
             guides={guidesAndTopics.guides}
             topics={guidesAndTopics.topics}
           />

@@ -3,16 +3,18 @@
 import { useRouter } from "next/navigation";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
-import { addCaseNoteAction, reviewCaseAction, reviewerAssignCaseAction } from "@/app/actions/cases";
+import { batchUpdateCasesAction, reviewCaseAction, reviewerAssignCaseAction } from "@/app/actions/cases";
 import { MentionTextarea } from "@/components/CaseDiscussion";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
+import { createCaseNote } from "@/lib/case-note-api";
 import { StarRating } from "@/components/StarRating";
 import { ReviewerCaseDetailPanel } from "@/components/reviewer/ReviewerCaseDetailPanel";
 import { getClipboardImageFile, getClipboardImageFiles, readFileAsDataUrl, readFilesAsDataUrls } from "@/lib/client-image-data";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate, formatMinutes } from "@/lib/format";
 import { buildMentionOptionsForProject, type GuideOption, type TopicOption } from "@/lib/guide-topic";
+import { parseVideoGuideUrlsInput } from "@/lib/video-guides";
 import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
 import type { AnnotatorCapacityRow } from "@/app/actions/cases";
 import type { DictKey, Lang } from "@/lib/i18n";
@@ -23,7 +25,13 @@ function formatRowCompensation(lang: Lang, c: SerializedReviewerCase): string {
   if (c.compensationType === CompensationType.PER_MINUTE && c.annotationMinutes == null) {
     return "—";
   }
-  const v = computeCompensation(c.compensationType, c.compensationAmount, c.annotationMinutes);
+  const v = computeCompensation(
+    c.compensationType,
+    c.compensationAmount,
+    c.annotationMinutes,
+    c.maxMinutesPerCase,
+    c.annotatorBonus,
+  );
   return formatCompensationAmount(lang, v);
 }
 
@@ -59,6 +67,25 @@ type AnnotatorPerformanceStats = {
   timeCount: number;
 };
 
+type CompensationHistoryRow = {
+  monthKey: string;
+  label: string;
+  baseCompensation: number;
+  bonusCompensation: number;
+  totalCompensation: number;
+  auditedCount: number;
+};
+
+type AnnotatorCompensationPeriods = {
+  baseAllTime: number;
+  bonusAllTime: number;
+  auditedCount: number;
+  thisMonth: number;
+  lastMonth: number;
+  allTime: number;
+  history: CompensationHistoryRow[];
+};
+
 type AnnotatorPerformanceProject = {
   project: string;
   stats: AnnotatorPerformanceStats;
@@ -70,6 +97,7 @@ type AnnotatorPerformanceSummary = {
   name: string;
   email: string;
   stats: AnnotatorPerformanceStats;
+  compensation: AnnotatorCompensationPeriods;
   capacityWindows: AnnotatorCapacityRow["windows"];
   projects: AnnotatorPerformanceProject[];
 };
@@ -81,7 +109,7 @@ function buildBoard(cases: SerializedReviewerCase[], lang: Lang): ProjectGroup[]
     const proj = (c.redbrickProject || "").trim() || "—";
     if (!pm.has(proj)) pm.set(proj, new Map());
     const am = pm.get(proj)!;
-    const key = c.annotator?.id ?? "__unassigned__";
+    const key = c.isReference ? "__reference__" : c.annotator?.id ?? "__unassigned__";
     if (!am.has(key)) am.set(key, []);
     am.get(key)!.push(c);
   }
@@ -95,6 +123,8 @@ function buildBoard(cases: SerializedReviewerCase[], lang: Lang): ProjectGroup[]
           const label =
             key === "__unassigned__"
               ? unassignedLabel
+              : key === "__reference__"
+                ? t(lang, "case_reference")
               : sorted[0]?.annotator
                 ? `${sorted[0].annotator.name} (${sorted[0].annotator.email})`
                 : unassignedLabel;
@@ -103,6 +133,8 @@ function buildBoard(cases: SerializedReviewerCase[], lang: Lang): ProjectGroup[]
         .sort((a, b) => {
           if (a.key === "__unassigned__") return 1;
           if (b.key === "__unassigned__") return -1;
+          if (a.key === "__reference__") return -1;
+          if (b.key === "__reference__") return 1;
           return a.label.localeCompare(b.label);
         }),
     }));
@@ -198,7 +230,100 @@ function buildPerformanceStats(cases: SerializedReviewerCase[]): AnnotatorPerfor
   };
 }
 
+function round2(n: number) {
+  return Math.round(n * 100) / 100;
+}
+
+function formatMonthLabel(lang: Lang, monthKey: string) {
+  const [y, m] = monthKey.split("-").map((v) => Number(v));
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return monthKey;
+  const date = new Date(y, m - 1, 1);
+  return new Intl.DateTimeFormat(lang === "vi" ? "vi-VN" : "en-US", {
+    year: "numeric",
+    month: "short",
+  }).format(date);
+}
+
+function buildCompensationPeriods(
+  lang: Lang,
+  cases: SerializedReviewerCase[],
+): AnnotatorCompensationPeriods {
+  const now = new Date();
+  const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastMonthKey = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, "0")}`;
+
+  let thisMonth = 0;
+  let lastMonth = 0;
+  let allTime = 0;
+  let baseAllTime = 0;
+  let bonusAllTime = 0;
+  let auditedCount = 0;
+  const monthly = new Map<
+    string,
+    { baseCompensation: number; bonusCompensation: number; totalCompensation: number; auditedCount: number }
+  >();
+
+  for (const c of cases) {
+    if (c.status !== CaseStatus.AUDITED && c.status !== CaseStatus.ACCEPTED) continue;
+    const baseAmount = computeCompensation(
+      c.compensationType,
+      c.compensationAmount,
+      c.annotationMinutes,
+      c.maxMinutesPerCase,
+      0,
+    );
+    const bonusAmount = c.annotatorBonus;
+    const amount = baseAmount + bonusAmount;
+    allTime += amount;
+    baseAllTime += baseAmount;
+    bonusAllTime += bonusAmount;
+    auditedCount += 1;
+
+    const acceptedAtRaw = c.reviews[0]?.createdAt ?? c.auditedAt ?? c.completedAt;
+    const acceptedAt = acceptedAtRaw ? new Date(acceptedAtRaw) : null;
+    if (!acceptedAt || Number.isNaN(acceptedAt.getTime())) continue;
+    const monthKey = `${acceptedAt.getFullYear()}-${String(acceptedAt.getMonth() + 1).padStart(2, "0")}`;
+    if (monthKey === thisMonthKey) thisMonth += amount;
+    if (monthKey === lastMonthKey) lastMonth += amount;
+
+    const prev = monthly.get(monthKey) ?? {
+      baseCompensation: 0,
+      bonusCompensation: 0,
+      totalCompensation: 0,
+      auditedCount: 0,
+    };
+    prev.baseCompensation += baseAmount;
+    prev.bonusCompensation += bonusAmount;
+    prev.totalCompensation += amount;
+    prev.auditedCount += 1;
+    monthly.set(monthKey, prev);
+  }
+
+  const history = [...monthly.entries()]
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([monthKey, value]) => ({
+      monthKey,
+      label: formatMonthLabel(lang, monthKey),
+      baseCompensation: round2(value.baseCompensation),
+      bonusCompensation: round2(value.bonusCompensation),
+      totalCompensation: round2(value.totalCompensation),
+      auditedCount: value.auditedCount,
+    }));
+
+  return {
+    baseAllTime: round2(baseAllTime),
+    bonusAllTime: round2(bonusAllTime),
+    auditedCount,
+    thisMonth: round2(thisMonth),
+    lastMonth: round2(lastMonth),
+    allTime: round2(allTime),
+    history,
+  };
+}
+
 function buildAnnotatorPerformance(
+  lang: Lang,
   annotators: { id: string; name: string; email: string }[],
   cases: SerializedReviewerCase[],
   capacityRows: AnnotatorCapacityRow[],
@@ -224,6 +349,7 @@ function buildAnnotatorPerformance(
       return {
         ...annotator,
         stats: buildPerformanceStats(mine),
+        compensation: buildCompensationPeriods(lang, mine),
         capacityWindows: capacity?.windows ?? [],
         projects,
       };
@@ -309,12 +435,48 @@ export function ReviewerWorkboard({
   const searchParams = useSearchParams();
   const [searchInput, setSearchInput] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
+  const [showInactiveProjects, setShowInactiveProjects] = useState(false);
   const filteredCases = useMemo(() => {
     const needle = appliedSearch.trim().toLowerCase();
     if (!needle) return cases;
-    return cases.filter((c) => c.caseId.toLowerCase().includes(needle));
+    return cases.filter(
+      (c) =>
+        c.caseId.toLowerCase().includes(needle) ||
+        c.scopeOfWork.toLowerCase().includes(needle),
+    );
   }, [appliedSearch, cases]);
-  const board = useMemo(() => buildBoard(filteredCases, lang), [filteredCases, lang]);
+  const projectActivity = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const row of cases) {
+      const project = (row.redbrickProject || "").trim() || "—";
+      const current = map.get(project) ?? false;
+      map.set(
+        project,
+        current ||
+          (row.status !== CaseStatus.AUDITED && row.status !== CaseStatus.ACCEPTED),
+      );
+    }
+    return map;
+  }, [cases]);
+  const visibleCases = useMemo(
+    () =>
+      showInactiveProjects
+        ? filteredCases
+        : filteredCases.filter((row) => projectActivity.get((row.redbrickProject || "").trim() || "—")),
+    [filteredCases, projectActivity, showInactiveProjects],
+  );
+  const board = useMemo(() => buildBoard(visibleCases, lang), [visibleCases, lang]);
+  const scopeOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          cases
+            .map((c) => c.scopeOfWork.trim())
+            .filter(Boolean),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [cases],
+  );
 
   const [detailId, setDetailId] = useState<string | null>(null);
   const [noteCaseId, setNoteCaseId] = useState<string | null>(null);
@@ -329,6 +491,19 @@ export function ReviewerWorkboard({
   const [auditMarkedImage, setAuditMarkedImage] = useState<string | null>(null);
   const [assignCaseId, setAssignCaseId] = useState<string | null>(null);
   const [assignAnnotatorId, setAssignAnnotatorId] = useState("");
+  const [selectedCaseIds, setSelectedCaseIds] = useState<string[]>([]);
+  const [batchEditOpen, setBatchEditOpen] = useState(false);
+  const [batchGuideId, setBatchGuideId] = useState("");
+  const [batchTopicId, setBatchTopicId] = useState("");
+  const [batchGuideline, setBatchGuideline] = useState("");
+  const [batchVideoGuideUrls, setBatchVideoGuideUrls] = useState("");
+  const [batchRedbrickProject, setBatchRedbrickProject] = useState("");
+  const [batchScopeOfWork, setBatchScopeOfWork] = useState("");
+  const [batchMinMinutes, setBatchMinMinutes] = useState("");
+  const [batchMaxMinutes, setBatchMaxMinutes] = useState("");
+  const [batchCompType, setBatchCompType] = useState<CompensationType>(CompensationType.PER_CASE);
+  const [batchCompAmount, setBatchCompAmount] = useState("");
+  const [batchBonusAmount, setBatchBonusAmount] = useState("");
   const [annotatorFocusId, setAnnotatorFocusId] = useState<string | null>(null);
   const [selectedAnnotatorId, setSelectedAnnotatorId] = useState<string | null>(null);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
@@ -338,22 +513,29 @@ export function ReviewerWorkboard({
   const detailCase = detailId ? cases.find((c) => c.id === detailId) ?? null : null;
   const noteCase = noteCaseId ? cases.find((c) => c.id === noteCaseId) ?? null : null;
   const assignCase = assignCaseId ? cases.find((c) => c.id === assignCaseId) ?? null : null;
-  const annotatorFocus = annotatorFocusId ? buildAnnotatorFocus(cases, annotatorFocusId) : null;
+  const annotatorFocus = useMemo(
+    () => (annotatorFocusId ? buildAnnotatorFocus(cases, annotatorFocusId) : null),
+    [annotatorFocusId, cases],
+  );
   const annotatorPerformance = useMemo(
-    () => buildAnnotatorPerformance(annotators, cases, capacityRows),
-    [annotators, cases, capacityRows],
+    () => buildAnnotatorPerformance(lang, annotators, cases, capacityRows),
+    [lang, annotators, cases, capacityRows],
   );
   const selectedAnnotator = selectedAnnotatorId
     ? annotatorPerformance.find((annotator) => annotator.id === selectedAnnotatorId) ?? null
     : null;
   const selectedCaseId = searchParams.get("case");
   const annotatorsQuery = searchParams.get("annotators");
-  const detailMentionOptions = detailCase
-    ? buildMentionOptionsForProject(guides, topics)
-    : [];
-  const noteMentionOptions = noteCase
-    ? buildMentionOptionsForProject(guides, topics)
-    : [];
+  const detailMentionOptions = useMemo(
+    () => (detailCase ? buildMentionOptionsForProject(guides, topics) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [detailCase?.id, guides, topics],
+  );
+  const noteMentionOptions = useMemo(
+    () => (noteCase ? buildMentionOptionsForProject(guides, topics) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [noteCase?.id, guides, topics],
+  );
 
   function syncCaseQuery(caseId: string | null) {
     const params = new URLSearchParams(searchParams.toString());
@@ -404,6 +586,76 @@ export function ReviewerWorkboard({
   function clearSearch() {
     setSearchInput("");
     setAppliedSearch("");
+  }
+
+  function toggleCaseSelection(caseId: string, checked: boolean) {
+    setSelectedCaseIds((prev) => {
+      if (checked) return prev.includes(caseId) ? prev : [...prev, caseId];
+      return prev.filter((id) => id !== caseId);
+    });
+  }
+
+  function clearSelection() {
+    setSelectedCaseIds([]);
+  }
+
+  function openBatchEdit() {
+    if (selectedCaseIds.length === 0) return;
+    setBatchRedbrickProject("");
+    setBatchGuideId("");
+    setBatchTopicId("");
+    setBatchGuideline("");
+    setBatchVideoGuideUrls("");
+    setBatchScopeOfWork("");
+    setBatchMinMinutes("");
+    setBatchMaxMinutes("");
+    setBatchCompType(CompensationType.PER_CASE);
+    setBatchCompAmount("");
+    setBatchBonusAmount("");
+    setErr(null);
+    setBatchEditOpen(true);
+  }
+
+  function submitBatchEdit() {
+    const minMinutesPerCase = Number(batchMinMinutes);
+    const maxMinutesPerCase = Number(batchMaxMinutes);
+    const compensationAmount = Number(batchCompAmount);
+    const annotatorBonus = Number(batchBonusAmount);
+    if (
+      !Number.isFinite(minMinutesPerCase) ||
+      !Number.isFinite(maxMinutesPerCase) ||
+      !Number.isFinite(compensationAmount) ||
+      !Number.isFinite(annotatorBonus)
+    ) {
+      setErr(tk("required"));
+      return;
+    }
+    setErr(null);
+    start(async () => {
+      const res = await batchUpdateCasesAction({
+        caseDbIds: selectedCaseIds,
+        redbrickProject: batchRedbrickProject,
+        guideId: batchGuideId,
+        topicId: batchTopicId,
+        guideline: batchGuideline,
+        videoGuideUrls: parseVideoGuideUrlsInput(batchVideoGuideUrls),
+        scopeOfWork: batchScopeOfWork,
+        minMinutesPerCase,
+        maxMinutesPerCase,
+        compensationType: batchCompType,
+        compensationAmount,
+        annotatorBonus,
+      });
+      if (!res.ok) {
+        if (res.error === "limits") setErr(tk("case_limits_invalid"));
+        else if (res.error === "scope_words") setErr(tk("scope_word_limit"));
+        else setErr(tk("required"));
+        return;
+      }
+      setBatchEditOpen(false);
+      clearSelection();
+      refresh();
+    });
   }
 
   function openAnnotatorFocus(annotatorId: string) {
@@ -512,7 +764,7 @@ export function ReviewerWorkboard({
     }
     setErr(null);
     start(async () => {
-      const res = await addCaseNoteAction({
+      const res = await createCaseNote({
         caseDbId: noteCaseId,
         content: text,
         imageDataList: noteImages,
@@ -605,8 +857,38 @@ export function ReviewerWorkboard({
           </button>
         </div>
       </form>
+      <label className="inline-flex items-center gap-2 text-sm text-[var(--muted)]">
+        <input
+          type="checkbox"
+          checked={showInactiveProjects}
+          onChange={(e) => setShowInactiveProjects(e.target.checked)}
+          className="h-4 w-4 rounded border-[var(--border)] bg-[var(--bg)]"
+        />
+        <span>{tk("annotator_show_inactive_projects")}</span>
+      </label>
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm">
+        <span className="text-[var(--muted)]">
+          {tk("reviewer_batch_selected")}: {selectedCaseIds.length}
+        </span>
+        <button
+          type="button"
+          disabled={selectedCaseIds.length === 0}
+          onClick={openBatchEdit}
+          className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-white disabled:opacity-50"
+        >
+          {tk("reviewer_batch_edit")}
+        </button>
+        <button
+          type="button"
+          disabled={selectedCaseIds.length === 0}
+          onClick={clearSelection}
+          className="rounded-md border border-[var(--border)] px-3 py-1.5 disabled:opacity-50"
+        >
+          {tk("clear_search")}
+        </button>
+      </div>
 
-      {filteredCases.length === 0 ? (
+      {visibleCases.length === 0 ? (
         <p className="text-[var(--muted)]">{tk("no_cases")}</p>
       ) : (
         <div className="space-y-2">
@@ -623,14 +905,14 @@ export function ReviewerWorkboard({
               </summary>
               <div className="border-t border-[var(--border)] px-2 pb-2 pt-1">
                 {p.groups.map((g) => (
-                  <details key={g.key} className="mb-2 rounded-md border border-[var(--border)]/60">
-              <summary className="cursor-pointer select-none px-2 py-1.5 text-xs font-medium text-[var(--muted)] hover:text-[var(--text)]">
-                      {g.key === "__unassigned__" ? (
+                <details key={g.key} className="mb-2 rounded-md border border-[var(--border)]/60">
+              <summary className="cursor-pointer select-none px-2 py-1.5 text-xs font-medium text-[var(--text)] hover:text-[var(--accent)]">
+                      {g.key === "__unassigned__" || g.key === "__reference__" ? (
                         <span>{g.label}</span>
                       ) : (
                         <button
                           type="button"
-                          className="rounded px-1 py-0.5 text-left font-medium text-[var(--muted)] hover:text-[var(--accent)]"
+                          className="rounded px-1 py-0.5 text-left font-medium text-[var(--text)] hover:text-[var(--accent)]"
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
@@ -645,10 +927,13 @@ export function ReviewerWorkboard({
                       <span>)</span>
                     </summary>
                     <div className="overflow-x-auto px-1 pb-1">
-                      <table className="w-full min-w-[860px] border-collapse text-left text-xs">
+                      <table className="w-full min-w-[1120px] border-collapse text-left text-xs">
                         <thead>
-                          <tr className="border-b border-[var(--border)] text-[var(--muted)]">
+                          <tr className="border-b border-[var(--border)] text-[var(--text)]">
+                            <th className="py-1.5 pr-2 font-medium">{tk("reviewer_batch_select")}</th>
                             <th className="py-1.5 pr-2 font-medium">{tk("col_case_id")}</th>
+                            <th className="py-1.5 pr-2 font-medium">{tk("case_scope")}</th>
+                            <th className="py-1.5 pr-2 font-medium">{tk("case_annotator_id")}</th>
                             <th className="py-1.5 pr-2 font-medium">{tk("case_status")}</th>
                             <th className="py-1.5 pr-2 font-medium">{tk("col_submittedAt")}</th>
                             <th className="py-1.5 pr-2 font-medium">{tk("case_annotationMinutes")}</th>
@@ -666,10 +951,10 @@ export function ReviewerWorkboard({
                             <tr
                               key={c.id}
                               tabIndex={0}
-                              className={`cursor-pointer border-b hover:bg-[var(--bg)]/80 ${
+                              className={`cursor-pointer border-b ${
                                 c.status === CaseStatus.SUBMITTED
-                                  ? "border-blue-400/30 bg-blue-400/8"
-                                  : "border-[var(--border)]/50"
+                                    ? "border-blue-400/30 bg-blue-400/8 hover:bg-[var(--bg)]/80"
+                                    : "border-[var(--border)]/50 hover:bg-[var(--bg)]/80"
                               }`}
                               onClick={() => openDetail(c.id)}
                               onKeyDown={(e) => {
@@ -679,17 +964,43 @@ export function ReviewerWorkboard({
                                 }
                               }}
                             >
+                              <td className="py-1.5 pr-2" onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedCaseIds.includes(c.id)}
+                                  onChange={(e) => toggleCaseSelection(c.id, e.target.checked)}
+                                  aria-label={tk("reviewer_batch_select")}
+                                />
+                              </td>
                               <td className="py-1.5 pr-2 font-mono font-medium text-[var(--text)]">
                                 <div className="flex flex-wrap items-center gap-2">
+                                  {c.isReference && (
+                                    <span
+                                      title={tk("case_reference")}
+                                      className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-yellow-500 bg-yellow-300 px-1 text-[11px] font-bold leading-none text-yellow-950 shadow-sm"
+                                    >
+                                      ★
+                                    </span>
+                                  )}
                                   <span>{c.caseId}</span>
                                   <CopyTextButton lang={lang} value={c.caseId} />
                                 </div>
                               </td>
-                              <td className="py-1.5 pr-2">{tk(`status_${c.status}` as DictKey)}</td>
-                              <td className="py-1.5 pr-2 tabular-nums text-[var(--muted)]">
+                              <td className="py-1.5 pr-2 text-[var(--muted)]">
+                                <span className="line-clamp-2" title={c.scopeOfWork}>
+                                  {c.scopeOfWork}
+                                </span>
+                              </td>
+                              <td className="py-1.5 pr-2 font-mono text-[var(--muted)]">
+                                {c.annotator?.id ?? "—"}
+                              </td>
+                              <td className="py-1.5 pr-2 font-medium text-[var(--text)]">
+                                {tk(`status_${c.status}` as DictKey)}
+                              </td>
+                              <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
                                 {formatDate(lang, c.completedAt)}
                               </td>
-                              <td className="py-1.5 pr-2 tabular-nums text-[var(--muted)]">
+                              <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
                                 {c.annotationMinutes ?? "—"}
                               </td>
                               <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
@@ -697,7 +1008,7 @@ export function ReviewerWorkboard({
                               </td>
                               <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
                                 <div className="flex flex-wrap gap-1">
-                                  {c.status === CaseStatus.AVAILABLE && (
+                                  {c.status === CaseStatus.AVAILABLE && !c.isReference && (
                                     <button
                                       type="button"
                                       className="rounded border border-[var(--accent)]/50 bg-[var(--accent)]/10 px-1.5 py-0.5 text-[var(--accent)] hover:bg-[var(--accent)]/20"
@@ -712,7 +1023,7 @@ export function ReviewerWorkboard({
                                   )}
                                   <button
                                     type="button"
-                                    className="rounded border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 hover:border-[var(--accent)]"
+                                    className="rounded border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-[var(--text)] hover:border-[var(--accent)]"
                                       onClick={() => {
                                         setErr(null);
                                         setNoteCaseId(c.id);
@@ -721,7 +1032,7 @@ export function ReviewerWorkboard({
                                     >
                                       <CommentActionLabel
                                         label={tk("action_comment")}
-                                        count={c.caseNotes.length}
+                                        count={c.caseNoteCount}
                                       />
                                     </button>
                                   {c.status === CaseStatus.SUBMITTED && (
@@ -772,6 +1083,169 @@ export function ReviewerWorkboard({
         </div>
       )}
 
+      {batchEditOpen && (
+        <div
+          className="fixed inset-0 z-[62] flex items-center justify-center bg-black/50 p-4"
+          role="presentation"
+          onClick={() => setBatchEditOpen(false)}
+        >
+          <div
+            className="w-full max-w-2xl rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="mb-1 font-medium">{tk("reviewer_batch_edit")}</h3>
+            <p className="mb-3 text-xs text-[var(--muted)]">
+              {tk("reviewer_batch_selected")}: {selectedCaseIds.length}
+            </p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="md:col-span-2 text-sm">
+                <span className="text-[var(--muted)]">{tk("case_redbrick")}</span>
+                <input
+                  value={batchRedbrickProject}
+                  onChange={(e) => setBatchRedbrickProject(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-[var(--muted)]">{tk("case_guide")}</span>
+                <select
+                  value={batchGuideId}
+                  onChange={(e) => setBatchGuideId(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
+                >
+                  <option value="">—</option>
+                  {guides.map((guide) => (
+                    <option key={guide.id} value={guide.id}>
+                      {guide.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm">
+                <span className="text-[var(--muted)]">{tk("case_topic")}</span>
+                <select
+                  value={batchTopicId}
+                  onChange={(e) => setBatchTopicId(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
+                >
+                  <option value="">—</option>
+                  {topics.map((topic) => (
+                    <option key={topic.id} value={topic.id}>
+                      {topic.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="md:col-span-2 text-sm">
+                <span className="text-[var(--muted)]">{tk("case_guideline")}</span>
+                <textarea
+                  rows={3}
+                  value={batchGuideline}
+                  onChange={(e) => setBatchGuideline(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
+                />
+              </label>
+              <label className="md:col-span-2 text-sm">
+                <span className="text-[var(--muted)]">{tk("case_videos")}</span>
+                <textarea
+                  rows={3}
+                  value={batchVideoGuideUrls}
+                  onChange={(e) => setBatchVideoGuideUrls(e.target.value)}
+                  placeholder="https://..."
+                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono text-sm"
+                />
+                <p className="mt-1 text-xs text-[var(--muted)]">{tk("case_video_guides_hint")}</p>
+              </label>
+              <label className="md:col-span-2 text-sm">
+                <span className="text-[var(--muted)]">{tk("case_scope")}</span>
+                <input
+                  list="scope-options-batch"
+                  value={batchScopeOfWork}
+                  onChange={(e) => setBatchScopeOfWork(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
+                />
+                <datalist id="scope-options-batch">
+                  {scopeOptions.map((scope) => (
+                    <option key={scope} value={scope} />
+                  ))}
+                </datalist>
+              </label>
+              <label className="text-sm">
+                <span className="text-[var(--muted)]">{tk("case_minMinutes_recommended")}</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={batchMinMinutes}
+                  onChange={(e) => setBatchMinMinutes(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-[var(--muted)]">{tk("case_maxMinutes")}</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={batchMaxMinutes}
+                  onChange={(e) => setBatchMaxMinutes(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-[var(--muted)]">{tk("case_compType")}</span>
+                <select
+                  value={batchCompType}
+                  onChange={(e) => setBatchCompType(e.target.value as CompensationType)}
+                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
+                >
+                  <option value={CompensationType.PER_CASE}>{tk("comp_per_case")}</option>
+                  <option value={CompensationType.PER_MINUTE}>{tk("comp_per_minute")}</option>
+                </select>
+              </label>
+              <label className="text-sm">
+                <span className="text-[var(--muted)]">{tk("case_compAmount")}</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={batchCompAmount}
+                  onChange={(e) => setBatchCompAmount(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="text-[var(--muted)]">{tk("case_annotatorBonus")}</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={batchBonusAmount}
+                  onChange={(e) => setBatchBonusAmount(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
+                />
+              </label>
+            </div>
+            {err && <p className="mt-2 text-sm text-[var(--danger)]">{err}</p>}
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm"
+                onClick={() => setBatchEditOpen(false)}
+              >
+                {tk("drawer_close")}
+              </button>
+              <button
+                type="button"
+                disabled={pending}
+                className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                onClick={submitBatchEdit}
+              >
+                {tk("reviewer_batch_apply")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {detailCase && (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/50" role="presentation">
           <div
@@ -801,6 +1275,7 @@ export function ReviewerWorkboard({
                 c={detailCase}
                 annotators={annotators}
                 guides={guides}
+                scopeOptions={scopeOptions}
                 mentionOptions={detailMentionOptions}
               />
             </div>
@@ -948,6 +1423,12 @@ export function ReviewerWorkboard({
                             <th className="px-3 py-2 font-medium">{tk("reviewer_perf_avg_time")}</th>
                             <th className="px-3 py-2 font-medium">{tk("dash_avg_difficulty")}</th>
                             <th className="px-3 py-2 font-medium">{tk("dash_avg_quality")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("dash_cases_done")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("dash_base_compensation")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("dash_bonus_compensation")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("dash_last_month")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("dash_this_month")}</th>
+                            <th className="px-3 py-2 font-medium">{tk("dash_all_time")}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -992,6 +1473,24 @@ export function ReviewerWorkboard({
                               </td>
                               <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
                                 {formatRating(annotator.stats.averageQuality)}
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
+                                {annotator.compensation.auditedCount}
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
+                                {formatCompensationAmount(lang, annotator.compensation.baseAllTime)}
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
+                                {formatCompensationAmount(lang, annotator.compensation.bonusAllTime)}
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
+                                {formatCompensationAmount(lang, annotator.compensation.lastMonth)}
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
+                                {formatCompensationAmount(lang, annotator.compensation.thisMonth)}
+                              </td>
+                              <td className="px-3 py-2 tabular-nums text-[var(--text)]">
+                                {formatCompensationAmount(lang, annotator.compensation.allTime)}
                               </td>
                             </tr>
                           ))}
@@ -1057,6 +1556,89 @@ export function ReviewerWorkboard({
                         <p className="mt-1 text-2xl font-semibold tabular-nums">{selectedAnnotator.stats.rejectedCases}</p>
                       </div>
                     </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("dash_cases_done")}</p>
+                        <p className="mt-1 text-2xl font-semibold tabular-nums">
+                          {selectedAnnotator.compensation.auditedCount}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("dash_base_compensation")}</p>
+                        <p className="mt-1 text-2xl font-semibold tabular-nums">
+                          {formatCompensationAmount(lang, selectedAnnotator.compensation.baseAllTime)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("dash_bonus_compensation")}</p>
+                        <p className="mt-1 text-2xl font-semibold tabular-nums">
+                          {formatCompensationAmount(lang, selectedAnnotator.compensation.bonusAllTime)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("dash_last_month")}</p>
+                        <p className="mt-1 text-2xl font-semibold tabular-nums">
+                          {formatCompensationAmount(lang, selectedAnnotator.compensation.lastMonth)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("dash_this_month")}</p>
+                        <p className="mt-1 text-2xl font-semibold tabular-nums">
+                          {formatCompensationAmount(lang, selectedAnnotator.compensation.thisMonth)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+                        <p className="text-xs text-[var(--muted)]">{tk("dash_all_time")}</p>
+                        <p className="mt-1 text-2xl font-semibold tabular-nums">
+                          {formatCompensationAmount(lang, selectedAnnotator.compensation.allTime)}
+                        </p>
+                      </div>
+                    </div>
+                    <details className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+                      <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
+                        {tk("reviewer_perf_comp_history")}
+                      </summary>
+                      <div className="border-t border-[var(--border)] p-3">
+                        {selectedAnnotator.compensation.history.length === 0 ? (
+                          <p className="text-sm text-[var(--muted)]">{tk("reviewer_perf_no_cases")}</p>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full min-w-[420px] text-left text-xs">
+                              <thead>
+                                <tr className="border-b border-[var(--border)] text-[var(--muted)]">
+                                  <th className="py-1.5 pr-2 font-medium">{tk("dash_month")}</th>
+                                  <th className="py-1.5 pr-2 font-medium">{tk("dash_audited_cases")}</th>
+                                  <th className="py-1.5 pr-2 font-medium">{tk("dash_base_compensation")}</th>
+                                  <th className="py-1.5 pr-2 font-medium">{tk("dash_bonus_compensation")}</th>
+                                  <th className="py-1.5 font-medium">{tk("dash_project_total")}</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {selectedAnnotator.compensation.history.map((row) => (
+                                  <tr key={row.monthKey} className="border-b border-[var(--border)]/50 last:border-0">
+                                    <td className="py-1.5 pr-2 text-[var(--text)]">{row.label}</td>
+                                    <td className="py-1.5 pr-2 tabular-nums text-[var(--muted)]">
+                                      {row.auditedCount}
+                                    </td>
+                                    <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
+                                      {formatCompensationAmount(lang, row.baseCompensation)}
+                                    </td>
+                                    <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
+                                      {formatCompensationAmount(lang, row.bonusCompensation)}
+                                    </td>
+                                    <td className="py-1.5 tabular-nums text-[var(--text)]">
+                                      {formatCompensationAmount(lang, row.totalCompensation)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    </details>
                     <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                       <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
                         <p className="text-xs text-[var(--muted)]">{tk("reviewer_perf_avg_time")}</p>

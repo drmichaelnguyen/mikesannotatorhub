@@ -7,6 +7,7 @@ import {
   markCaseNotificationsReadAction,
 } from "@/app/actions/notifications";
 import type { NotificationGroup } from "@/app/actions/notifications";
+import { formatDate } from "@/lib/format";
 import { NOTIF } from "@/lib/notification-types";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -153,10 +154,15 @@ export function NotificationBell({
                           <button
                             type="button"
                             onClick={() => openCase(g.annotationCaseId)}
-                            className="flex w-full items-center gap-1.5 text-left text-xs text-[var(--muted)] hover:text-[var(--text)]"
+                            className="flex w-full items-start gap-1.5 text-left text-xs text-[var(--muted)] hover:text-[var(--text)]"
                           >
                             <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${typeDot(item.type)}`} />
-                            {typeLabel(lang, item.type)}
+                            <span className="min-w-0">
+                              <span className="block">{typeLabel(lang, item.type)}</span>
+                              <span className="mt-0.5 block text-[10px] tabular-nums text-[var(--muted)]">
+                                {formatDate(lang, item.createdAt)}
+                              </span>
+                            </span>
                           </button>
                         </li>
                       ))}

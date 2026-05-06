@@ -1,16 +1,17 @@
 "use client";
 
-import { CaseDiscussion, type CaseDiscussionNote } from "@/components/CaseDiscussion";
+import { CaseDiscussion } from "@/components/CaseDiscussion";
+import { CaseVideoGuidesSection } from "@/components/CaseVideoGuides";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { RichTextContent } from "@/components/RichTextContent";
 import { StarRating } from "@/components/StarRating";
-import { getCaseNoteImages } from "@/lib/case-note-images";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import type { MentionOption } from "@/lib/guide-topic";
-import type { AnnotationCase, CaseNote, CompensationType, Review, User } from "@prisma/client";
+import { videoGuideUrlsFromDb } from "@/lib/video-guides";
+import type { AnnotationCase, CompensationType, Review } from "@prisma/client";
 import { CaseStatus } from "@prisma/client";
 
 export type AnnotatorCaseRow = AnnotationCase & {
@@ -19,20 +20,9 @@ export type AnnotatorCaseRow = AnnotationCase & {
     | { id: string; name: string; description: string | null; projects: { id: string; redbrickProject: string }[] }
     | null;
   reviews?: Review[];
-  caseNotes?: (CaseNote & { author: Pick<User, "id" | "name" | "role"> })[];
+  _count?: { caseNotes: number };
   auditedBy?: { id: string; name: string; email: string } | null;
 };
-
-function toDiscussionNotes(notes: NonNullable<AnnotatorCaseRow["caseNotes"]>): CaseDiscussionNote[] {
-  return notes.map((n) => ({
-    id: n.id,
-    parentNoteId: n.parentNoteId ?? null,
-    content: n.content,
-    images: getCaseNoteImages(n),
-    createdAt: n.createdAt instanceof Date ? n.createdAt.toISOString() : String(n.createdAt),
-    author: { name: n.author.name, role: n.author.role },
-  }));
-}
 
 function compLabel(lang: Lang, type: CompensationType, amount: number) {
   if (type === "PER_MINUTE") return `${amount} × ${t(lang, "comp_per_minute")}`;
@@ -64,9 +54,12 @@ export function AnnotatorCaseDetailPanel({
     row.compensationType,
     row.compensationAmount,
     row.annotationMinutes,
+    row.maxMinutesPerCase,
+    row.annotatorBonus,
   );
   const guideGuideline = row.guide ? htmlToPlainText(row.guide.content) : "";
   const showGuideline = !row.guide || row.guideline.trim() !== guideGuideline;
+  const videoUrls = videoGuideUrlsFromDb(row.videoGuideUrls);
 
   return (
     <div className="space-y-4 p-4">
@@ -80,6 +73,12 @@ export function AnnotatorCaseDetailPanel({
             <span>{row.redbrickProject}</span>
             <CopyTextButton lang={lang} value={row.redbrickProject} />
           </div>
+          {row.isReference && (
+            <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-yellow-500 bg-yellow-300 px-2 py-0.5 text-xs font-semibold text-yellow-950">
+              <span aria-hidden>★</span>
+              <span>{tk("case_reference")}</span>
+            </span>
+          )}
         </div>
         <span className="rounded-full bg-[var(--bg)] px-2 py-0.5 text-xs">
           {tk(`status_${row.status}` as DictKey)}
@@ -99,10 +98,20 @@ export function AnnotatorCaseDetailPanel({
             </dd>
           </div>
         )}
-        {showGuideline && (
+        <CaseVideoGuidesSection lang={lang} urls={videoUrls} />
+        {showGuideline && row.guideline.trim() !== "" && (
           <div className="md:col-span-2">
-            <dt className="text-[var(--muted)]">{tk("case_guideline")}</dt>
-            <dd>{row.guideline}</dd>
+            <dt className="sr-only">{tk("case_guideline")}</dt>
+            <dd className="m-0">
+              <details className="rounded-md border border-[var(--border)] bg-[var(--bg)]">
+                <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-[var(--muted)] hover:bg-[var(--surface)]">
+                  {tk("case_guideline")}
+                </summary>
+                <div className="border-t border-[var(--border)] px-3 py-2 text-sm whitespace-pre-wrap text-[var(--text)]">
+                  {row.guideline}
+                </div>
+              </details>
+            </dd>
           </div>
         )}
         {row.topic && (
@@ -131,6 +140,10 @@ export function AnnotatorCaseDetailPanel({
         <div>
           <dt className="text-[var(--muted)]">{tk("case_compAmount")}</dt>
           <dd>{compLabel(lang, row.compensationType, row.compensationAmount)}</dd>
+        </div>
+        <div>
+          <dt className="text-[var(--muted)]">{tk("case_annotatorBonus")}</dt>
+          <dd>{row.annotatorBonus}</dd>
         </div>
         <div>
           <dt className="text-[var(--muted)]">{tk("case_assignedAt")}</dt>
@@ -201,9 +214,9 @@ export function AnnotatorCaseDetailPanel({
         <CaseDiscussion
           lang={lang}
           caseDbId={row.id}
+          caseLabel={row.caseId}
           canPost={canPostDiscussion}
           mentionOptions={mentionOptions}
-          notes={row.caseNotes ? toDiscussionNotes(row.caseNotes) : []}
         />
       </div>
     </div>

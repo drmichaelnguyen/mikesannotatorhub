@@ -6,18 +6,14 @@ import { updateCaseDetailsAction } from "@/app/actions/cases";
 import type { GuideOption } from "@/lib/guide-topic";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
+import { parseVideoGuideUrlsInput } from "@/lib/video-guides";
 import { CaseStatus, CompensationType } from "@prisma/client";
-
-function htmlToPlainText(html: string) {
-  if (!html) return "";
-  const doc = new DOMParser().parseFromString(html, "text/html");
-  return (doc.body.textContent ?? "").replace(/\s+\n/g, "\n").trim();
-}
 
 export function ReviewerCaseEditor({
   lang,
   c,
   guides = [],
+  scopeOptions = [],
 }: {
   lang: Lang;
   c: {
@@ -28,13 +24,17 @@ export function ReviewerCaseEditor({
     guide?: { id: string } | null;
     topic?: { id: string } | null;
     guideline: string;
+    videoGuideUrls: string[];
     scopeOfWork: string;
     minMinutesPerCase: number;
     maxMinutesPerCase: number;
     compensationType: CompensationType;
     compensationAmount: number;
+    annotatorBonus: number;
+    isReference: boolean;
   };
   guides?: GuideOption[];
+  scopeOptions?: string[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
@@ -44,22 +44,17 @@ export function ReviewerCaseEditor({
   const [guideId, setGuideId] = useState(c.guide?.id ?? "");
   const [topicId, setTopicId] = useState(c.topic?.id ?? "");
   const [guideline, setGuideline] = useState(c.guideline);
+  const [videoGuideUrlsText, setVideoGuideUrlsText] = useState(() => c.videoGuideUrls.join("\n"));
   const [scopeOfWork, setScopeOfWork] = useState(c.scopeOfWork);
   const [minMinutes, setMinMinutes] = useState(String(c.minMinutesPerCase));
   const [maxMinutes, setMaxMinutes] = useState(String(c.maxMinutesPerCase));
   const [compType, setCompType] = useState<CompensationType>(c.compensationType);
   const [compAmount, setCompAmount] = useState(String(c.compensationAmount));
+  const [bonusAmount, setBonusAmount] = useState(String(c.annotatorBonus));
+  const [isReference, setIsReference] = useState(c.isReference);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
-
-  useEffect(() => {
-    if (!guideId) return;
-    const selected = guides.find((g) => g.id === guideId);
-    if (selected) {
-      setGuideline(htmlToPlainText(selected.content));
-    }
-  }, [guideId, guides]);
 
   useEffect(() => {
     setCaseId(c.caseId);
@@ -68,11 +63,14 @@ export function ReviewerCaseEditor({
     setGuideId(c.guide?.id ?? "");
     setTopicId(c.topic?.id ?? "");
     setGuideline(c.guideline);
+    setVideoGuideUrlsText(c.videoGuideUrls.join("\n"));
     setScopeOfWork(c.scopeOfWork);
     setMinMinutes(String(c.minMinutesPerCase));
     setMaxMinutes(String(c.maxMinutesPerCase));
     setCompType(c.compensationType);
     setCompAmount(String(c.compensationAmount));
+    setBonusAmount(String(c.annotatorBonus));
+    setIsReference(c.isReference);
     setMsg(null);
     setErr(null);
   }, [c]);
@@ -83,11 +81,13 @@ export function ReviewerCaseEditor({
     const minMinutesPerCase = Number(minMinutes);
     const maxMinutesPerCase = Number(maxMinutes);
     const compensationAmount = Number(compAmount);
+    const annotatorBonus = Number(bonusAmount);
 
     if (
       !Number.isFinite(minMinutesPerCase) ||
       !Number.isFinite(maxMinutesPerCase) ||
-      !Number.isFinite(compensationAmount)
+      !Number.isFinite(compensationAmount) ||
+      !Number.isFinite(annotatorBonus)
     ) {
       setErr(tk("required"));
       return;
@@ -102,15 +102,19 @@ export function ReviewerCaseEditor({
         guideId,
         topicId,
         guideline,
+        videoGuideUrls: parseVideoGuideUrlsInput(videoGuideUrlsText),
         scopeOfWork,
         minMinutesPerCase,
         maxMinutesPerCase,
         compensationType: compType,
         compensationAmount,
+        annotatorBonus,
+        isReference,
       });
       if (!res.ok) {
         if (res.error === "case_exists") setErr(tk("case_exists"));
         else if (res.error === "limits") setErr(tk("case_limits_invalid"));
+        else if (res.error === "scope_words") setErr(tk("scope_word_limit"));
         else setErr(tk("required"));
         return;
       }
@@ -182,13 +186,30 @@ export function ReviewerCaseEditor({
           />
         </label>
         <label className="md:col-span-2 text-sm">
-          <span className="text-[var(--muted)]">{tk("case_scope")}</span>
+          <span className="text-[var(--muted)]">{tk("case_videos")}</span>
           <textarea
+            value={videoGuideUrlsText}
+            onChange={(e) => setVideoGuideUrlsText(e.target.value)}
+            rows={3}
+            placeholder="https://..."
+            className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-sm"
+          />
+          <p className="mt-1 text-xs text-[var(--muted)]">{tk("case_video_guides_hint")}</p>
+        </label>
+        <label className="md:col-span-2 text-sm">
+          <span className="text-[var(--muted)]">{tk("case_scope")}</span>
+          <input
+            list="scope-options-edit"
             value={scopeOfWork}
             onChange={(e) => setScopeOfWork(e.target.value)}
-            rows={3}
             className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
           />
+          <datalist id="scope-options-edit">
+            {scopeOptions.map((scope) => (
+              <option key={scope} value={scope} />
+            ))}
+          </datalist>
+          <p className="mt-1 text-xs text-[var(--muted)]">{tk("case_scope_hint")}</p>
         </label>
         <label className="text-sm">
           <span className="text-[var(--muted)]">{tk("case_minMinutes_recommended")}</span>
@@ -231,6 +252,29 @@ export function ReviewerCaseEditor({
             onChange={(e) => setCompAmount(e.target.value)}
             className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 tabular-nums"
           />
+        </label>
+        <label className="text-sm">
+          <span className="text-[var(--muted)]">{tk("case_annotatorBonus")}</span>
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            value={bonusAmount}
+            onChange={(e) => setBonusAmount(e.target.value)}
+            className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 tabular-nums"
+          />
+        </label>
+        <label className="md:col-span-2 flex items-start gap-2 rounded-md border border-[var(--border)] bg-[var(--surface)] p-3 text-sm">
+          <input
+            type="checkbox"
+            checked={isReference}
+            onChange={(e) => setIsReference(e.target.checked)}
+            className="mt-1"
+          />
+          <span>
+            <span className="block font-medium">{tk("case_reference")}</span>
+            <span className="block text-xs text-[var(--muted)]">{tk("case_reference_help")}</span>
+          </span>
         </label>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-3">
