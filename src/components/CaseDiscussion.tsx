@@ -1,11 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   translateDiscussionForExportAction,
 } from "@/app/actions/export";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
-import { createCaseNote, fetchCaseNotes } from "@/lib/case-note-api";
+import { createCaseNote, deleteCaseNote, fetchCaseNotes, updateCaseNote } from "@/lib/case-note-api";
+import {
+  buildTemplateRowNote,
+  composerAnswerDraftForTemplateRow,
+  formatTemplateNoteBodyForDisplay,
+  formatTemplateNoteBodyForExport,
+  parseTemplateRowStored,
+} from "@/lib/template-row-comment";
 import { getClipboardImageFiles, readFilesAsDataUrls } from "@/lib/client-image-data";
 import { formatDate } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
@@ -19,7 +26,7 @@ export type CaseDiscussionNote = {
   content: string | null;
   images: string[];
   createdAt: string;
-  author: { name: string; role: UserRole };
+  author: { id: string; name: string; role: UserRole };
 };
 
 function NoteImageThumbnail({
@@ -129,9 +136,9 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-function buildExportRows(nodes: DiscussionNode[]): ExportRow[] {
+function buildExportRows(nodes: DiscussionNode[], templateRows: string[]): ExportRow[] {
   return flattenDiscussion(nodes).reduce<ExportRow[]>((rows, note) => {
-    const content = note.content?.trim() ?? "";
+    const content = note.content ? formatTemplateNoteBodyForExport(note.content, templateRows).trim() : "";
     const base = {
       noteId: note.id,
       comment: content,
@@ -148,9 +155,9 @@ function buildExportRows(nodes: DiscussionNode[]): ExportRow[] {
   }, []);
 }
 
-function buildExportCommentRows(nodes: DiscussionNode[]): ExportCommentRow[] {
+function buildExportCommentRows(nodes: DiscussionNode[], templateRows: string[]): ExportCommentRow[] {
   return flattenDiscussion(nodes).reduce<ExportCommentRow[]>((rows, note) => {
-    const content = note.content?.trim() ?? "";
+    const content = note.content ? formatTemplateNoteBodyForExport(note.content, templateRows).trim() : "";
     if (!content) return rows;
     rows.push({
       noteId: note.id,
@@ -517,18 +524,57 @@ type ComposerState = {
   onCancelReply: () => void;
 };
 
+type TemplateComposerState = {
+  rows: string[];
+  selectedIndex: number | null;
+  completedIndexes: number[];
+  onSelect: (indexValue: string) => void;
+};
+
 function Composer({
   lang,
   state,
   parentNoteId,
   compact = false,
+  templateComposer = null,
 }: {
   lang: Lang;
   state: ComposerState;
   parentNoteId: string | null;
   compact?: boolean;
+  templateComposer?: TemplateComposerState | null;
 }) {
   const tk = (k: DictKey) => t(lang, k);
+  const isTemplateComposer = !parentNoteId && !!templateComposer && templateComposer.rows.length > 0;
+  const [templateSearch, setTemplateSearch] = useState("");
+  useEffect(() => {
+    if (!isTemplateComposer) setTemplateSearch("");
+  }, [isTemplateComposer]);
+
+  const normalizedTemplateSearch = templateSearch.trim().toLowerCase();
+  const filteredPendingFields = useMemo(() => {
+    if (!isTemplateComposer) return [];
+    return templateComposer.rows
+      .map((row, index) => ({ row, index }))
+      .filter(({ index }) => !templateComposer.completedIndexes.includes(index))
+      .filter(({ row }) =>
+        normalizedTemplateSearch.length === 0
+          ? true
+          : row.toLowerCase().includes(normalizedTemplateSearch),
+      );
+  }, [isTemplateComposer, normalizedTemplateSearch, templateComposer]);
+  const filteredDoneFields = useMemo(() => {
+    if (!isTemplateComposer) return [];
+    return templateComposer.rows
+      .map((row, index) => ({ row, index }))
+      .filter(({ index }) => templateComposer.completedIndexes.includes(index))
+      .filter(({ row }) =>
+        normalizedTemplateSearch.length === 0
+          ? true
+          : row.toLowerCase().includes(normalizedTemplateSearch),
+      );
+  }, [isTemplateComposer, normalizedTemplateSearch, templateComposer]);
+
   return (
     <div
       className={
@@ -542,70 +588,260 @@ function Composer({
       ) : (
         <p className="mb-2 text-xs text-[var(--muted)]">{tk("discussion_hint")}</p>
       )}
-      <label className="block">
-        <span className="text-sm text-[var(--muted)]">{tk("review_comment")}</span>
-        <MentionTextarea
-          lang={lang}
-          value={state.value}
-          onChange={state.onChange}
-          onPaste={state.onPaste}
-          rows={compact ? 2 : 3}
-          placeholder={tk("review_comment")}
-          mentionOptions={state.mentionOptions}
-          autoFocus={!!parentNoteId}
-        />
-      </label>
-      <div className="mt-2">
-        <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
-        <input type="file" accept="image/*" multiple onChange={state.onFile} className="mt-1 block text-sm" />
-      </div>
-      {state.images.length > 0 && (
-        <div className="mt-2 space-y-3">
-          {state.images.map((image, index) => (
-            <div key={`${image.slice(0, 32)}-${index}`} className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-2">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-xs text-[var(--muted)]">{tk("review_screenshot")} {index + 1}</span>
+      {isTemplateComposer ? (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_min(18rem)] lg:items-start lg:gap-6 xl:grid-cols-[minmax(0,1fr)_min(24rem)]">
+          <div className="min-w-0 space-y-2">
+            <label className="block">
+              <span className="text-sm text-[var(--muted)]">{tk("discussion_template_field")}</span>
+              <input
+                type="text"
+                value={templateSearch}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setTemplateSearch(next);
+                  if (!next.trim()) templateComposer.onSelect("");
+                }}
+                placeholder={tk("discussion_template_field")}
+                className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]"
+              />
+              <div className="mt-1 max-h-[min(40vh,18rem)] overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--surface)] lg:max-h-[min(70vh,28rem)]">
+                {(() => {
+                  const isGeneralSelected = templateComposer.selectedIndex == null;
+                  return (
+                    <button
+                      type="button"
+                      className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
+                        isGeneralSelected
+                          ? "bg-[var(--accent)]/10 font-medium text-[var(--accent)] ring-1 ring-inset ring-[var(--accent)]/30"
+                          : "text-[var(--muted)] hover:bg-[var(--bg)]"
+                      }`}
+                      onClick={() => {
+                        templateComposer.onSelect("");
+                        setTemplateSearch("");
+                      }}
+                    >
+                      {isGeneralSelected && (
+                        <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[10px] font-bold leading-none text-white">
+                          ✎
+                        </span>
+                      )}
+                      <span>{tk("discussion_template_general_comment")}</span>
+                    </button>
+                  );
+                })()}
+                {filteredPendingFields.length > 0 && (
+                  <>
+                    {filteredPendingFields.map(({ row, index }) => {
+                      const isSelected = templateComposer.selectedIndex === index;
+                      return (
+                        <button
+                          key={`pending-${index}`}
+                          type="button"
+                          className={`flex w-full items-center gap-2 border-t border-[var(--border)] px-3 py-2 text-left text-sm ${
+                            isSelected
+                              ? "bg-[var(--accent)]/10 font-medium text-[var(--accent)] ring-1 ring-inset ring-[var(--accent)]/30"
+                              : "hover:bg-[var(--bg)]"
+                          }`}
+                          onClick={() => {
+                            templateComposer.onSelect(String(index));
+                            setTemplateSearch("");
+                          }}
+                        >
+                          {isSelected && (
+                            <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[10px] font-bold leading-none text-white">
+                              ✎
+                            </span>
+                          )}
+                          <span>{row}</span>
+                        </button>
+                      );
+                    })}
+                  </>
+                )}
+                {filteredDoneFields.length > 0 && (
+                  <>
+                    {filteredDoneFields.map(({ row, index }) => {
+                      const isSelected = templateComposer.selectedIndex === index;
+                      return (
+                        <button
+                          key={`done-${index}`}
+                          type="button"
+                          className={`flex w-full items-center gap-2 border-t border-[var(--border)] px-3 py-2 text-left text-sm ${
+                            isSelected
+                              ? "bg-[var(--accent)]/10 font-medium text-[var(--accent)] ring-1 ring-inset ring-[var(--accent)]/30"
+                              : "hover:bg-[var(--bg)]"
+                          }`}
+                          onClick={() => {
+                            templateComposer.onSelect(String(index));
+                            setTemplateSearch("");
+                          }}
+                        >
+                          <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[var(--success)] text-[10px] font-bold leading-none text-white">
+                            {isSelected ? "✎" : "✓"}
+                          </span>
+                          <span>{row}</span>
+                        </button>
+                      );
+                    })}
+                  </>
+                )}
+              </div>
+            </label>
+          </div>
+          <div className="min-w-0 space-y-3 border-t border-[var(--border)] pt-4 lg:sticky lg:top-2 lg:self-start lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+            {templateComposer.selectedIndex != null &&
+              templateComposer.rows[templateComposer.selectedIndex] != null && (
+                <div
+                  className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
+                  aria-readonly
+                >
+                  <span className="text-[var(--muted)]">{tk("discussion_template_field")}: </span>
+                  <span className="font-medium text-[var(--text)]">
+                    {templateComposer.rows[templateComposer.selectedIndex]}
+                  </span>
+                </div>
+              )}
+            <label className="block">
+              <span className="text-sm text-[var(--muted)]">{tk("review_comment")}</span>
+              <MentionTextarea
+                key={templateComposer?.selectedIndex == null ? "tpl-none" : `tpl-${templateComposer.selectedIndex}`}
+                lang={lang}
+                value={state.value}
+                onChange={state.onChange}
+                onPaste={state.onPaste}
+                rows={compact ? 2 : 4}
+                placeholder={tk("review_comment")}
+                mentionOptions={state.mentionOptions}
+                autoFocus={templateComposer.selectedIndex != null}
+              />
+            </label>
+            <div>
+              <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
+              <input type="file" accept="image/*" multiple onChange={state.onFile} className="mt-1 block text-sm" />
+            </div>
+            {state.images.length > 0 && (
+              <div className="space-y-3">
+                {state.images.map((image, index) => (
+                  <div key={`${image.slice(0, 32)}-${index}`} className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-2">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className="text-xs text-[var(--muted)]">
+                        {tk("review_screenshot")} {index + 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => state.onRemoveImage(index)}
+                        className="rounded-md border border-[var(--border)] px-2 py-1 text-xs hover:border-[var(--accent)]"
+                      >
+                        {tk("remove_image")}
+                      </button>
+                    </div>
+                    <div className="mb-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={image} alt="" className="max-h-40 rounded border border-[var(--border)] object-contain" />
+                    </div>
+                    <ScreenshotDrawer
+                      lang={lang}
+                      imageDataUrl={image}
+                      onChange={(dataUrl) => state.onUpdateImage(index, dataUrl)}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+            {state.err && <p className="text-sm text-[var(--danger)]">{state.err}</p>}
+            <div className="flex flex-wrap gap-2 pt-1">
+              {parentNoteId && (
                 <button
                   type="button"
-                  onClick={() => state.onRemoveImage(index)}
-                  className="rounded-md border border-[var(--border)] px-2 py-1 text-xs hover:border-[var(--accent)]"
+                  className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm"
+                  onClick={state.onCancelReply}
                 >
-                  {tk("remove_image")}
+                  {tk("discussion_reply_cancel")}
                 </button>
-              </div>
-              <div className="mb-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={image} alt="" className="max-h-40 rounded border border-[var(--border)] object-contain" />
-              </div>
-              <ScreenshotDrawer
-                lang={lang}
-                imageDataUrl={image}
-                onChange={(dataUrl) => state.onUpdateImage(index, dataUrl)}
-              />
+              )}
+              <button
+                type="button"
+                disabled={state.pending}
+                onClick={() => state.onPost(parentNoteId)}
+                className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
+              >
+                {parentNoteId ? tk("discussion_reply") : tk("discussion_post")}
+              </button>
             </div>
-          ))}
+          </div>
         </div>
+      ) : (
+        <label className="block">
+          <span className="text-sm text-[var(--muted)]">{tk("review_comment")}</span>
+          <MentionTextarea
+            lang={lang}
+            value={state.value}
+            onChange={state.onChange}
+            onPaste={state.onPaste}
+            rows={compact ? 2 : 3}
+            placeholder={tk("review_comment")}
+            mentionOptions={state.mentionOptions}
+            autoFocus={!!parentNoteId}
+          />
+        </label>
       )}
-      {state.err && <p className="mt-2 text-sm text-[var(--danger)]">{state.err}</p>}
-      <div className="mt-3 flex flex-wrap gap-2">
-        {parentNoteId && (
-          <button
-            type="button"
-            className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm"
-            onClick={state.onCancelReply}
-          >
-            {tk("discussion_reply_cancel")}
-          </button>
-        )}
-        <button
-          type="button"
-          disabled={state.pending}
-          onClick={() => state.onPost(parentNoteId)}
-          className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
-        >
-          {parentNoteId ? tk("discussion_reply") : tk("discussion_post")}
-        </button>
-      </div>
+      {!isTemplateComposer && (
+        <>
+          <div className="mt-2">
+            <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
+            <input type="file" accept="image/*" multiple onChange={state.onFile} className="mt-1 block text-sm" />
+          </div>
+          {state.images.length > 0 && (
+            <div className="mt-2 space-y-3">
+              {state.images.map((image, index) => (
+                <div key={`${image.slice(0, 32)}-${index}`} className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-2">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-xs text-[var(--muted)]">
+                      {tk("review_screenshot")} {index + 1}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => state.onRemoveImage(index)}
+                      className="rounded-md border border-[var(--border)] px-2 py-1 text-xs hover:border-[var(--accent)]"
+                    >
+                      {tk("remove_image")}
+                    </button>
+                  </div>
+                  <div className="mb-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={image} alt="" className="max-h-40 rounded border border-[var(--border)] object-contain" />
+                  </div>
+                  <ScreenshotDrawer
+                    lang={lang}
+                    imageDataUrl={image}
+                    onChange={(dataUrl) => state.onUpdateImage(index, dataUrl)}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+          {state.err && <p className="mt-2 text-sm text-[var(--danger)]">{state.err}</p>}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {parentNoteId && (
+              <button
+                type="button"
+                className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm"
+                onClick={state.onCancelReply}
+              >
+                {tk("discussion_reply_cancel")}
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={state.pending}
+              onClick={() => state.onPost(parentNoteId)}
+              className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
+            >
+              {parentNoteId ? tk("discussion_reply") : tk("discussion_post")}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -618,6 +854,10 @@ function NoteItem({
   lang,
   composerState,
   onToggleReply,
+  templateRows,
+  viewerId,
+  caseDbId,
+  onReloadNotes,
 }: {
   note: DiscussionNode;
   depth?: number;
@@ -626,9 +866,99 @@ function NoteItem({
   lang: Lang;
   composerState: ComposerState;
   onToggleReply: (noteId: string) => void;
+  templateRows: string[];
+  viewerId: string | null;
+  caseDbId: string;
+  onReloadNotes: () => Promise<void>;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const isReplyTarget = replyToId === note.id;
+  const isMine = viewerId != null && note.author.id === viewerId;
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState(note.content ?? "");
+  const [editImages, setEditImages] = useState<string[]>(() => [...note.images]);
+  const [editErr, setEditErr] = useState<string | null>(null);
+  const [mutating, startMutate] = useTransition();
+
+  useEffect(() => {
+    if (!editing) {
+      setEditContent(note.content ?? "");
+      setEditImages([...note.images]);
+    }
+  }, [editing, note.id, note.content, note.images]);
+
+  const onPasteEdit = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = getClipboardImageFiles(e.clipboardData);
+    if (files.length === 0) return;
+    e.preventDefault();
+    const urls = await readFilesAsDataUrls(files);
+    if (urls.length === 0) return;
+    setEditImages((prev) => [...prev, ...urls]);
+  }, []);
+
+  const onFileEdit = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    void readFilesAsDataUrls(files).then((urls) => {
+      if (urls.length === 0) return;
+      setEditImages((prev) => [...prev, ...urls]);
+    });
+    e.target.value = "";
+  }, []);
+
+  const removeEditImage = useCallback((index: number) => {
+    setEditImages((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const startEdit = useCallback(() => {
+    setEditErr(null);
+    setEditContent(note.content ?? "");
+    setEditImages([...note.images]);
+    setEditing(true);
+  }, [note.content, note.images]);
+
+  const cancelEdit = useCallback(() => {
+    setEditing(false);
+    setEditErr(null);
+  }, []);
+
+  const saveEdit = useCallback(() => {
+    startMutate(async () => {
+      setEditErr(null);
+      const res = await updateCaseNote({
+        caseDbId,
+        noteId: note.id,
+        content: editContent,
+        imageDataList: editImages,
+      });
+      if (!res.ok) {
+        setEditErr(
+          res.error === "empty" ? t(lang, "discussion_need_body") : t(lang, "required"),
+        );
+        return;
+      }
+      setEditing(false);
+      await onReloadNotes();
+    });
+  }, [caseDbId, editContent, editImages, lang, note.id, onReloadNotes]);
+
+  const doDelete = useCallback(() => {
+    if (!window.confirm(t(lang, "discussion_delete_confirm"))) return;
+    startMutate(async () => {
+      setEditErr(null);
+      const res = await deleteCaseNote({ caseDbId, noteId: note.id });
+      if (!res.ok) {
+        setEditErr(
+          res.error === "has_replies"
+            ? t(lang, "discussion_delete_has_replies")
+            : t(lang, "required"),
+        );
+        return;
+      }
+      await onReloadNotes();
+    });
+  }, [caseDbId, lang, note.id, onReloadNotes]);
+
   return (
     <li
       className={`rounded-lg border p-3 text-sm shadow-sm ${
@@ -651,14 +981,97 @@ function NoteItem({
           </span>
           <span>{formatDate(lang, new Date(note.createdAt))}</span>
         </div>
-        {note.content ? (
-          <p className="mt-2 whitespace-pre-wrap text-[var(--text)]">{note.content}</p>
-        ) : null}
-        {note.images.length > 0 ? (
+        {editing ? (
+          <div className="mt-2 space-y-2">
+            <MentionTextarea
+              lang={lang}
+              value={editContent}
+              onChange={setEditContent}
+              onPaste={onPasteEdit}
+              rows={4}
+              placeholder={tk("review_comment")}
+              mentionOptions={composerState.mentionOptions}
+            />
+            <div>
+              <span className="text-xs text-[var(--muted)]">{tk("review_screenshot")}</span>
+              <input type="file" accept="image/*" multiple onChange={onFileEdit} className="mt-1 block text-sm" />
+            </div>
+            {editImages.length > 0 ? (
+              <div className="space-y-2">
+                {editImages.map((image, index) => (
+                  <div key={`${note.id}-edit-${index}`} className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-2">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className="text-xs text-[var(--muted)]">
+                        {tk("review_screenshot")} {index + 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeEditImage(index)}
+                        className="rounded-md border border-[var(--border)] px-2 py-1 text-xs hover:border-[var(--accent)]"
+                      >
+                        {tk("remove_image")}
+                      </button>
+                    </div>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={image} alt="" className="max-h-32 rounded border border-[var(--border)] object-contain" />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {editErr ? <p className="text-sm text-[var(--danger)]">{editErr}</p> : null}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={mutating}
+                onClick={saveEdit}
+                className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
+              >
+                {tk("discussion_save_edit")}
+              </button>
+              <button
+                type="button"
+                disabled={mutating}
+                onClick={cancelEdit}
+                className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs hover:border-[var(--accent)] disabled:opacity-50"
+              >
+                {tk("discussion_cancel_edit")}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {note.content ? (
+              <p className="mt-2 whitespace-pre-wrap text-[var(--text)]">
+                {formatTemplateNoteBodyForDisplay(note.content, templateRows)}
+              </p>
+            ) : null}
+            {note.images.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {note.images.map((image, index) => (
+                  <NoteImageThumbnail key={`${note.id}-${index}`} lang={lang} src={image} alt="" />
+                ))}
+              </div>
+            ) : null}
+          </>
+        )}
+        {isMine && !editing ? (
           <div className="mt-2 flex flex-wrap gap-2">
-            {note.images.map((image, index) => (
-              <NoteImageThumbnail key={`${note.id}-${index}`} lang={lang} src={image} alt="" />
-            ))}
+            <button
+              type="button"
+              disabled={mutating}
+              onClick={startEdit}
+              className="rounded-md border border-[var(--border)] px-2 py-1 text-xs hover:border-[var(--accent)] disabled:opacity-50"
+            >
+              {tk("discussion_edit")}
+            </button>
+            <button
+              type="button"
+              disabled={mutating}
+              onClick={doDelete}
+              className="rounded-md border border-[var(--danger)]/40 px-2 py-1 text-xs text-[var(--danger)] hover:bg-[var(--danger)]/10 disabled:opacity-50"
+            >
+              {tk("discussion_delete")}
+            </button>
           </div>
         ) : null}
         {canPost && (
@@ -687,6 +1100,10 @@ function NoteItem({
                 lang={lang}
                 composerState={composerState}
                 onToggleReply={onToggleReply}
+                templateRows={templateRows}
+                viewerId={viewerId}
+                caseDbId={caseDbId}
+                onReloadNotes={onReloadNotes}
               />
             ))}
           </ul>
@@ -703,6 +1120,8 @@ export function CaseDiscussion({
   initialNotes = [],
   canPost,
   mentionOptions = [],
+  composerTemplate = null,
+  requireComposerTemplate = false,
 }: {
   lang: Lang;
   caseDbId: string;
@@ -710,11 +1129,22 @@ export function CaseDiscussion({
   initialNotes?: CaseDiscussionNote[];
   canPost: boolean;
   mentionOptions?: MentionOption[];
+  /** Prefills the annotator's first (root) composer message. */
+  composerTemplate?: string | null;
+  /**
+   * When true, the first composer for an empty thread is prefilled with `composerTemplate`,
+   * and posting is blocked unless the content differs from the template.
+   */
+  requireComposerTemplate?: boolean;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const [content, setContent] = useState("");
+  const [selectedTemplateRowIndex, setSelectedTemplateRowIndex] = useState<number | null>(null);
+  const [templateSelectionTouched, setTemplateSelectionTouched] = useState(false);
   const [images, setImages] = useState<string[]>([]);
   const [notes, setNotes] = useState<CaseDiscussionNote[]>(initialNotes);
+  const [notesLoaded, setNotesLoaded] = useState(false);
+  const [viewerId, setViewerId] = useState<string | null>(null);
   const [replyToId, setReplyToId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [exportState, setExportState] = useState<
@@ -728,16 +1158,26 @@ export function CaseDiscussion({
   >("idle");
   const [pending, start] = useTransition();
 
+  const [templateApplied, setTemplateApplied] = useState(false);
+  const templateRows = useMemo(
+    () =>
+      (composerTemplate ?? "")
+        .split(/\r?\n/g)
+        .map((line) => line.trim())
+        .filter(Boolean),
+    [composerTemplate],
+  );
+
   const thread = useMemo(() => buildDiscussionTree(notes), [notes]);
-  const exportRows = useMemo(() => buildExportRows(thread), [thread]);
-  const exportCommentRows = useMemo(() => buildExportCommentRows(thread), [thread]);
+  const exportRows = useMemo(() => buildExportRows(thread, templateRows), [thread, templateRows]);
+  const exportCommentRows = useMemo(() => buildExportCommentRows(thread, templateRows), [thread, templateRows]);
   const exportNotes = useMemo(
     () =>
       flattenDiscussion(thread).map((note) => ({
         id: note.id,
-        content: note.content?.trim() ?? "",
+        content: note.content ? formatTemplateNoteBodyForExport(note.content, templateRows).trim() : "",
       })),
-    [thread],
+    [thread, templateRows],
   );
 
   useEffect(() => {
@@ -747,21 +1187,97 @@ export function CaseDiscussion({
   }, [exportState]);
 
   const loadNotes = useCallback(async () => {
+    setNotesLoaded(false);
     const res = await fetchCaseNotes(caseDbId);
     if (res.ok) {
       setNotes(res.notes);
+      setViewerId(res.viewerId);
+    } else {
+      setViewerId(null);
     }
+    setNotesLoaded(true);
   }, [caseDbId]);
 
   useEffect(() => {
+    // Reset composer state for the new case.
+    setContent("");
+    setSelectedTemplateRowIndex(null);
+    setTemplateSelectionTouched(false);
+    setImages([]);
+    setReplyToId(null);
+    setErr(null);
+    setTemplateApplied(false);
     void loadNotes();
   }, [loadNotes]);
+
+  // Prefill template into the root composer when:
+  // - template enforcement is enabled
+  // - composer is for the first root message (not a reply)
+  // - there are currently no notes
+  useEffect(() => {
+    if (!requireComposerTemplate) return;
+    if (!composerTemplate) return;
+    if (templateRows.length > 0) return;
+    if (!canPost) return;
+    if (replyToId !== null) return;
+    if (!notesLoaded) return;
+    if (templateApplied) return;
+    if (notes.length !== 0) return;
+    if (content.trim() !== "") return;
+
+    setContent(composerTemplate);
+    setTemplateApplied(true);
+  }, [canPost, composerTemplate, content, notes.length, notesLoaded, requireComposerTemplate, replyToId, templateApplied]);
 
   // Use refs so stable callbacks can always read the latest values
   const contentRef = useRef(content);
   contentRef.current = content;
   const imagesRef = useRef(images);
   imagesRef.current = images;
+
+  const completedTemplateIndexes = useMemo(() => {
+    const completed = new Set<number>();
+    for (const note of notes) {
+      if (!note.content) continue;
+      const parsed = parseTemplateRowStored(note.content);
+      if (!parsed) continue;
+      if (parsed.rowIndex < 0 || parsed.rowIndex >= templateRows.length) continue;
+      if (!parsed.value) continue;
+      completed.add(parsed.rowIndex);
+    }
+    return [...completed].sort((a, b) => a - b);
+  }, [notes, templateRows]);
+
+  /** Template field picker + row-tagged posts whenever we know the scope checklist (annotator or reviewer). */
+  const scopeWorkTemplateUI =
+    !!composerTemplate && templateRows.length > 0 && notesLoaded;
+
+  useLayoutEffect(() => {
+    if (!scopeWorkTemplateUI) return;
+    if (selectedTemplateRowIndex == null) return;
+    if (!templateRows[selectedTemplateRowIndex]) return;
+    setContent(composerAnswerDraftForTemplateRow(selectedTemplateRowIndex, notes, templateRows));
+  }, [notes, selectedTemplateRowIndex, scopeWorkTemplateUI, templateRows]);
+
+  const onSelectTemplateRow = useCallback(
+    (indexValue: string) => {
+      setTemplateSelectionTouched(true);
+      if (!indexValue) {
+        setSelectedTemplateRowIndex(null);
+        setContent("");
+        return;
+      }
+      const parsed = Number(indexValue);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        setSelectedTemplateRowIndex(null);
+        setContent("");
+        return;
+      }
+      setSelectedTemplateRowIndex(parsed);
+      setContent(composerAnswerDraftForTemplateRow(parsed, notes, templateRows));
+    },
+    [notes, templateRows],
+  );
 
   const removeImage = useCallback((index: number) => {
     setImages((prev) => prev.filter((_, i) => i !== index));
@@ -802,10 +1318,38 @@ export function CaseDiscussion({
       const currentContent = contentRef.current;
       const currentImages = imagesRef.current;
       setErr(null);
+      let finalContent = currentContent;
+
+      if (parentNoteId == null && scopeWorkTemplateUI) {
+        if (selectedTemplateRowIndex != null) {
+          const row = templateRows[selectedTemplateRowIndex];
+          if (!row) {
+            setErr(t(lang, "required"));
+            return;
+          }
+          if (!currentContent.trim()) {
+            setErr(t(lang, "discussion_template_need_fill"));
+            return;
+          }
+          finalContent = buildTemplateRowNote(selectedTemplateRowIndex, row, currentContent);
+        } else if (!currentContent.trim() && currentImages.length === 0) {
+          setErr(t(lang, "discussion_need_body"));
+          return;
+        }
+      } else if (requireComposerTemplate && parentNoteId == null && templateApplied && composerTemplate) {
+        // Legacy template enforcement for plain-text templates.
+        const templateTrim = composerTemplate.trim();
+        const currentTrim = currentContent.trim();
+        if (currentTrim === templateTrim) {
+          setErr(t(lang, "discussion_template_need_fill"));
+          return;
+        }
+      }
+
       start(async () => {
         const res = await createCaseNote({
           caseDbId,
-          content: currentContent,
+          content: finalContent,
           imageDataList: currentImages,
           parentNoteId,
         });
@@ -823,17 +1367,36 @@ export function CaseDiscussion({
         await loadNotes();
       });
     },
-    [caseDbId, lang, loadNotes, resetComposer],
+    [
+      caseDbId,
+      composerTemplate,
+      lang,
+      loadNotes,
+      requireComposerTemplate,
+      resetComposer,
+      selectedTemplateRowIndex,
+      templateApplied,
+      scopeWorkTemplateUI,
+      templateRows,
+    ],
   );
 
   const cancelReply = useCallback(() => {
     setReplyToId(null);
+    setContent("");
+    setImages([]);
     setErr(null);
   }, []);
 
   const toggleReply = useCallback((noteId: string) => {
     setErr(null);
-    setReplyToId((prev) => (prev === noteId ? null : noteId));
+    setReplyToId((prev) => {
+      const next = prev === noteId ? null : noteId;
+      // When switching to a reply, start with a fresh draft to avoid mixing the root template/content.
+      setContent("");
+      setImages([]);
+      return next;
+    });
   }, []);
 
   const composerState = useMemo<ComposerState>(
@@ -852,6 +1415,25 @@ export function CaseDiscussion({
       onCancelReply: cancelReply,
     }),
     [content, images, err, pending, mentionOptions, onPasteComposer, onFile, removeImage, updateImage, post, cancelReply],
+  );
+
+  const templateComposerState = useMemo<TemplateComposerState | null>(
+    () =>
+      scopeWorkTemplateUI
+        ? {
+            rows: templateRows,
+            selectedIndex: selectedTemplateRowIndex,
+            completedIndexes: completedTemplateIndexes,
+            onSelect: onSelectTemplateRow,
+          }
+        : null,
+    [
+      completedTemplateIndexes,
+      onSelectTemplateRow,
+      selectedTemplateRowIndex,
+      scopeWorkTemplateUI,
+      templateRows,
+    ],
   );
 
   const exportDiscussion = useCallback(async () => {
@@ -987,12 +1569,21 @@ export function CaseDiscussion({
               lang={lang}
               composerState={composerState}
               onToggleReply={toggleReply}
+              templateRows={templateRows}
+              viewerId={viewerId}
+              caseDbId={caseDbId}
+              onReloadNotes={loadNotes}
             />
           ))}
         </ul>
       )}
       {canPost && replyToId == null && (
-        <Composer lang={lang} state={composerState} parentNoteId={null} />
+        <Composer
+          lang={lang}
+          state={composerState}
+          parentNoteId={null}
+          templateComposer={templateComposerState}
+        />
       )}
     </div>
   );

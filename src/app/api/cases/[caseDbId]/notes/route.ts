@@ -40,13 +40,14 @@ export async function GET(
 
   return NextResponse.json({
     ok: true as const,
+    viewerId: user.id,
     notes: row.caseNotes.map((note) => ({
       id: note.id,
       parentNoteId: note.parentNoteId,
       content: note.content,
       images: getCaseNoteImages(note),
       createdAt: note.createdAt.toISOString(),
-      author: { name: note.author.name, role: note.author.role },
+      author: { id: note.author.id, name: note.author.name, role: note.author.role },
     })),
   });
 }

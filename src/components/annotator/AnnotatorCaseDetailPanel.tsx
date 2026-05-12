@@ -9,19 +9,28 @@ import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
-import type { MentionOption } from "@/lib/guide-topic";
+import type { GuideOption, MentionOption } from "@/lib/guide-topic";
 import { videoGuideUrlsFromDb } from "@/lib/video-guides";
 import type { AnnotationCase, CompensationType, Review } from "@prisma/client";
 import { CaseStatus } from "@prisma/client";
+import { useMemo } from "react";
 
 export type AnnotatorCaseRow = AnnotationCase & {
-  guide: { id: string; title: string; content: string } | null;
+  guide: { id: string; title: string } | null;
   topic:
-    | { id: string; name: string; description: string | null; projects: { id: string; redbrickProject: string }[] }
+    | {
+        id: string;
+        name: string;
+        description: string | null;
+        projects: { id: string; redbrickProject: string }[];
+        scopes: { id: string; scopeOfWork: string }[];
+      }
     | null;
-  reviews?: Review[];
+  reviews?: Pick<Review, "id" | "decision" | "comment" | "createdAt">[];
   _count?: { caseNotes: number };
   auditedBy?: { id: string; name: string; email: string } | null;
+  /** Optional template to prefill the annotator composer based on `scopeOfWork`. */
+  scopeOfWorkTemplate?: string | null;
 };
 
 function compLabel(lang: Lang, type: CompensationType, amount: number) {
@@ -39,11 +48,13 @@ export function AnnotatorCaseDetailPanel({
   lang,
   row,
   canPostDiscussion,
+  guides = [],
   mentionOptions = [],
 }: {
   lang: Lang;
   row: AnnotatorCaseRow;
   canPostDiscussion: boolean;
+  guides?: GuideOption[];
   mentionOptions?: MentionOption[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
@@ -57,7 +68,14 @@ export function AnnotatorCaseDetailPanel({
     row.maxMinutesPerCase,
     row.annotatorBonus,
   );
-  const guideGuideline = row.guide ? htmlToPlainText(row.guide.content) : "";
+  const guideHtml = useMemo(() => {
+    if (!row.guide) return "";
+    return guides.find((g) => g.id === row.guide!.id)?.content ?? "";
+  }, [guides, row.guide]);
+  const guideGuideline = useMemo(
+    () => (guideHtml ? htmlToPlainText(guideHtml) : ""),
+    [guideHtml],
+  );
   const showGuideline = !row.guide || row.guideline.trim() !== guideGuideline;
   const videoUrls = videoGuideUrlsFromDb(row.videoGuideUrls);
 
@@ -87,14 +105,17 @@ export function AnnotatorCaseDetailPanel({
       <dl className="grid gap-2 text-sm md:grid-cols-2">
         {row.guide && (
           <div className="md:col-span-2">
-            <dt className="text-[var(--muted)]">{tk("case_guide")}</dt>
-            <dd>
-              <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3">
-                <div className="font-medium">{row.guide.title}</div>
-                <div className="mt-2">
-                  <RichTextContent html={row.guide.content} />
+            <dt className="sr-only">{tk("case_guide")}</dt>
+            <dd className="m-0">
+              <details className="rounded-md border border-[var(--border)] bg-[var(--bg)]">
+                <summary className="cursor-pointer px-3 py-2 text-sm hover:bg-[var(--surface)]">
+                  <span className="text-[var(--muted)]">{tk("case_guide")}: </span>
+                  <span className="font-medium text-[var(--text)]">{row.guide.title}</span>
+                </summary>
+                <div className="border-t border-[var(--border)] px-3 py-3">
+                  <RichTextContent html={guideHtml} />
                 </div>
-              </div>
+              </details>
             </dd>
           </div>
         )}
@@ -120,7 +141,16 @@ export function AnnotatorCaseDetailPanel({
             <dd>
               <div className="font-medium">{row.topic.name}</div>
               <div className="text-xs text-[var(--muted)]">
-                {row.topic.projects.map((p) => p.redbrickProject).join(", ") || "—"}
+                {[
+                  row.topic.projects.length
+                    ? `RB: ${row.topic.projects.map((p) => p.redbrickProject).join(", ")}`
+                    : "",
+                  row.topic.scopes.length
+                    ? `Scope: ${row.topic.scopes.map((s) => s.scopeOfWork).join(", ")}`
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" | ") || "—"}
               </div>
             </dd>
           </div>
@@ -217,6 +247,8 @@ export function AnnotatorCaseDetailPanel({
           caseLabel={row.caseId}
           canPost={canPostDiscussion}
           mentionOptions={mentionOptions}
+          composerTemplate={!row.isReference ? row.scopeOfWorkTemplate ?? null : null}
+          requireComposerTemplate={true}
         />
       </div>
     </div>

@@ -19,7 +19,7 @@ import { t } from "@/lib/i18n";
 export default async function AnnotatorPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
-  if (user.role !== "ANNOTATOR") redirect("/reviewer");
+  if (user.role !== "ANNOTATOR" && user.role !== "REVIEWER") redirect("/login");
   const lang = await getLangFromCookies();
   const tk = (k: DictKey) => t(lang, k);
 
@@ -46,15 +46,34 @@ export default async function AnnotatorPage() {
         lang={lang}
         role="ANNOTATOR"
         name={user.name}
+        viewSwitch={
+          user.role === "REVIEWER"
+            ? {
+                reviewerHref: "/reviewer",
+                annotatorHref: "/annotator",
+              }
+            : undefined
+        }
         notificationSlot={<NotificationBell lang={lang} initialGroups={notifGroups} />}
       />
       <main className="mx-auto max-w-6xl space-y-8 px-4 py-8">
-        <div>
-          <h1 className="text-2xl font-semibold">{tk("annotator_title")}</h1>
-          <p className="text-sm text-[var(--muted)]">{user.email}</p>
-        </div>
-        <AnnotatorStatsPanel lang={lang} summary={summary} />
-        <AnnotatorAvailabilityPanel lang={lang} summary={availability} />
+        <details className="rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+          <summary className="cursor-pointer select-none px-4 py-3 hover:bg-[var(--bg)]">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h1 className="text-2xl font-semibold">{tk("annotator_title")}</h1>
+                <p className="text-sm text-[var(--muted)]">{user.email}</p>
+              </div>
+              <span className="rounded-full border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1 text-xs font-medium text-[var(--muted)]">
+                Expand
+              </span>
+            </div>
+          </summary>
+          <div className="space-y-8 border-t border-[var(--border)] p-4">
+            <AnnotatorStatsPanel lang={lang} summary={summary} />
+            <AnnotatorAvailabilityPanel lang={lang} summary={availability} />
+          </div>
+        </details>
         <section>
           <h2 className="mb-3 text-lg font-medium">{tk("dash_cases_heading")}</h2>
           <AnnotatorWorkboard

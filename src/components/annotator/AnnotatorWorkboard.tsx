@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useActionState, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { assignCaseAction, submitAnnotationAction } from "@/app/actions/cases";
+import { assignCaseAction, submitAnnotationAction, unassignCaseAction } from "@/app/actions/cases";
 import { MentionTextarea } from "@/components/CaseDiscussion";
 import {
   AnnotatorCaseDetailPanel,
@@ -11,28 +11,59 @@ import {
 } from "@/components/annotator/AnnotatorCaseDetailPanel";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
-import { createCaseNote } from "@/lib/case-note-api";
+import { createCaseNote, fetchCaseNotes } from "@/lib/case-note-api";
+import { buildTemplateRowNote } from "@/lib/template-row-comment";
 import { StarRating } from "@/components/StarRating";
 import { getClipboardImageFiles, readFilesAsDataUrls } from "@/lib/client-image-data";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount } from "@/lib/format";
-import { buildMentionOptionsForProject, type GuideOption, type TopicOption } from "@/lib/guide-topic";
+import { buildMentionOptionsForCase, type GuideOption, type TopicOption } from "@/lib/guide-topic";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import { CaseStatus } from "@prisma/client";
 
-function groupByProject<T extends { redbrickProject: string; caseId: string }>(items: T[]) {
-  const pm = new Map<string, T[]>();
+type CaseTree<T> = {
+  project: string;
+  scopes: {
+    scope: string;
+    rbProjects: { rbProject: string; cases: T[] }[];
+  }[];
+};
+
+function getProjectName(_caseId: string): string {
+  return "BC2";
+}
+
+function groupByHierarchy<T extends { redbrickProject: string; scopeOfWork: string; caseId: string }>(
+  items: T[],
+): CaseTree<T>[] {
+  const projectMap = new Map<string, Map<string, Map<string, T[]>>>();
   for (const c of items) {
-    const proj = (c.redbrickProject || "").trim() || "—";
-    if (!pm.has(proj)) pm.set(proj, []);
-    pm.get(proj)!.push(c);
+    const project = getProjectName(c.caseId);
+    const scope = (c.scopeOfWork || "").trim() || "—";
+    const rbProject = (c.redbrickProject || "").trim() || "—";
+    if (!projectMap.has(project)) projectMap.set(project, new Map());
+    const scopeMap = projectMap.get(project)!;
+    if (!scopeMap.has(scope)) scopeMap.set(scope, new Map());
+    const rbMap = scopeMap.get(scope)!;
+    if (!rbMap.has(rbProject)) rbMap.set(rbProject, []);
+    rbMap.get(rbProject)!.push(c);
   }
-  return [...pm.entries()]
+  return [...projectMap.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([project, list]) => ({
+    .map(([project, scopeMap]) => ({
       project,
-      cases: [...list].sort((a, b) => a.caseId.localeCompare(b.caseId)),
+      scopes: [...scopeMap.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([scope, rbMap]) => ({
+          scope,
+          rbProjects: [...rbMap.entries()]
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([rbProject, list]) => ({
+              rbProject,
+              cases: [...list].sort((a, b) => a.caseId.localeCompare(b.caseId)),
+            })),
+        })),
     }));
 }
 
@@ -112,7 +143,36 @@ function AnnotatorAssignForm({ lang, caseDbId }: { lang: Lang; caseDbId: string 
   );
 }
 
+function AnnotatorUnassignForm({ lang, caseDbId }: { lang: Lang; caseDbId: string }) {
+  const tk = (k: DictKey) => t(lang, k);
+  const router = useRouter();
+  const [state, action, pending] = useActionState(
+    async () => unassignCaseAction(caseDbId),
+    null as Awaited<ReturnType<typeof unassignCaseAction>> | null,
+  );
+  useEffect(() => {
+    if (state?.ok) router.refresh();
+  }, [state, router]);
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <form action={action}>
+        <button
+          type="submit"
+          disabled={pending}
+          className="rounded border border-[var(--danger)] bg-[var(--danger)]/10 px-2 py-0.5 text-[var(--danger)] hover:bg-[var(--danger)]/20 disabled:opacity-50"
+        >
+          {tk("untake")}
+        </button>
+      </form>
+      {state && !state.ok && (
+        <span className="max-w-[12rem] text-[var(--danger)]">{tk("reviewer_assign_taken")}</span>
+      )}
+    </div>
+  );
+}
+
 type SubmitResult = Awaited<ReturnType<typeof submitAnnotationAction>>;
+const TEMPLATE_ROW_MARKER_RE = /^\[\[TEMPLATE_ROW_(\d+)\]\]\s*(.*)$/;
 
 function AnnotatorSubmitForm({
   lang,
@@ -175,9 +235,23 @@ function AnnotatorSubmitForm({
         required
       />
       {state && !state.ok && (
-        <span className="text-[var(--danger)]">
-          {state.error === "rating" ? tk("rating_required") : tk("required")}
-        </span>
+        <div className="text-[var(--danger)]">
+          <p>
+            {state.error === "rating"
+              ? tk("rating_required")
+              : state.error === "template"
+                ? tk("discussion_template_need_fill")
+                : tk("required")}
+          </p>
+          {state.error === "template" &&
+            "missingTemplateFields" in state &&
+            Array.isArray(state.missingTemplateFields) &&
+            state.missingTemplateFields.length > 0 && (
+              <p className="mt-1 text-xs">
+                {tk("discussion_template_missing_prefix")} {state.missingTemplateFields.join(", ")}
+              </p>
+            )}
+        </div>
       )}
     </div>
   );
@@ -220,10 +294,10 @@ export function AnnotatorWorkboard({
     return { inProgress: progress, completed: done };
   }, [mine, rejected]);
 
-  const poolGroups = useMemo(() => groupByProject(available), [available]);
-  const activeGroups = useMemo(() => groupByProject(inProgress), [inProgress]);
-  const doneGroups = useMemo(() => groupByProject(completed), [completed]);
-  const referenceGroups = useMemo(() => groupByProject(reference), [reference]);
+  const poolGroups = useMemo(() => groupByHierarchy(available), [available]);
+  const activeGroups = useMemo(() => groupByHierarchy(inProgress), [inProgress]);
+  const doneGroups = useMemo(() => groupByHierarchy(completed), [completed]);
+  const referenceGroups = useMemo(() => groupByHierarchy(reference), [reference]);
   const allRows = useMemo(
     () => [...available, ...inProgress, ...completed, ...reference],
     [available, inProgress, completed, reference],
@@ -241,18 +315,24 @@ export function AnnotatorWorkboard({
     }
     return map;
   }, [allRows]);
-  const doneActiveGroups = useMemo(
-    () => doneGroups.filter((g) => projectActivity.get(g.project)),
-    [doneGroups, projectActivity],
+  const doneActiveCases = useMemo(
+    () =>
+      completed.filter((c) => projectActivity.get((c.redbrickProject || "").trim() || "—")),
+    [completed, projectActivity],
   );
-  const doneInactiveGroups = useMemo(
-    () => doneGroups.filter((g) => !projectActivity.get(g.project)),
-    [doneGroups, projectActivity],
+  const doneInactiveCases = useMemo(
+    () =>
+      completed.filter((c) => !projectActivity.get((c.redbrickProject || "").trim() || "—")),
+    [completed, projectActivity],
   );
+  const doneActiveGroups = useMemo(() => groupByHierarchy(doneActiveCases), [doneActiveCases]);
+  const doneInactiveGroups = useMemo(() => groupByHierarchy(doneInactiveCases), [doneInactiveCases]);
 
   const [detailId, setDetailId] = useState<string | null>(null);
   const [noteCaseId, setNoteCaseId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
+  const [noteTemplateOptions, setNoteTemplateOptions] = useState<Array<{ index: number; label: string }>>([]);
+  const [noteTemplateSelectedIndex, setNoteTemplateSelectedIndex] = useState<number | null>(null);
   const [noteImages, setNoteImages] = useState<string[]>([]);
   const [showInactiveProjects, setShowInactiveProjects] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -262,10 +342,16 @@ export function AnnotatorWorkboard({
   const noteCase = noteCaseId ? (allRows.find((c) => c.id === noteCaseId) ?? null) : null;
   const selectedCaseId = searchParams.get("case");
   const detailMentionOptions = detailRow
-    ? buildMentionOptionsForProject(guides, topics)
+    ? buildMentionOptionsForCase(guides, topics, {
+        redbrickProject: detailRow.redbrickProject,
+        scopeOfWork: detailRow.scopeOfWork,
+      })
     : [];
   const noteMentionOptions = noteCase
-    ? buildMentionOptionsForProject(guides, topics)
+    ? buildMentionOptionsForCase(guides, topics, {
+        redbrickProject: noteCase.redbrickProject,
+        scopeOfWork: noteCase.scopeOfWork,
+      })
     : [];
 
   useEffect(() => {
@@ -302,6 +388,8 @@ export function AnnotatorWorkboard({
 
   function resetNoteComposer() {
     setNoteText("");
+    setNoteTemplateOptions([]);
+    setNoteTemplateSelectedIndex(null);
     setNoteImages([]);
   }
 
@@ -335,7 +423,18 @@ export function AnnotatorWorkboard({
 
   function submitNote() {
     if (!noteCaseId) return;
-    const text = noteText.trim();
+    const baseText = noteText.trim();
+    let text = baseText;
+    if (noteTemplateSelectedIndex != null && noteCase) {
+      const templateRows = (noteCase.scopeOfWorkTemplate ?? "")
+        .split(/\r?\n/g)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const rowLabel = templateRows[noteTemplateSelectedIndex];
+      if (rowLabel) {
+        text = buildTemplateRowNote(noteTemplateSelectedIndex, rowLabel, baseText);
+      }
+    }
     if (!text && noteImages.length === 0) {
       setErr(tk("discussion_need_body"));
       return;
@@ -356,6 +455,46 @@ export function AnnotatorWorkboard({
       refresh();
     });
   }
+
+  useEffect(() => {
+    if (!noteCaseId || !noteCase) {
+      setNoteTemplateOptions([]);
+      setNoteTemplateSelectedIndex(null);
+      return;
+    }
+    const templateRows = (noteCase.scopeOfWorkTemplate ?? "")
+      .split(/\r?\n/g)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (templateRows.length === 0) {
+      setNoteTemplateOptions([]);
+      setNoteTemplateSelectedIndex(null);
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      const res = await fetchCaseNotes(noteCaseId);
+      if (!alive) return;
+      const completed = new Set<number>();
+      if (res.ok) {
+        for (const note of res.notes) {
+          const content = (note.content ?? "").trim();
+          const match = content.match(TEMPLATE_ROW_MARKER_RE);
+          if (!match) continue;
+          const idx = Number(match[1]) - 1;
+          if (Number.isInteger(idx) && idx >= 0 && idx < templateRows.length) completed.add(idx);
+        }
+      }
+      const options = templateRows
+        .map((label, index) => ({ index, label }))
+        .filter((item) => !completed.has(item.index));
+      setNoteTemplateOptions(options);
+      setNoteTemplateSelectedIndex(null);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [noteCase, noteCaseId]);
 
   function canPostInDetail(row: AnnotatorCaseRow | null): boolean {
     if (!row) return false;
@@ -487,6 +626,9 @@ export function AnnotatorWorkboard({
                           initialDifficultyRating={c.difficultyRating}
                         />
                       )}
+                    {mode === "active" && c.status === CaseStatus.ASSIGNED && (
+                      <AnnotatorUnassignForm lang={lang} caseDbId={c.id} />
+                    )}
                     {mode === "active" && c.status === CaseStatus.SUBMITTED && (
                       <span className="text-[var(--muted)]">—</span>
                     )}
@@ -531,12 +673,78 @@ export function AnnotatorWorkboard({
     );
   }
 
+  function renderHierarchy(
+    groups: CaseTree<AnnotatorCaseRow>[],
+    mode: "pool" | "active" | "done" | "reference",
+    className: string,
+  ) {
+    const isPool = mode === "pool";
+    return (
+      <div className="space-y-2">
+        {groups.map((projectGroup) => (
+          <details key={projectGroup.project} className={className}>
+            <summary
+              className={`cursor-pointer select-none px-3 py-2 text-sm font-medium ${
+                isPool ? "text-amber-950 hover:bg-amber-100/80" : "text-[var(--text)] hover:bg-[var(--bg)]"
+              }`}
+            >
+              <span className="inline-flex flex-wrap items-center gap-2">
+                <span>{projectGroup.project}</span>
+                <span>(</span>
+                <StatusCountBadges
+                  cases={projectGroup.scopes.flatMap((scope) =>
+                    scope.rbProjects.flatMap((rbGroup) => rbGroup.cases),
+                  )}
+                />
+                <span>)</span>
+              </span>
+            </summary>
+            <div
+              className={`space-y-2 border-t px-2 pb-2 pt-2 ${
+                isPool ? "border-amber-300/70" : "border-[var(--border)]"
+              }`}
+            >
+              {projectGroup.scopes.map((scopeGroup) => (
+                <details key={`${projectGroup.project}-${scopeGroup.scope}`} className="rounded-md border border-[var(--border)]/60 bg-[var(--surface)]">
+                  <summary className="cursor-pointer select-none px-2 py-1.5 text-xs font-medium text-[var(--text)] hover:text-[var(--accent)]">
+                    <span>{scopeGroup.scope}</span>
+                    <span className="ml-1">(</span>
+                    <StatusCountBadges
+                      cases={scopeGroup.rbProjects.flatMap((rbGroup) => rbGroup.cases)}
+                    />
+                    <span>)</span>
+                  </summary>
+                  <div className="space-y-2 border-t border-[var(--border)]/60 px-2 pb-2 pt-2">
+                    {scopeGroup.rbProjects.map((rbGroup) => (
+                      <details key={`${scopeGroup.scope}-${rbGroup.rbProject}`} className="rounded-md border border-[var(--border)]/60 bg-[var(--surface)]">
+                        <summary className="cursor-pointer select-none px-2 py-1.5 text-xs font-medium text-[var(--text)] hover:text-[var(--accent)]">
+                          <span>{rbGroup.rbProject}</span>
+                          <span className="ml-1">(</span>
+                          <StatusCountBadges cases={rbGroup.cases} />
+                          <span>)</span>
+                        </summary>
+                        <div className="border-t border-[var(--border)]/60">
+                          {renderProjectTable(rbGroup.cases, mode)}
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                </details>
+              ))}
+            </div>
+          </details>
+        ))}
+      </div>
+    );
+  }
+
   const emptyAll =
     available.length === 0 &&
     inProgress.length === 0 &&
     completed.length === 0 &&
     reference.length === 0;
   const openPoolCount = available.length;
+  const undoneCount = inProgress.length;
 
   return (
     <div className="space-y-6">
@@ -550,170 +758,135 @@ export function AnnotatorWorkboard({
       ) : (
         <>
           <section className="space-y-2">
-            <h3 className="text-sm font-semibold text-[var(--text)]">{tk("annotator_section_reference")}</h3>
-            {reference.length === 0 ? (
-              <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
-            ) : (
-              <div className="space-y-2">
-                {referenceGroups.map((g) => (
-                  <details
-                    key={g.project}
-                    className="rounded-lg border border-[var(--accent)]/35 bg-[var(--accent)]/5"
-                  >
-                    <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
-                      <span className="inline-flex flex-wrap items-center gap-2">
-                        <span>{g.project}</span>
-                        <CopyTextButton lang={lang} value={g.project === "—" ? "" : g.project} />
-                        <span>(</span><StatusCountBadges cases={g.cases} /><span>)</span>
-                      </span>
-                    </summary>
-                    <div className="border-t border-[var(--accent)]/25">{renderProjectTable(g.cases, "reference")}</div>
-                  </details>
-                ))}
+            <details className="rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+              <summary className="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-[var(--text)] hover:bg-[var(--bg)]">
+                <span>{tk("annotator_section_reference")}</span>
+                <span className="ml-2 text-xs text-[var(--muted)]">({reference.length})</span>
+              </summary>
+              <div className="border-t border-[var(--border)] p-3">
+                {reference.length === 0 ? (
+                  <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
+                ) : (
+                  renderHierarchy(
+                    referenceGroups,
+                    "reference",
+                    "rounded-lg border border-[var(--accent)]/35 bg-[var(--accent)]/5",
+                  )
+                )}
               </div>
-            )}
+            </details>
           </section>
 
           <section className="space-y-2">
-            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 shadow-sm shadow-amber-500/10">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-sm font-semibold text-amber-800">
-                    {tk("annotator_section_pool")}
-                  </h3>
-                  <p className="mt-0.5 text-xs font-medium text-amber-800/90">
-                    Available work waiting for assignment
-                  </p>
-                </div>
-                <span className="rounded-full bg-amber-600 px-2.5 py-1 text-xs font-semibold text-white">
-                  {openPoolCount} available
-                </span>
-              </div>
-            </div>
-            {available.length === 0 ? (
-              <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
-            ) : (
-              <div className="space-y-2">
-                {poolGroups.map((g) => (
-                  <details
-                    key={g.project}
-                    className="rounded-lg border border-amber-400/60 bg-amber-50/90 shadow-sm shadow-amber-500/5"
-                  >
-                    <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-amber-950 hover:bg-amber-100/90">
-                      <span className="inline-flex flex-wrap items-center gap-2">
-                        <span>{g.project}</span>
-                        <CopyTextButton lang={lang} value={g.project === "—" ? "" : g.project} />
-                        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-900">
-                          <StatusCountBadges cases={g.cases} />
-                        </span>
-                      </span>
-                    </summary>
-                    <div className="border-t border-amber-400/50">{renderProjectTable(g.cases, "pool")}</div>
-                  </details>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="space-y-2">
-            <h3 className="text-sm font-semibold text-[var(--text)]">{tk("annotator_section_active")}</h3>
-            {inProgress.length === 0 ? (
-              <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
-            ) : (
-              <div className="space-y-2">
-                {activeGroups.map((g) => (
-                  <details
-                    key={g.project}
-                    className="rounded-lg border border-[var(--border)] bg-[var(--surface)]"
-                  >
-                    <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
-                      <span className="inline-flex flex-wrap items-center gap-2">
-                        <span>{g.project}</span>
-                        <CopyTextButton lang={lang} value={g.project === "—" ? "" : g.project} />
-                        <span>(</span><StatusCountBadges cases={g.cases} /><span>)</span>
-                      </span>
-                    </summary>
-                    <div className="border-t border-[var(--border)]">{renderProjectTable(g.cases, "active")}</div>
-                  </details>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="space-y-2">
-            <h3 className="text-sm font-semibold text-[var(--text)]">{tk("annotator_section_done")}</h3>
-            {completed.length === 0 ? (
-              <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
-            ) : (
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
-                      {tk("annotator_projects_active")}
-                    </h4>
-                    <label className="inline-flex items-center gap-2 text-xs text-[var(--muted)]">
-                      <input
-                        type="checkbox"
-                        checked={showInactiveProjects}
-                        onChange={(e) => setShowInactiveProjects(e.target.checked)}
-                        className="h-4 w-4 rounded border-[var(--border)] bg-[var(--bg)]"
-                      />
-                      <span>{tk("annotator_show_inactive_projects")}</span>
-                    </label>
+            <details className="rounded-xl border border-amber-500/40 bg-amber-500/10 shadow-sm shadow-amber-500/10">
+              <summary className="cursor-pointer list-none select-none px-3 py-3 hover:bg-amber-200/20">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-semibold text-amber-800">
+                      {tk("annotator_section_pool")}
+                    </h3>
+                    <p className="mt-0.5 text-xs font-medium text-amber-800/90">
+                      Available work waiting for assignment
+                    </p>
                   </div>
-                  {doneActiveGroups.length === 0 ? (
-                    <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {doneActiveGroups.map((g) => (
-                        <details
-                          key={g.project}
-                          className="rounded-lg border border-[var(--border)] bg-[var(--surface)]"
-                        >
-                          <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
-                            <span className="inline-flex flex-wrap items-center gap-2">
-                              <span>{g.project}</span>
-                              <CopyTextButton lang={lang} value={g.project === "—" ? "" : g.project} />
-                              <span>(</span><StatusCountBadges cases={g.cases} /><span>)</span>
-                            </span>
-                          </summary>
-                          <div className="border-t border-[var(--border)]">
-                            {renderProjectTable(g.cases, "done")}
-                          </div>
-                        </details>
-                      ))}
-                    </div>
-                  )}
+                  <span className="rounded-full bg-amber-600 px-2.5 py-1 text-xs font-semibold text-white">
+                    {openPoolCount} available
+                  </span>
                 </div>
+              </summary>
+              <div className="border-t border-amber-500/30 p-3">
+                {available.length === 0 ? (
+                  <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
+                ) : (
+                  renderHierarchy(
+                    poolGroups,
+                    "pool",
+                    "rounded-lg border border-amber-500/40 bg-amber-100/40 shadow-sm shadow-amber-500/5",
+                  )
+                )}
+              </div>
+            </details>
+          </section>
 
-                {showInactiveProjects && doneInactiveGroups.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
-                      {tk("annotator_projects_inactive")}
-                    </h4>
+          <section className="space-y-2">
+            <details className="rounded-xl border border-[var(--accent)]/35 bg-[var(--accent)]/8 shadow-sm shadow-[var(--accent)]/10">
+              <summary className="cursor-pointer list-none select-none px-3 py-3 hover:bg-[var(--accent)]/10">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-[var(--text)]">
+                    {tk("annotator_section_active")}
+                  </h3>
+                  <span className="rounded-full bg-[var(--accent)] px-2.5 py-1 text-xs font-semibold text-white">
+                    {undoneCount} undone
+                  </span>
+                </div>
+              </summary>
+              <div className="border-t border-[var(--accent)]/25 p-3">
+                {inProgress.length === 0 ? (
+                  <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
+                ) : (
+                  renderHierarchy(
+                    activeGroups,
+                    "active",
+                    "rounded-lg border border-[var(--border)] bg-[var(--surface)]",
+                  )
+                )}
+              </div>
+            </details>
+          </section>
+
+          <section className="space-y-2">
+            <details className="rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+              <summary className="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-[var(--text)] hover:bg-[var(--bg)]">
+                <span>{tk("annotator_section_done")}</span>
+                <span className="ml-2 text-xs text-[var(--muted)]">({completed.length})</span>
+              </summary>
+              <div className="border-t border-[var(--border)] p-3">
+                {completed.length === 0 ? (
+                  <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
+                ) : (
+                  <div className="space-y-4">
                     <div className="space-y-2">
-                      {doneInactiveGroups.map((g) => (
-                        <details
-                          key={g.project}
-                          className="rounded-lg border border-[var(--border)] bg-[var(--surface)] opacity-90"
-                        >
-                          <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
-                            <span className="inline-flex flex-wrap items-center gap-2">
-                              <span>{g.project}</span>
-                              <CopyTextButton lang={lang} value={g.project === "—" ? "" : g.project} />
-                              <span>(</span><StatusCountBadges cases={g.cases} /><span>)</span>
-                            </span>
-                          </summary>
-                          <div className="border-t border-[var(--border)]">
-                            {renderProjectTable(g.cases, "done")}
-                          </div>
-                        </details>
-                      ))}
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+                          {tk("annotator_projects_active")}
+                        </h4>
+                        <label className="inline-flex items-center gap-2 text-xs text-[var(--muted)]">
+                          <input
+                            type="checkbox"
+                            checked={showInactiveProjects}
+                            onChange={(e) => setShowInactiveProjects(e.target.checked)}
+                            className="h-4 w-4 rounded border-[var(--border)] bg-[var(--bg)]"
+                          />
+                          <span>{tk("annotator_show_inactive_projects")}</span>
+                        </label>
+                      </div>
+                      {doneActiveGroups.length === 0 ? (
+                        <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
+                      ) : (
+                        renderHierarchy(
+                          doneActiveGroups,
+                          "done",
+                          "rounded-lg border border-[var(--border)] bg-[var(--surface)]",
+                        )
+                      )}
                     </div>
+
+                    {showInactiveProjects && doneInactiveGroups.length > 0 && (
+                      <div className="space-y-2">
+                        <h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--muted)]">
+                          {tk("annotator_projects_inactive")}
+                        </h4>
+                        {renderHierarchy(
+                          doneInactiveGroups,
+                          "done",
+                          "rounded-lg border border-[var(--border)] bg-[var(--surface)] opacity-90",
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
+            </details>
           </section>
         </>
       )}
@@ -745,6 +918,7 @@ export function AnnotatorWorkboard({
               <AnnotatorCaseDetailPanel
                 lang={lang}
                 row={detailRow}
+                guides={guides}
                 canPostDiscussion={canPostInDetail(detailRow)}
                 mentionOptions={detailMentionOptions}
               />
@@ -769,6 +943,36 @@ export function AnnotatorWorkboard({
           >
             <h3 className="mb-2 font-medium">{tk("action_comment")}</h3>
             <p className="mb-2 text-xs text-[var(--muted)]">{noteCase.caseId}</p>
+            {noteTemplateOptions.length > 0 && (
+              <label className="mb-2 block">
+                <span className="text-sm text-[var(--muted)]">{tk("discussion_template_field")}</span>
+                <select
+                  value={noteTemplateSelectedIndex == null ? "" : String(noteTemplateSelectedIndex)}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    if (!next) {
+                      setNoteTemplateSelectedIndex(null);
+                      return;
+                    }
+                    const idx = Number(next);
+                    if (!Number.isInteger(idx)) {
+                      setNoteTemplateSelectedIndex(null);
+                      return;
+                    }
+                    setNoteTemplateSelectedIndex(idx);
+                    setNoteText("");
+                  }}
+                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm"
+                >
+                  <option value="">{tk("discussion_template_general_comment")}</option>
+                  {noteTemplateOptions.map((option) => (
+                    <option key={option.index} value={option.index}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <MentionTextarea
               lang={lang}
               value={noteText}

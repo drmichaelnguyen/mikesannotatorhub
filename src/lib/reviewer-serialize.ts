@@ -6,9 +6,15 @@ export type SerializedReviewerCase = {
   id: string;
   caseId: string;
   redbrickProject: string;
-  guide: { id: string; title: string; content: string } | null;
+  guide: { id: string; title: string } | null;
   topic:
-    | { id: string; name: string; description: string | null; projects: { id: string; redbrickProject: string }[] }
+    | {
+        id: string;
+        name: string;
+        description: string | null;
+        projects: { id: string; redbrickProject: string }[];
+        scopes: { id: string; scopeOfWork: string }[];
+      }
     | null;
   guideline: string;
   videoGuideUrls: string[];
@@ -37,13 +43,7 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
     id: c.id,
     caseId: c.caseId,
     redbrickProject: c.redbrickProject,
-    guide: c.guide
-      ? {
-          id: c.guide.id,
-          title: c.guide.title,
-          content: c.guide.content,
-        }
-      : null,
+    guide: c.guide ? { id: c.guide.id, title: c.guide.title } : null,
     topic: c.topic
       ? {
           id: c.topic.id,
@@ -52,6 +52,10 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
           projects: c.topic.projects.map((p) => ({
             id: p.id,
             redbrickProject: p.redbrickProject,
+          })),
+          scopes: c.topic.scopes.map((s) => ({
+            id: s.id,
+            scopeOfWork: s.scopeOfWork,
           })),
         }
       : null,

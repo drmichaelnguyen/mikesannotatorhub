@@ -5,11 +5,13 @@ import {
   listAnnotatorsForAssignment,
   listCasesForReviewer,
   listGuidesAndTopics,
+  listScopeOfWorkTemplatesAction,
 } from "@/app/actions/cases";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { CreateAnnotatorForm } from "@/components/CreateAnnotatorForm";
 import { CreateCaseForm } from "@/components/CreateCaseForm";
 import { GuideTopicManager } from "@/components/reviewer/GuideTopicManager";
+import { ScopeOfWorkTemplateManager } from "@/components/reviewer/ScopeOfWorkTemplateManager";
 import { NavBar } from "@/components/NavBar";
 import { ReviewerWorkboard } from "@/components/reviewer/ReviewerWorkboard";
 import { ReviewerDashboardStatsPanel } from "@/components/reviewer/ReviewerDashboardStatsPanel";
@@ -34,13 +36,15 @@ export default async function ReviewerPage() {
   let capacityRows: Awaited<ReturnType<typeof getAnnotatorCapacityRows>>;
   let guidesAndTopics: Awaited<ReturnType<typeof listGuidesAndTopics>>;
   let notifGroups;
+  let templates;
   try {
-    [cases, annotators, capacityRows, guidesAndTopics, notifGroups] = await Promise.all([
+    [cases, annotators, capacityRows, guidesAndTopics, notifGroups, templates] = await Promise.all([
       listCasesForReviewer() as Promise<ReviewerCaseRow[]>,
       listAnnotatorsForAssignment(),
       getAnnotatorCapacityRows(),
       listGuidesAndTopics(),
       getNotifications(),
+      listScopeOfWorkTemplatesAction(),
     ]);
   } catch {
     redirect("/login");
@@ -51,6 +55,13 @@ export default async function ReviewerPage() {
     new Set(
       cases
         .map((c) => c.scopeOfWork.trim())
+        .filter(Boolean),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
+  const rbProjectOptions = Array.from(
+    new Set(
+      cases
+        .map((c) => c.redbrickProject.trim())
         .filter(Boolean),
     ),
   ).sort((a, b) => a.localeCompare(b));
@@ -73,6 +84,10 @@ export default async function ReviewerPage() {
         lang={lang}
         role="REVIEWER"
         name={user.name}
+        viewSwitch={{
+          reviewerHref: "/reviewer",
+          annotatorHref: "/annotator",
+        }}
         notificationSlot={<NotificationBell lang={lang} initialGroups={notifGroups} />}
       />
       <main className="mx-auto max-w-6xl space-y-8 px-4 py-8">
@@ -93,7 +108,13 @@ export default async function ReviewerPage() {
         />
         <section>
           <CollapsibleSection title={tk("reviewer_guide_section")}>
-            <GuideTopicManager lang={lang} guides={guidesAndTopics.guides} topics={guidesAndTopics.topics} />
+            <GuideTopicManager
+              lang={lang}
+              guides={guidesAndTopics.guides}
+              topics={guidesAndTopics.topics}
+              scopeOptions={scopeOptions}
+              rbProjectOptions={rbProjectOptions}
+            />
           </CollapsibleSection>
         </section>
         <section>
@@ -113,6 +134,11 @@ export default async function ReviewerPage() {
           </CollapsibleSection>
         </section>
         <section>
+          <CollapsibleSection title={tk("reviewer_scope_template_section")}>
+            <ScopeOfWorkTemplateManager lang={lang} templates={templates} scopeOptions={scopeOptions} />
+          </CollapsibleSection>
+        </section>
+        <section>
           <ReviewerWorkboard
             lang={lang}
             cases={serialized}
@@ -120,6 +146,10 @@ export default async function ReviewerPage() {
             capacityRows={capacityRows}
             guides={guidesAndTopics.guides}
             topics={guidesAndTopics.topics}
+            scopeTemplates={templates.map((item) => ({
+              scopeOfWork: item.scopeOfWork,
+              template: item.template,
+            }))}
           />
         </section>
       </main>

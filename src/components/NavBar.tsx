@@ -10,11 +10,13 @@ export function NavBar({
   role,
   name,
   notificationSlot,
+  viewSwitch,
 }: {
   lang: Lang;
   role: "REVIEWER" | "ANNOTATOR";
   name: string;
   notificationSlot?: React.ReactNode;
+  viewSwitch?: { reviewerHref?: string; annotatorHref?: string };
 }) {
   const home = role === "REVIEWER" ? "/reviewer" : "/annotator";
   return (
@@ -31,6 +33,30 @@ export function NavBar({
           </nav>
         </div>
         <div className="flex items-center gap-4 text-sm">
+          {viewSwitch?.reviewerHref && viewSwitch?.annotatorHref && (
+            <div className="inline-flex items-center overflow-hidden rounded-md border border-[var(--border)]">
+              <Link
+                href={viewSwitch.reviewerHref}
+                className={`px-2 py-1 ${
+                  role === "REVIEWER"
+                    ? "bg-[var(--accent)] text-white"
+                    : "text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--text)]"
+                }`}
+              >
+                {t(lang, "role_reviewer")}
+              </Link>
+              <Link
+                href={viewSwitch.annotatorHref}
+                className={`px-2 py-1 ${
+                  role === "ANNOTATOR"
+                    ? "bg-[var(--accent)] text-white"
+                    : "text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--text)]"
+                }`}
+              >
+                {t(lang, "role_annotator")}
+              </Link>
+            </div>
+          )}
           {notificationSlot}
           <span className="text-[var(--muted)]">{name}</span>
           <LangSwitch current={lang} />

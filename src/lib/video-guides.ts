@@ -20,10 +20,10 @@ export function parseVideoGuideUrlsInput(raw: string): string[] {
   return out;
 }
 
-export function videoGuideUrlsFromDb(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
+function normalizeParsedArray(parsed: unknown): string[] {
+  if (!Array.isArray(parsed)) return [];
   const out: string[] = [];
-  for (const x of value) {
+  for (const x of parsed) {
     if (typeof x !== "string") continue;
     const s = x.trim();
     if (!s) continue;
@@ -31,6 +31,26 @@ export function videoGuideUrlsFromDb(value: unknown): string[] {
     if (out.length >= MAX_VIDEO_GUIDE_URLS) break;
   }
   return out;
+}
+
+/** Reads Prisma `String` column (JSON text) or legacy parsed JSON array. */
+export function videoGuideUrlsFromDb(value: unknown): string[] {
+  if (value == null) return [];
+  if (Array.isArray(value)) return normalizeParsedArray(value);
+  if (typeof value === "string") {
+    const s = value.trim();
+    if (!s) return [];
+    try {
+      return normalizeParsedArray(JSON.parse(s));
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+export function videoGuideUrlsToDbColumn(urls: string[]): string {
+  return JSON.stringify(urls);
 }
 
 /** Returns embed src for YouTube watch / short / youtu.be URLs, or null. */

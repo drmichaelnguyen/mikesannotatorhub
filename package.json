@@ -3,12 +3,13 @@
   "version": "1.0.1",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack -p 3300",
-    "prebuild": "rm -rf .next",
+    "dev": "node scripts/dev-with-debug.mjs",
+    "prebuild": "node scripts/prebuild-with-debug.mjs",
     "build": "next build",
     "start": "next start -p 3300",
     "lint": "next lint",
     "db:push": "prisma db push",
+    "db:fix-video-urls": "prisma db execute --schema prisma/schema.prisma --file prisma/fix-empty-video-guide-urls.sql",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate"
   },

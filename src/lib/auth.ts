@@ -24,3 +24,9 @@ export async function requireRole(role: UserRole) {
   if (u.role !== role) throw new Error("Forbidden");
   return u;
 }
+
+export async function requireAnyRole(roles: UserRole[]) {
+  const u = await requireUser();
+  if (!roles.includes(u.role)) throw new Error("Forbidden");
+  return u;
+}

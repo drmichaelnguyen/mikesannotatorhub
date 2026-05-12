@@ -1,12 +1,13 @@
-import type { AnnotationCase, Guide, Review, Topic, TopicProject, User } from "@prisma/client";
+import type { AnnotationCase, Guide, Review, Topic, TopicProject, TopicScope, User } from "@prisma/client";
 
 export type ReviewerCaseRow = AnnotationCase & {
-  guide: Pick<Guide, "id" | "title" | "content"> | null;
+  guide: Pick<Guide, "id" | "title"> | null;
   topic: (Pick<Topic, "id" | "name" | "description"> & {
     projects: Pick<TopicProject, "id" | "redbrickProject">[];
+    scopes: Pick<TopicScope, "id" | "scopeOfWork">[];
   }) | null;
-  annotator: User | null;
+  annotator: Pick<User, "id" | "name" | "email"> | null;
   auditedBy: Pick<User, "id" | "name" | "email"> | null;
-  reviews: Review[];
+  reviews: Pick<Review, "id" | "decision" | "comment" | "createdAt">[];
   _count: { caseNotes: number };
 };

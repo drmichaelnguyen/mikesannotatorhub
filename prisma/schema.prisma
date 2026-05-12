@@ -64,7 +64,8 @@ model AnnotationCase {
   topicId            String?
   topic              Topic?             @relation(fields: [topicId], references: [id], onDelete: SetNull)
   guideline          String
-  videoGuideUrls     Json               @default("[]")
+  /** JSON array of URL strings; use String (not Json) so SQLite never fails on legacy empty cells. */
+  videoGuideUrls     String             @default("[]")
   scopeOfWork        String
   minMinutesPerCase  Int @default(1)
   maxMinutesPerCase  Int
@@ -123,6 +124,7 @@ model Topic {
   updatedAt   DateTime        @updatedAt
 
   projects TopicProject[]
+  scopes   TopicScope[]
   cases    AnnotationCase[]
 }
 
@@ -134,6 +136,16 @@ model TopicProject {
 
   @@unique([topicId, redbrickProject])
   @@index([redbrickProject])
+}
+
+model TopicScope {
+  id          String @id @default(cuid())
+  topicId     String
+  topic       Topic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  scopeOfWork String
+
+  @@unique([topicId, scopeOfWork])
+  @@index([scopeOfWork])
 }
 
 model CaseNote {
@@ -165,4 +177,12 @@ model Review {
   createdAt       DateTime       @default(now())
 
   @@index([annotationCaseId])
+}
+
+model ScopeOfWorkTemplate {
+  id          String   @id @default(cuid())
+  scopeOfWork String   @unique
+  template    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

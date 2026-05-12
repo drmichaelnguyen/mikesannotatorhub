@@ -1,6 +1,8 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { unassignCaseAction } from "@/app/actions/cases";
 import { CaseDiscussion } from "@/components/CaseDiscussion";
 import { CaseVideoGuidesSection } from "@/components/CaseVideoGuides";
 import { CopyTextButton } from "@/components/CopyTextButton";
@@ -29,6 +31,45 @@ function htmlToPlainText(html: string) {
   return (doc.body.textContent ?? "").replace(/\s+\n/g, "\n").trim();
 }
 
+function ReviewerUnassignCase({
+  lang,
+  caseDbId,
+}: {
+  lang: Lang;
+  caseDbId: string;
+}) {
+  const tk = (k: DictKey) => t(lang, k);
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [err, setErr] = useState<string | null>(null);
+
+  return (
+    <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--bg)] p-3">
+      <p className="mb-2 text-sm font-medium">{tk("reviewer_unassign_heading")}</p>
+      <p className="mb-2 text-xs text-[var(--muted)]">{tk("reviewer_unassign_help")}</p>
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() =>
+          start(async () => {
+            setErr(null);
+            const res = await unassignCaseAction(caseDbId);
+            if (!res.ok) {
+              setErr(tk("required"));
+              return;
+            }
+            router.refresh();
+          })
+        }
+        className="rounded-md border border-[var(--danger)] bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)] hover:bg-[var(--danger)]/20 disabled:opacity-50"
+      >
+        {tk("reviewer_unassign_submit")}
+      </button>
+      {err && <p className="mt-2 text-sm text-[var(--danger)]">{err}</p>}
+    </div>
+  );
+}
+
 function ReviewerCaseDetailPanelImpl({
   lang,
   c,
@@ -36,6 +77,8 @@ function ReviewerCaseDetailPanelImpl({
   guides = [],
   scopeOptions = [],
   mentionOptions = [],
+  /** Scope-of-work checklist text; used to label template-row notes in discussion export only. */
+  scopeOfWorkTemplate = null,
 }: {
   lang: Lang;
   c: SerializedReviewerCase;
@@ -43,6 +86,7 @@ function ReviewerCaseDetailPanelImpl({
   guides?: GuideOption[];
   scopeOptions?: string[];
   mentionOptions?: MentionOption[];
+  scopeOfWorkTemplate?: string | null;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const showAuditedInfo =
@@ -54,9 +98,14 @@ function ReviewerCaseDetailPanelImpl({
     c.maxMinutesPerCase,
     c.annotatorBonus,
   );
+  /** Guide body is loaded once via `guides`; case payloads omit HTML to keep lists fast. */
+  const guideHtml = useMemo(() => {
+    if (!c.guide) return "";
+    return guides.find((g) => g.id === c.guide!.id)?.content ?? "";
+  }, [c.guide, guides]);
   const guideGuideline = useMemo(
-    () => (c.guide ? htmlToPlainText(c.guide.content) : ""),
-    [c.guide],
+    () => (guideHtml ? htmlToPlainText(guideHtml) : ""),
+    [guideHtml],
   );
   const showGuideline = !c.guide || c.guideline.trim() !== guideGuideline;
   return (
@@ -82,14 +131,17 @@ function ReviewerCaseDetailPanelImpl({
       <dl className="grid gap-2 text-sm md:grid-cols-2">
         {c.guide && (
           <div className="md:col-span-2">
-            <dt className="text-[var(--muted)]">{tk("case_guide")}</dt>
-            <dd>
-              <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3">
-                <div className="font-medium">{c.guide.title}</div>
-                <div className="mt-2">
-                  <RichTextContent html={c.guide.content} />
+            <dt className="sr-only">{tk("case_guide")}</dt>
+            <dd className="m-0">
+              <details className="rounded-md border border-[var(--border)] bg-[var(--bg)]">
+                <summary className="cursor-pointer px-3 py-2 text-sm hover:bg-[var(--surface)]">
+                  <span className="text-[var(--muted)]">{tk("case_guide")}: </span>
+                  <span className="font-medium text-[var(--text)]">{c.guide.title}</span>
+                </summary>
+                <div className="border-t border-[var(--border)] px-3 py-3">
+                  <RichTextContent html={guideHtml} />
                 </div>
-              </div>
+              </details>
             </dd>
           </div>
         )}
@@ -115,7 +167,16 @@ function ReviewerCaseDetailPanelImpl({
             <dd>
               <div className="font-medium">{c.topic.name}</div>
               <div className="text-xs text-[var(--muted)]">
-                {c.topic.projects.map((p) => p.redbrickProject).join(", ") || "—"}
+                {[
+                  c.topic.projects.length
+                    ? `RB: ${c.topic.projects.map((p) => p.redbrickProject).join(", ")}`
+                    : "",
+                  c.topic.scopes.length
+                    ? `Scope: ${c.topic.scopes.map((s) => s.scopeOfWork).join(", ")}`
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" | ") || "—"}
               </div>
             </dd>
           </div>
@@ -205,6 +266,7 @@ function ReviewerCaseDetailPanelImpl({
           caseLabel={c.caseId}
           canPost
           mentionOptions={mentionOptions}
+          composerTemplate={!c.isReference ? scopeOfWorkTemplate : null}
         />
       </div>
       {c.reviews[0]?.comment && c.status !== CaseStatus.SUBMITTED && (
@@ -214,6 +276,9 @@ function ReviewerCaseDetailPanelImpl({
       )}
       {c.status === CaseStatus.AVAILABLE && (
         <ReviewerAssignCase lang={lang} caseDbId={c.id} annotators={annotators} />
+      )}
+      {c.annotator && c.status !== CaseStatus.AUDITED && c.status !== CaseStatus.ACCEPTED && (
+        <ReviewerUnassignCase lang={lang} caseDbId={c.id} />
       )}
       {c.status === CaseStatus.SUBMITTED && (
         <div className="border-t border-[var(--border)] pt-4">

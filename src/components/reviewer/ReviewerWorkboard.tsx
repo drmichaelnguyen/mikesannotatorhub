@@ -2,18 +2,22 @@
 
 import { useRouter } from "next/navigation";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition, type ReactElement } from "react";
 import { batchUpdateCasesAction, reviewCaseAction, reviewerAssignCaseAction } from "@/app/actions/cases";
 import { MentionTextarea } from "@/components/CaseDiscussion";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
+import {
+  AnnotatorCaseDetailPanel,
+  type AnnotatorCaseRow,
+} from "@/components/annotator/AnnotatorCaseDetailPanel";
 import { createCaseNote } from "@/lib/case-note-api";
 import { StarRating } from "@/components/StarRating";
 import { ReviewerCaseDetailPanel } from "@/components/reviewer/ReviewerCaseDetailPanel";
 import { getClipboardImageFile, getClipboardImageFiles, readFileAsDataUrl, readFilesAsDataUrls } from "@/lib/client-image-data";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate, formatMinutes } from "@/lib/format";
-import { buildMentionOptionsForProject, type GuideOption, type TopicOption } from "@/lib/guide-topic";
+import { buildMentionOptionsForCase, type GuideOption, type TopicOption } from "@/lib/guide-topic";
 import { parseVideoGuideUrlsInput } from "@/lib/video-guides";
 import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
 import type { AnnotatorCapacityRow } from "@/app/actions/cases";
@@ -35,9 +39,13 @@ function formatRowCompensation(lang: Lang, c: SerializedReviewerCase): string {
   return formatCompensationAmount(lang, v);
 }
 
-type ProjectGroup = {
-  project: string;
-  groups: { key: string; label: string; cases: SerializedReviewerCase[] }[];
+type GroupDimension = "project" | "scope" | "rbProject" | "annotator";
+
+type GroupNode = {
+  key: string;
+  label: string;
+  cases: SerializedReviewerCase[];
+  children: GroupNode[];
 };
 
 type AnnotatorProjectGroup = {
@@ -102,41 +110,49 @@ type AnnotatorPerformanceSummary = {
   projects: AnnotatorPerformanceProject[];
 };
 
-function buildBoard(cases: SerializedReviewerCase[], lang: Lang): ProjectGroup[] {
-  const unassignedLabel = t(lang, "group_unassigned");
-  const pm = new Map<string, Map<string, SerializedReviewerCase[]>>();
-  for (const c of cases) {
-    const proj = (c.redbrickProject || "").trim() || "—";
-    if (!pm.has(proj)) pm.set(proj, new Map());
-    const am = pm.get(proj)!;
-    const key = c.isReference ? "__reference__" : c.annotator?.id ?? "__unassigned__";
-    if (!am.has(key)) am.set(key, []);
-    am.get(key)!.push(c);
+function getProjectName(c: Pick<SerializedReviewerCase, "caseId">): string {
+  void c;
+  return "BC2";
+}
+
+function getGroupInfo(c: SerializedReviewerCase, dimension: GroupDimension): { key: string; label: string } {
+  if (dimension === "project") {
+    const label = getProjectName(c);
+    return { key: `project:${label}`, label };
   }
-  return [...pm.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([project, amap]) => ({
-      project,
-      groups: [...amap.entries()]
-        .map(([key, list]) => {
-          const sorted = [...list].sort((a, b) => a.caseId.localeCompare(b.caseId));
-          const label =
-            key === "__unassigned__"
-              ? unassignedLabel
-              : key === "__reference__"
-                ? t(lang, "case_reference")
-              : sorted[0]?.annotator
-                ? `${sorted[0].annotator.name} (${sorted[0].annotator.email})`
-                : unassignedLabel;
-          return { key, label, cases: sorted };
-        })
-        .sort((a, b) => {
-          if (a.key === "__unassigned__") return 1;
-          if (b.key === "__unassigned__") return -1;
-          if (a.key === "__reference__") return -1;
-          if (b.key === "__reference__") return 1;
-          return a.label.localeCompare(b.label);
-        }),
+  if (dimension === "scope") {
+    const label = (c.scopeOfWork || "").trim() || "—";
+    return { key: `scope:${label}`, label };
+  }
+  if (dimension === "rbProject") {
+    const label = (c.redbrickProject || "").trim() || "—";
+    return { key: `rbProject:${label}`, label };
+  }
+  const annotatorId = c.annotator?.id ?? "unassigned";
+  const annotatorName = c.annotator?.name?.trim() || "Unassigned";
+  return { key: `annotator:${annotatorId}`, label: annotatorName };
+}
+
+function buildGroupedTree(
+  cases: SerializedReviewerCase[],
+  order: GroupDimension[],
+  depth = 0,
+): GroupNode[] {
+  if (depth >= order.length) return [];
+  const dimension = order[depth];
+  const grouped = new Map<string, { label: string; cases: SerializedReviewerCase[] }>();
+  for (const c of cases) {
+    const info = getGroupInfo(c, dimension);
+    if (!grouped.has(info.key)) grouped.set(info.key, { label: info.label, cases: [] });
+    grouped.get(info.key)!.cases.push(c);
+  }
+  return [...grouped.entries()]
+    .sort(([, a], [, b]) => a.label.localeCompare(b.label))
+    .map(([key, entry]) => ({
+      key,
+      label: entry.label,
+      cases: [...entry.cases].sort((a, b) => a.caseId.localeCompare(b.caseId)),
+      children: buildGroupedTree(entry.cases, order, depth + 1),
     }));
 }
 
@@ -421,6 +437,7 @@ export function ReviewerWorkboard({
   capacityRows,
   guides,
   topics,
+  scopeTemplates,
 }: {
   lang: Lang;
   cases: SerializedReviewerCase[];
@@ -428,6 +445,7 @@ export function ReviewerWorkboard({
   capacityRows: AnnotatorCapacityRow[];
   guides: GuideOption[];
   topics: TopicOption[];
+  scopeTemplates: { scopeOfWork: string; template: string }[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
@@ -436,6 +454,13 @@ export function ReviewerWorkboard({
   const [searchInput, setSearchInput] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
   const [showInactiveProjects, setShowInactiveProjects] = useState(false);
+  const [showGroupingControls, setShowGroupingControls] = useState(false);
+  const [groupOrder, setGroupOrder] = useState<GroupDimension[]>([
+    "project",
+    "scope",
+    "rbProject",
+    "annotator",
+  ]);
   const filteredCases = useMemo(() => {
     const needle = appliedSearch.trim().toLowerCase();
     if (!needle) return cases;
@@ -465,7 +490,7 @@ export function ReviewerWorkboard({
         : filteredCases.filter((row) => projectActivity.get((row.redbrickProject || "").trim() || "—")),
     [filteredCases, projectActivity, showInactiveProjects],
   );
-  const board = useMemo(() => buildBoard(visibleCases, lang), [visibleCases, lang]);
+  const groupedBoard = useMemo(() => buildGroupedTree(visibleCases, groupOrder), [visibleCases, groupOrder]);
   const scopeOptions = useMemo(
     () =>
       Array.from(
@@ -479,6 +504,7 @@ export function ReviewerWorkboard({
   );
 
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailMode, setDetailMode] = useState<"reviewer" | "annotator">("reviewer");
   const [noteCaseId, setNoteCaseId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
   const [noteImages, setNoteImages] = useState<string[]>([]);
@@ -509,8 +535,23 @@ export function ReviewerWorkboard({
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const templateByScope = useMemo(
+    () =>
+      new Map(
+        scopeTemplates.map((item) => [item.scopeOfWork.trim(), item.template] as const),
+      ),
+    [scopeTemplates],
+  );
 
   const detailCase = detailId ? cases.find((c) => c.id === detailId) ?? null : null;
+  const detailAnnotatorRow = useMemo<AnnotatorCaseRow | null>(() => {
+    if (!detailCase) return null;
+    return {
+      ...detailCase,
+      _count: { caseNotes: detailCase.caseNoteCount },
+      scopeOfWorkTemplate: templateByScope.get(detailCase.scopeOfWork.trim()) ?? null,
+    } as unknown as AnnotatorCaseRow;
+  }, [detailCase, templateByScope]);
   const noteCase = noteCaseId ? cases.find((c) => c.id === noteCaseId) ?? null : null;
   const assignCase = assignCaseId ? cases.find((c) => c.id === assignCaseId) ?? null : null;
   const annotatorFocus = useMemo(
@@ -527,12 +568,24 @@ export function ReviewerWorkboard({
   const selectedCaseId = searchParams.get("case");
   const annotatorsQuery = searchParams.get("annotators");
   const detailMentionOptions = useMemo(
-    () => (detailCase ? buildMentionOptionsForProject(guides, topics) : []),
+    () =>
+      detailCase
+        ? buildMentionOptionsForCase(guides, topics, {
+            redbrickProject: detailCase.redbrickProject,
+            scopeOfWork: detailCase.scopeOfWork,
+          })
+        : [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [detailCase?.id, guides, topics],
   );
   const noteMentionOptions = useMemo(
-    () => (noteCase ? buildMentionOptionsForProject(guides, topics) : []),
+    () =>
+      noteCase
+        ? buildMentionOptionsForCase(guides, topics, {
+            redbrickProject: noteCase.redbrickProject,
+            scopeOfWork: noteCase.scopeOfWork,
+          })
+        : [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [noteCase?.id, guides, topics],
   );
@@ -565,6 +618,13 @@ export function ReviewerWorkboard({
   }, [annotatorsQuery]);
 
   function openDetail(caseId: string) {
+    setDetailMode("reviewer");
+    setDetailId(caseId);
+    syncCaseQuery(caseId);
+  }
+
+  function openAnnotatorDetail(caseId: string) {
+    setDetailMode("annotator");
     setDetailId(caseId);
     syncCaseQuery(caseId);
   }
@@ -827,6 +887,193 @@ export function ReviewerWorkboard({
     });
   }
 
+  function groupDimensionLabel(dimension: GroupDimension): string {
+    if (dimension === "project") return "Project";
+    if (dimension === "scope") return tk("case_scope");
+    if (dimension === "rbProject") return tk("col_redbrick");
+    return tk("case_annotator");
+  }
+
+  function setGroupDimension(level: number, next: GroupDimension) {
+    setGroupOrder((prev) => {
+      const updated = [...prev];
+      const existingIdx = updated.indexOf(next);
+      if (existingIdx >= 0) {
+        const swap = updated[level];
+        updated[level] = next;
+        updated[existingIdx] = swap;
+        return updated;
+      }
+      updated[level] = next;
+      return updated;
+    });
+  }
+
+  function renderCaseTable(rows: SerializedReviewerCase[]) {
+    return (
+      <div className="overflow-x-auto px-1 pb-1">
+        <table className="w-full min-w-[1120px] border-collapse text-left text-xs">
+          <thead>
+            <tr className="border-b border-[var(--border)] text-[var(--text)]">
+              <th className="py-1.5 pr-2 font-medium">{tk("reviewer_batch_select")}</th>
+              <th className="py-1.5 pr-2 font-medium">{tk("col_case_id")}</th>
+              <th className="py-1.5 pr-2 font-medium">{tk("case_scope")}</th>
+              <th className="py-1.5 pr-2 font-medium">{tk("case_annotator")}</th>
+              <th className="py-1.5 pr-2 font-medium">{tk("case_status")}</th>
+              <th className="py-1.5 pr-2 font-medium">{tk("col_submittedAt")}</th>
+              <th className="py-1.5 pr-2 font-medium">{tk("case_annotationMinutes")}</th>
+              <th className="py-1.5 pr-2 font-medium" title={tk("col_compensation_hint")}>
+                {tk("col_compensation")}
+              </th>
+              <th className="py-1.5 font-medium">{tk("col_actions")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c) => (
+              <tr
+                key={c.id}
+                tabIndex={0}
+                className={`cursor-pointer border-b ${
+                  c.status === CaseStatus.SUBMITTED
+                    ? "border-blue-400/30 bg-blue-400/8 hover:bg-[var(--bg)]/80"
+                    : "border-[var(--border)]/50 hover:bg-[var(--bg)]/80"
+                }`}
+                onClick={() => openDetail(c.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    openDetail(c.id);
+                  }
+                }}
+              >
+                <td className="py-1.5 pr-2" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={selectedCaseIds.includes(c.id)}
+                    onChange={(e) => toggleCaseSelection(c.id, e.target.checked)}
+                    aria-label={tk("reviewer_batch_select")}
+                  />
+                </td>
+                <td className="py-1.5 pr-2 font-mono font-medium text-[var(--text)]">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {c.isReference && (
+                      <span
+                        title={tk("case_reference")}
+                        className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-yellow-500 bg-yellow-300 px-1 text-[11px] font-bold leading-none text-yellow-950 shadow-sm"
+                      >
+                        ★
+                      </span>
+                    )}
+                    <span>{c.caseId}</span>
+                    <CopyTextButton lang={lang} value={c.caseId} />
+                  </div>
+                </td>
+                <td className="py-1.5 pr-2 text-[var(--muted)]">
+                  <span className="line-clamp-2" title={c.scopeOfWork}>
+                    {c.scopeOfWork}
+                  </span>
+                </td>
+                <td className="py-1.5 pr-2 text-[var(--muted)]">{c.annotator?.name ?? "—"}</td>
+                <td className="py-1.5 pr-2 font-medium text-[var(--text)]">
+                  {tk(`status_${c.status}` as DictKey)}
+                </td>
+                <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">{formatDate(lang, c.completedAt)}</td>
+                <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">{c.annotationMinutes ?? "—"}</td>
+                <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">{formatRowCompensation(lang, c)}</td>
+                <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex flex-wrap gap-1">
+                    {c.status === CaseStatus.AVAILABLE && !c.isReference && (
+                      <button
+                        type="button"
+                        className="rounded border border-[var(--accent)]/50 bg-[var(--accent)]/10 px-1.5 py-0.5 text-[var(--accent)] hover:bg-[var(--accent)]/20"
+                        onClick={() => {
+                          setErr(null);
+                          setAssignAnnotatorId("");
+                          setAssignCaseId(c.id);
+                        }}
+                      >
+                        {tk("action_assign")}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="rounded border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-[var(--text)] hover:border-[var(--accent)]"
+                      onClick={() => {
+                        setErr(null);
+                        setNoteCaseId(c.id);
+                        resetNoteComposer();
+                      }}
+                    >
+                      <CommentActionLabel label={tk("action_comment")} count={c.caseNoteCount} />
+                    </button>
+                    {c.status === CaseStatus.SUBMITTED && (
+                      <>
+                        <button
+                          type="button"
+                          className="rounded border border-[var(--success)]/50 bg-[var(--success)]/15 px-1.5 py-0.5 text-[var(--success)] hover:bg-[var(--success)]/25"
+                          onClick={() => {
+                            setErr(null);
+                            setAudit({ caseId: c.id, decision: "ACCEPT" });
+                            resetAuditComposer();
+                          }}
+                        >
+                          {tk("action_approve")}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-[var(--danger)]/50 bg-[var(--danger)]/15 px-1.5 py-0.5 text-[var(--danger)] hover:bg-[var(--danger)]/25"
+                          onClick={() => {
+                            setErr(null);
+                            setAudit({ caseId: c.id, decision: "REJECT" });
+                            resetAuditComposer();
+                          }}
+                        >
+                          {tk("action_reject")}
+                        </button>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      className="rounded border border-[var(--border)] px-1.5 py-0.5 hover:border-[var(--accent)]"
+                      onClick={() => openDetail(c.id)}
+                    >
+                      {tk("action_details")}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-1.5 py-0.5 text-[var(--accent)] hover:bg-[var(--accent)]/20"
+                      onClick={() => openAnnotatorDetail(c.id)}
+                    >
+                      {tk("action_annotate")}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  function renderGroupedNodes(nodes: GroupNode[], depth = 0): ReactElement[] {
+    return nodes.map((node) => (
+      <details
+        key={`${node.key}-${depth}`}
+        className="rounded-md border border-[var(--border)]/60 bg-[var(--surface)]"
+      >
+        <summary className="cursor-pointer select-none px-2 py-1.5 text-xs font-medium text-[var(--text)] hover:text-[var(--accent)]">
+          <span>{node.label}</span> <span>(</span>
+          <ReviewerStatusCounts cases={node.cases} />
+          <span>)</span>
+        </summary>
+        <div className="space-y-2 border-t border-[var(--border)]/60 px-1 pb-1 pt-2">
+          {node.children.length > 0 ? renderGroupedNodes(node.children, depth + 1) : renderCaseTable(node.cases)}
+        </div>
+      </details>
+    ));
+  }
+
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-medium">{tk("reviewer_board_title")}</h2>
@@ -886,200 +1133,40 @@ export function ReviewerWorkboard({
         >
           {tk("clear_search")}
         </button>
+        <button
+          type="button"
+          onClick={() => setShowGroupingControls((prev) => !prev)}
+          className="rounded-md border border-[var(--border)] px-3 py-1.5 hover:border-[var(--accent)]"
+        >
+          Change grouping order
+        </button>
       </div>
+      {showGroupingControls && (
+        <div className="grid gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 sm:grid-cols-2 lg:grid-cols-4">
+          {groupOrder.map((dim, index) => (
+            <label key={`group-level-${index}`} className="text-xs">
+              <span className="text-[var(--muted)]">Level {index + 1}</span>
+              <select
+                value={dim}
+                onChange={(e) => setGroupDimension(index, e.target.value as GroupDimension)}
+                className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm"
+              >
+                {(["project", "scope", "rbProject", "annotator"] as GroupDimension[]).map((option) => (
+                  <option key={option} value={option}>
+                    {groupDimensionLabel(option)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+      )}
 
       {visibleCases.length === 0 ? (
         <p className="text-[var(--muted)]">{tk("no_cases")}</p>
       ) : (
         <div className="space-y-2">
-          {board.map((p) => (
-            <details
-              key={p.project}
-              className="rounded-lg border border-[var(--border)] bg-[var(--surface)]"
-            >
-              <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium hover:bg-[var(--bg)]">
-                {p.project}{" "}
-                <span>(</span>
-                <ReviewerStatusCounts cases={p.groups.flatMap((g) => g.cases)} />
-                <span>)</span>
-              </summary>
-              <div className="border-t border-[var(--border)] px-2 pb-2 pt-1">
-                {p.groups.map((g) => (
-                <details key={g.key} className="mb-2 rounded-md border border-[var(--border)]/60">
-              <summary className="cursor-pointer select-none px-2 py-1.5 text-xs font-medium text-[var(--text)] hover:text-[var(--accent)]">
-                      {g.key === "__unassigned__" || g.key === "__reference__" ? (
-                        <span>{g.label}</span>
-                      ) : (
-                        <button
-                          type="button"
-                          className="rounded px-1 py-0.5 text-left font-medium text-[var(--text)] hover:text-[var(--accent)]"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            openAnnotatorFocus(g.key);
-                          }}
-                        >
-                          {g.label}
-                        </button>
-                      )}{" "}
-                      <span>(</span>
-                      <ReviewerStatusCounts cases={g.cases} />
-                      <span>)</span>
-                    </summary>
-                    <div className="overflow-x-auto px-1 pb-1">
-                      <table className="w-full min-w-[1120px] border-collapse text-left text-xs">
-                        <thead>
-                          <tr className="border-b border-[var(--border)] text-[var(--text)]">
-                            <th className="py-1.5 pr-2 font-medium">{tk("reviewer_batch_select")}</th>
-                            <th className="py-1.5 pr-2 font-medium">{tk("col_case_id")}</th>
-                            <th className="py-1.5 pr-2 font-medium">{tk("case_scope")}</th>
-                            <th className="py-1.5 pr-2 font-medium">{tk("case_annotator_id")}</th>
-                            <th className="py-1.5 pr-2 font-medium">{tk("case_status")}</th>
-                            <th className="py-1.5 pr-2 font-medium">{tk("col_submittedAt")}</th>
-                            <th className="py-1.5 pr-2 font-medium">{tk("case_annotationMinutes")}</th>
-                            <th
-                              className="py-1.5 pr-2 font-medium"
-                              title={tk("col_compensation_hint")}
-                            >
-                              {tk("col_compensation")}
-                            </th>
-                            <th className="py-1.5 font-medium">{tk("col_actions")}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {g.cases.map((c) => (
-                            <tr
-                              key={c.id}
-                              tabIndex={0}
-                              className={`cursor-pointer border-b ${
-                                c.status === CaseStatus.SUBMITTED
-                                    ? "border-blue-400/30 bg-blue-400/8 hover:bg-[var(--bg)]/80"
-                                    : "border-[var(--border)]/50 hover:bg-[var(--bg)]/80"
-                              }`}
-                              onClick={() => openDetail(c.id)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter" || e.key === " ") {
-                                  e.preventDefault();
-                                  openDetail(c.id);
-                                }
-                              }}
-                            >
-                              <td className="py-1.5 pr-2" onClick={(e) => e.stopPropagation()}>
-                                <input
-                                  type="checkbox"
-                                  checked={selectedCaseIds.includes(c.id)}
-                                  onChange={(e) => toggleCaseSelection(c.id, e.target.checked)}
-                                  aria-label={tk("reviewer_batch_select")}
-                                />
-                              </td>
-                              <td className="py-1.5 pr-2 font-mono font-medium text-[var(--text)]">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  {c.isReference && (
-                                    <span
-                                      title={tk("case_reference")}
-                                      className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-yellow-500 bg-yellow-300 px-1 text-[11px] font-bold leading-none text-yellow-950 shadow-sm"
-                                    >
-                                      ★
-                                    </span>
-                                  )}
-                                  <span>{c.caseId}</span>
-                                  <CopyTextButton lang={lang} value={c.caseId} />
-                                </div>
-                              </td>
-                              <td className="py-1.5 pr-2 text-[var(--muted)]">
-                                <span className="line-clamp-2" title={c.scopeOfWork}>
-                                  {c.scopeOfWork}
-                                </span>
-                              </td>
-                              <td className="py-1.5 pr-2 font-mono text-[var(--muted)]">
-                                {c.annotator?.id ?? "—"}
-                              </td>
-                              <td className="py-1.5 pr-2 font-medium text-[var(--text)]">
-                                {tk(`status_${c.status}` as DictKey)}
-                              </td>
-                              <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
-                                {formatDate(lang, c.completedAt)}
-                              </td>
-                              <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
-                                {c.annotationMinutes ?? "—"}
-                              </td>
-                              <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
-                                {formatRowCompensation(lang, c)}
-                              </td>
-                              <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
-                                <div className="flex flex-wrap gap-1">
-                                  {c.status === CaseStatus.AVAILABLE && !c.isReference && (
-                                    <button
-                                      type="button"
-                                      className="rounded border border-[var(--accent)]/50 bg-[var(--accent)]/10 px-1.5 py-0.5 text-[var(--accent)] hover:bg-[var(--accent)]/20"
-                                      onClick={() => {
-                                        setErr(null);
-                                        setAssignAnnotatorId("");
-                                        setAssignCaseId(c.id);
-                                      }}
-                                    >
-                                      {tk("action_assign")}
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    className="rounded border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-[var(--text)] hover:border-[var(--accent)]"
-                                      onClick={() => {
-                                        setErr(null);
-                                        setNoteCaseId(c.id);
-                                        resetNoteComposer();
-                                      }}
-                                    >
-                                      <CommentActionLabel
-                                        label={tk("action_comment")}
-                                        count={c.caseNoteCount}
-                                      />
-                                    </button>
-                                  {c.status === CaseStatus.SUBMITTED && (
-                                    <>
-                                      <button
-                                        type="button"
-                                        className="rounded border border-[var(--success)]/50 bg-[var(--success)]/15 px-1.5 py-0.5 text-[var(--success)] hover:bg-[var(--success)]/25"
-                                        onClick={() => {
-                                          setErr(null);
-                                          setAudit({ caseId: c.id, decision: "ACCEPT" });
-                                          resetAuditComposer();
-                                        }}
-                                      >
-                                        {tk("action_approve")}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="rounded border border-[var(--danger)]/50 bg-[var(--danger)]/15 px-1.5 py-0.5 text-[var(--danger)] hover:bg-[var(--danger)]/25"
-                                        onClick={() => {
-                                          setErr(null);
-                                          setAudit({ caseId: c.id, decision: "REJECT" });
-                                          resetAuditComposer();
-                                        }}
-                                      >
-                                        {tk("action_reject")}
-                                      </button>
-                                    </>
-                                  )}
-                                  <button
-                                    type="button"
-                                    className="rounded border border-[var(--border)] px-1.5 py-0.5 hover:border-[var(--accent)]"
-                                    onClick={() => openDetail(c.id)}
-                                  >
-                                    {tk("action_details")}
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </details>
-                ))}
-              </div>
-            </details>
-          ))}
+          {renderGroupedNodes(groupedBoard)}
         </div>
       )}
 
@@ -1260,7 +1347,9 @@ export function ReviewerWorkboard({
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2">
-              <span className="text-sm font-medium">{tk("action_details")}</span>
+              <span className="text-sm font-medium">
+                {detailMode === "annotator" ? tk("action_annotate") : tk("action_details")}
+              </span>
               <button
                 type="button"
                 className="rounded px-2 py-1 text-sm text-[var(--muted)] hover:text-[var(--text)]"
@@ -1270,14 +1359,25 @@ export function ReviewerWorkboard({
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <ReviewerCaseDetailPanel
-                lang={lang}
-                c={detailCase}
-                annotators={annotators}
-                guides={guides}
-                scopeOptions={scopeOptions}
-                mentionOptions={detailMentionOptions}
-              />
+              {detailMode === "annotator" && detailAnnotatorRow ? (
+                <AnnotatorCaseDetailPanel
+                  lang={lang}
+                  row={detailAnnotatorRow}
+                  guides={guides}
+                  canPostDiscussion
+                  mentionOptions={detailMentionOptions}
+                />
+              ) : (
+                <ReviewerCaseDetailPanel
+                  lang={lang}
+                  c={detailCase}
+                  annotators={annotators}
+                  guides={guides}
+                  scopeOptions={scopeOptions}
+                  mentionOptions={detailMentionOptions}
+                  scopeOfWorkTemplate={templateByScope.get(detailCase.scopeOfWork.trim()) ?? null}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -1766,6 +1866,17 @@ export function ReviewerWorkboard({
                                                   onClick={() => openCaseFromPerformance(c.id)}
                                                 >
                                                   {tk("reviewer_perf_see_comments")}
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  className="rounded border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-1.5 py-0.5 text-[var(--accent)] hover:bg-[var(--accent)]/20"
+                                                  onClick={() => {
+                                                    setSelectedAnnotatorId(null);
+                                                    setSelectedProject(null);
+                                                    openAnnotatorDetail(c.id);
+                                                  }}
+                                                >
+                                                  {tk("action_annotate")}
                                                 </button>
                                                 {c.status === CaseStatus.AVAILABLE && (
                                                   <button

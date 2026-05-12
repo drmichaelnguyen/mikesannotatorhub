@@ -50,11 +50,14 @@ export function CreateCaseForm({
     () =>
       topics.filter(
         (topic) =>
-          !redbrickProject.trim() ||
-          topic.projects.length === 0 ||
-          topic.projects.some((p) => p.redbrickProject === redbrickProject.trim()),
+          (topic.projects.length === 0 ||
+            !redbrickProject.trim() ||
+            topic.projects.some((p) => p.redbrickProject === redbrickProject.trim())) &&
+          (topic.scopes.length === 0 ||
+            !scopeOfWork.trim() ||
+            topic.scopes.some((s) => s.scopeOfWork === scopeOfWork.trim())),
       ),
-    [topics, redbrickProject],
+    [topics, redbrickProject, scopeOfWork],
   );
 
   const [state, formAction, pending] = useActionState(
