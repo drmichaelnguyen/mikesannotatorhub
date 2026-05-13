@@ -2,10 +2,12 @@ import type { AnnotationCase, Guide, Review, Topic, TopicProject, TopicScope, Us
 
 export type ReviewerCaseRow = AnnotationCase & {
   guide: Pick<Guide, "id" | "title"> | null;
-  topic: (Pick<Topic, "id" | "name" | "description"> & {
-    projects: Pick<TopicProject, "id" | "redbrickProject">[];
-    scopes: Pick<TopicScope, "id" | "scopeOfWork">[];
-  }) | null;
+  caseTopics: {
+    topic: Pick<Topic, "id" | "name" | "description"> & {
+      projects: Pick<TopicProject, "id" | "redbrickProject">[];
+      scopes: Pick<TopicScope, "id" | "scopeOfWork">[];
+    };
+  }[];
   annotator: Pick<User, "id" | "name" | "email"> | null;
   auditedBy: Pick<User, "id" | "name" | "email"> | null;
   reviews: Pick<Review, "id" | "decision" | "comment" | "createdAt">[];

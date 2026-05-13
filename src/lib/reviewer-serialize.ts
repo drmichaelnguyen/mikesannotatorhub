@@ -2,20 +2,40 @@ import type { CaseStatus, CompensationType } from "@prisma/client";
 import type { ReviewerCaseRow } from "@/lib/reviewer-types";
 import { videoGuideUrlsFromDb } from "@/lib/video-guides";
 
+export type SerializedCaseTopic = {
+  id: string;
+  name: string;
+  description: string | null;
+  projects: { id: string; redbrickProject: string }[];
+  scopes: { id: string; scopeOfWork: string }[];
+};
+
+export function mapPrismaCaseTopics(
+  rows: {
+    topic: {
+      id: string;
+      name: string;
+      description: string | null;
+      projects: { id: string; redbrickProject: string }[];
+      scopes: { id: string; scopeOfWork: string }[];
+    };
+  }[],
+): SerializedCaseTopic[] {
+  return rows.map((r) => ({
+    id: r.topic.id,
+    name: r.topic.name,
+    description: r.topic.description,
+    projects: r.topic.projects.map((p) => ({ id: p.id, redbrickProject: p.redbrickProject })),
+    scopes: r.topic.scopes.map((s) => ({ id: s.id, scopeOfWork: s.scopeOfWork })),
+  }));
+}
+
 export type SerializedReviewerCase = {
   id: string;
   caseId: string;
   redbrickProject: string;
   guide: { id: string; title: string } | null;
-  topic:
-    | {
-        id: string;
-        name: string;
-        description: string | null;
-        projects: { id: string; redbrickProject: string }[];
-        scopes: { id: string; scopeOfWork: string }[];
-      }
-    | null;
+  topics: SerializedCaseTopic[];
   guideline: string;
   videoGuideUrls: string[];
   scopeOfWork: string;
@@ -44,21 +64,7 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
     caseId: c.caseId,
     redbrickProject: c.redbrickProject,
     guide: c.guide ? { id: c.guide.id, title: c.guide.title } : null,
-    topic: c.topic
-      ? {
-          id: c.topic.id,
-          name: c.topic.name,
-          description: c.topic.description,
-          projects: c.topic.projects.map((p) => ({
-            id: p.id,
-            redbrickProject: p.redbrickProject,
-          })),
-          scopes: c.topic.scopes.map((s) => ({
-            id: s.id,
-            scopeOfWork: s.scopeOfWork,
-          })),
-        }
-      : null,
+    topics: mapPrismaCaseTopics(c.caseTopics),
     guideline: c.guideline,
     videoGuideUrls: videoGuideUrlsFromDb(c.videoGuideUrls),
     scopeOfWork: c.scopeOfWork,

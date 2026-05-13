@@ -61,8 +61,6 @@ model AnnotationCase {
   redbrickProject    String
   guideId            String?
   guide              Guide?             @relation(fields: [guideId], references: [id], onDelete: SetNull)
-  topicId            String?
-  topic              Topic?             @relation(fields: [topicId], references: [id], onDelete: SetNull)
   guideline          String
   /** JSON array of URL strings; use String (not Json) so SQLite never fails on legacy empty cells. */
   videoGuideUrls     String             @default("[]")
@@ -83,14 +81,27 @@ model AnnotationCase {
   auditedById      String?
   auditedBy          User?              @relation("CaseAuditor", fields: [auditedById], references: [id])
   qualityRating      Int?
+  /** Latest `Review.id` the annotator has confirmed they read (comment + quality); must match newest review to take another case from the pool. */
+  annotatorAcknowledgedReviewId String?
   isReference        Boolean            @default(false)
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
-  reviews   Review[]
-  caseNotes CaseNote[]
+  reviews    Review[]
+  caseNotes  CaseNote[]
+  caseTopics AnnotationCaseTopic[]
 
   @@unique([caseId, scopeOfWork])
+}
+
+model AnnotationCaseTopic {
+  annotationCaseId String
+  topicId          String
+  annotationCase   AnnotationCase @relation(fields: [annotationCaseId], references: [id], onDelete: Cascade)
+  topic            Topic          @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@id([annotationCaseId, topicId])
+  @@index([topicId])
 }
 
 model Guide {
@@ -123,9 +134,9 @@ model Topic {
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
-  projects TopicProject[]
-  scopes   TopicScope[]
-  cases    AnnotationCase[]
+  projects   TopicProject[]
+  scopes     TopicScope[]
+  caseTopics AnnotationCaseTopic[]
 }
 
 model TopicProject {

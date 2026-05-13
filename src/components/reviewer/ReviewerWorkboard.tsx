@@ -2,7 +2,16 @@
 
 import { useRouter } from "next/navigation";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, useTransition, type ReactElement } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type ReactElement,
+} from "react";
 import { batchUpdateCasesAction, reviewCaseAction, reviewerAssignCaseAction } from "@/app/actions/cases";
 import { MentionTextarea } from "@/components/CaseDiscussion";
 import { CopyTextButton } from "@/components/CopyTextButton";
@@ -24,6 +33,35 @@ import type { AnnotatorCapacityRow } from "@/app/actions/cases";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import { CaseStatus, CompensationType } from "@prisma/client";
+import { useDebouncedSearchNeedle } from "@/lib/use-debounced-search-needle";
+
+const TREE_PATH_SEP = "\u001f";
+
+function makeTreePath(parts: string[]): string {
+  return parts.join(TREE_PATH_SEP);
+}
+
+function collectReviewerExpandPaths(
+  nodes: GroupNode[],
+  matchIds: Set<string>,
+  ancestors: string[] = [],
+): Set<string> {
+  const open = new Set<string>();
+  for (const node of nodes) {
+    const parts = [...ancestors, node.key];
+    const selfPath = makeTreePath(parts);
+    if (node.children.length > 0) {
+      const childOpen = collectReviewerExpandPaths(node.children, matchIds, parts);
+      for (const p of childOpen) open.add(p);
+      if (childOpen.size > 0) open.add(selfPath);
+    } else if (node.cases.some((c) => matchIds.has(c.id))) {
+      for (let i = 1; i <= parts.length; i++) {
+        open.add(makeTreePath(parts.slice(0, i)));
+      }
+    }
+  }
+  return open;
+}
 
 function formatRowCompensation(lang: Lang, c: SerializedReviewerCase): string {
   if (c.compensationType === CompensationType.PER_MINUTE && c.annotationMinutes == null) {
@@ -452,7 +490,7 @@ export function ReviewerWorkboard({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [searchInput, setSearchInput] = useState("");
-  const [appliedSearch, setAppliedSearch] = useState("");
+  const searchNeedle = useDebouncedSearchNeedle(searchInput, 300);
   const [showInactiveProjects, setShowInactiveProjects] = useState(false);
   const [showGroupingControls, setShowGroupingControls] = useState(false);
   const [groupOrder, setGroupOrder] = useState<GroupDimension[]>([
@@ -462,14 +500,16 @@ export function ReviewerWorkboard({
     "annotator",
   ]);
   const filteredCases = useMemo(() => {
-    const needle = appliedSearch.trim().toLowerCase();
+    const needle = searchNeedle.toLowerCase();
     if (!needle) return cases;
     return cases.filter(
       (c) =>
+        c.id.toLowerCase().includes(needle) ||
         c.caseId.toLowerCase().includes(needle) ||
+        (c.redbrickProject || "").trim().toLowerCase().includes(needle) ||
         c.scopeOfWork.toLowerCase().includes(needle),
     );
-  }, [appliedSearch, cases]);
+  }, [searchNeedle, cases]);
   const projectActivity = useMemo(() => {
     const map = new Map<string, boolean>();
     for (const row of cases) {
@@ -491,6 +531,29 @@ export function ReviewerWorkboard({
     [filteredCases, projectActivity, showInactiveProjects],
   );
   const groupedBoard = useMemo(() => buildGroupedTree(visibleCases, groupOrder), [visibleCases, groupOrder]);
+  const reviewerSearchHitIds = useMemo(() => {
+    if (!searchNeedle) return null;
+    return new Set(visibleCases.map((c) => c.id));
+  }, [searchNeedle, visibleCases]);
+  const reviewerTreeExpandPaths = useMemo(() => {
+    if (!searchNeedle || !reviewerSearchHitIds || reviewerSearchHitIds.size === 0) {
+      return new Set<string>();
+    }
+    return collectReviewerExpandPaths(groupedBoard, reviewerSearchHitIds);
+  }, [searchNeedle, groupedBoard, reviewerSearchHitIds]);
+  const groupedTreeRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const root = groupedTreeRef.current;
+    if (!root || reviewerTreeExpandPaths.size === 0) return;
+    for (const el of root.querySelectorAll("details[data-tree-path]")) {
+      const p = el.getAttribute("data-tree-path");
+      if (p && reviewerTreeExpandPaths.has(p)) (el as HTMLDetailsElement).open = true;
+    }
+    const hit = root.querySelector<HTMLElement>("[data-case-search-hit='1']");
+    hit?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [reviewerTreeExpandPaths, groupedBoard, searchNeedle]);
+
   const scopeOptions = useMemo(
     () =>
       Array.from(
@@ -520,7 +583,7 @@ export function ReviewerWorkboard({
   const [selectedCaseIds, setSelectedCaseIds] = useState<string[]>([]);
   const [batchEditOpen, setBatchEditOpen] = useState(false);
   const [batchGuideId, setBatchGuideId] = useState("");
-  const [batchTopicId, setBatchTopicId] = useState("");
+  const [batchTopicIds, setBatchTopicIds] = useState<string[]>([]);
   const [batchGuideline, setBatchGuideline] = useState("");
   const [batchVideoGuideUrls, setBatchVideoGuideUrls] = useState("");
   const [batchRedbrickProject, setBatchRedbrickProject] = useState("");
@@ -638,14 +701,8 @@ export function ReviewerWorkboard({
     router.refresh();
   }
 
-  function submitSearch(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setAppliedSearch(searchInput.trim());
-  }
-
   function clearSearch() {
     setSearchInput("");
-    setAppliedSearch("");
   }
 
   function toggleCaseSelection(caseId: string, checked: boolean) {
@@ -663,7 +720,7 @@ export function ReviewerWorkboard({
     if (selectedCaseIds.length === 0) return;
     setBatchRedbrickProject("");
     setBatchGuideId("");
-    setBatchTopicId("");
+    setBatchTopicIds([]);
     setBatchGuideline("");
     setBatchVideoGuideUrls("");
     setBatchScopeOfWork("");
@@ -696,7 +753,7 @@ export function ReviewerWorkboard({
         caseDbIds: selectedCaseIds,
         redbrickProject: batchRedbrickProject,
         guideId: batchGuideId,
-        topicId: batchTopicId,
+        topicIds: batchTopicIds,
         guideline: batchGuideline,
         videoGuideUrls: parseVideoGuideUrlsInput(batchVideoGuideUrls),
         scopeOfWork: batchScopeOfWork,
@@ -847,6 +904,7 @@ export function ReviewerWorkboard({
       if (!res.ok) {
         if (res.error === "invalid_annotator") setErr(tk("reviewer_assign_invalid"));
         else if (res.error === "required") setErr(tk("required"));
+        else if (res.error === "pending_review_ack") setErr(tk("annotator_review_ack_block_assign"));
         else setErr(tk("reviewer_assign_taken"));
         return;
       }
@@ -909,7 +967,7 @@ export function ReviewerWorkboard({
     });
   }
 
-  function renderCaseTable(rows: SerializedReviewerCase[]) {
+  function renderCaseTable(rows: SerializedReviewerCase[], searchHitIds: Set<string> | null) {
     return (
       <div className="overflow-x-auto px-1 pb-1">
         <table className="w-full min-w-[1120px] border-collapse text-left text-xs">
@@ -933,6 +991,7 @@ export function ReviewerWorkboard({
               <tr
                 key={c.id}
                 tabIndex={0}
+                data-case-search-hit={searchHitIds?.has(c.id) ? "1" : undefined}
                 className={`cursor-pointer border-b ${
                   c.status === CaseStatus.SUBMITTED
                     ? "border-blue-400/30 bg-blue-400/8 hover:bg-[var(--bg)]/80"
@@ -1056,29 +1115,36 @@ export function ReviewerWorkboard({
     );
   }
 
-  function renderGroupedNodes(nodes: GroupNode[], depth = 0): ReactElement[] {
-    return nodes.map((node) => (
-      <details
-        key={`${node.key}-${depth}`}
-        className="rounded-md border border-[var(--border)]/60 bg-[var(--surface)]"
-      >
-        <summary className="cursor-pointer select-none px-2 py-1.5 text-xs font-medium text-[var(--text)] hover:text-[var(--accent)]">
-          <span>{node.label}</span> <span>(</span>
-          <ReviewerStatusCounts cases={node.cases} />
-          <span>)</span>
-        </summary>
-        <div className="space-y-2 border-t border-[var(--border)]/60 px-1 pb-1 pt-2">
-          {node.children.length > 0 ? renderGroupedNodes(node.children, depth + 1) : renderCaseTable(node.cases)}
-        </div>
-      </details>
-    ));
+  function renderGroupedNodes(nodes: GroupNode[], ancestors: string[] = []): ReactElement[] {
+    return nodes.map((node) => {
+      const parts = [...ancestors, node.key];
+      const pathStr = makeTreePath(parts);
+      return (
+        <details
+          key={pathStr}
+          data-tree-path={pathStr}
+          className="rounded-md border border-[var(--border)]/60 bg-[var(--surface)]"
+        >
+          <summary className="cursor-pointer select-none px-2 py-1.5 text-xs font-medium text-[var(--text)] hover:text-[var(--accent)]">
+            <span>{node.label}</span> <span>(</span>
+            <ReviewerStatusCounts cases={node.cases} />
+            <span>)</span>
+          </summary>
+          <div className="space-y-2 border-t border-[var(--border)]/60 px-1 pb-1 pt-2">
+            {node.children.length > 0
+              ? renderGroupedNodes(node.children, parts)
+              : renderCaseTable(node.cases, reviewerSearchHitIds)}
+          </div>
+        </details>
+      );
+    });
   }
 
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-medium">{tk("reviewer_board_title")}</h2>
       <p className="text-sm text-[var(--muted)]">{tk("reviewer_board_hint")}</p>
-      <form onSubmit={submitSearch} className="flex flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 sm:flex-row sm:items-end">
+      <div className="flex flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 sm:flex-row sm:items-end">
         <label className="flex-1">
           <span className="text-sm text-[var(--muted)]">{tk("reviewer_search_case_id")}</span>
           <input
@@ -1090,12 +1156,6 @@ export function ReviewerWorkboard({
         </label>
         <div className="flex gap-2">
           <button
-            type="submit"
-            className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm text-white hover:bg-[var(--accent-hover)]"
-          >
-            {tk("search")}
-          </button>
-          <button
             type="button"
             onClick={clearSearch}
             className="rounded-md border border-[var(--border)] px-4 py-2 text-sm hover:border-[var(--accent)]"
@@ -1103,7 +1163,7 @@ export function ReviewerWorkboard({
             {tk("clear_search")}
           </button>
         </div>
-      </form>
+      </div>
       <label className="inline-flex items-center gap-2 text-sm text-[var(--muted)]">
         <input
           type="checkbox"
@@ -1165,7 +1225,7 @@ export function ReviewerWorkboard({
       {visibleCases.length === 0 ? (
         <p className="text-[var(--muted)]">{tk("no_cases")}</p>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2" ref={groupedTreeRef}>
           {renderGroupedNodes(groupedBoard)}
         </div>
       )}
@@ -1208,20 +1268,28 @@ export function ReviewerWorkboard({
                   ))}
                 </select>
               </label>
-              <label className="text-sm">
+              <label className="md:col-span-2 text-sm">
                 <span className="text-[var(--muted)]">{tk("case_topic")}</span>
-                <select
-                  value={batchTopicId}
-                  onChange={(e) => setBatchTopicId(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
-                >
-                  <option value="">—</option>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("case_topic_multi_hint")}</p>
+                <div className="mt-2 max-h-40 space-y-2 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--bg)] p-2">
                   {topics.map((topic) => (
-                    <option key={topic.id} value={topic.id}>
-                      {topic.name}
-                    </option>
+                    <label key={topic.id} className="flex cursor-pointer items-start gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={batchTopicIds.includes(topic.id)}
+                        onChange={() =>
+                          setBatchTopicIds((prev) =>
+                            prev.includes(topic.id)
+                              ? prev.filter((id) => id !== topic.id)
+                              : [...prev, topic.id],
+                          )
+                        }
+                      />
+                      <span>{topic.name}</span>
+                    </label>
                   ))}
-                </select>
+                </div>
               </label>
               <label className="md:col-span-2 text-sm">
                 <span className="text-[var(--muted)]">{tk("case_guideline")}</span>
@@ -1373,6 +1441,7 @@ export function ReviewerWorkboard({
                   c={detailCase}
                   annotators={annotators}
                   guides={guides}
+                  topics={topics}
                   scopeOptions={scopeOptions}
                   mentionOptions={detailMentionOptions}
                   scopeOfWorkTemplate={templateByScope.get(detailCase.scopeOfWork.trim()) ?? null}

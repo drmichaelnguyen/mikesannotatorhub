@@ -9,6 +9,7 @@ import { getReviewerNotificationRecipients, pushNotification } from "@/app/actio
 import { NOTIF } from "@/lib/notification-types";
 import { getCaseNoteImages } from "@/lib/case-note-images";
 import { parseVideoGuideUrlsInput, videoGuideUrlsToDbColumn } from "@/lib/video-guides";
+import { mapPrismaCaseTopics } from "@/lib/reviewer-serialize";
 
 function parseCaseIdBatch(raw: string): { unique: string[]; duplicateTokens: string[] } {
   const tokens = raw
@@ -34,6 +35,44 @@ const TEMPLATE_ROW_MARKER_RE = /^\[\[TEMPLATE_ROW_(\d+)\]\]\s*(.*)$/;
 
 function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
+}
+
+function parseTopicIdsFromFormData(formData: FormData): string[] {
+  const fromMulti = [
+    ...new Set(formData.getAll("topicIds").map((v) => String(v).trim()).filter(Boolean)),
+  ];
+  if (fromMulti.length > 0) return fromMulti;
+  const legacy = String(formData.get("topicId") ?? "").trim();
+  return legacy ? [legacy] : [];
+}
+
+async function assertTopicsAllowedForCase(
+  topicIds: string[],
+  redbrickProject: string,
+  scopeOfWork: string,
+): Promise<boolean> {
+  const unique = [...new Set(topicIds.filter(Boolean))];
+  if (unique.length === 0) return true;
+  const rows = await prisma.topic.findMany({
+    where: { id: { in: unique } },
+    select: {
+      id: true,
+      projects: { select: { redbrickProject: true } },
+      scopes: { select: { scopeOfWork: true } },
+    },
+  });
+  if (rows.length !== unique.length) return false;
+  for (const topic of rows) {
+    const linkedProjects = topic.projects.map((p) => p.redbrickProject);
+    const linkedScopes = topic.scopes.map((s) => s.scopeOfWork);
+    if (
+      (linkedProjects.length > 0 && !linkedProjects.includes(redbrickProject)) ||
+      (linkedScopes.length > 0 && !linkedScopes.includes(scopeOfWork))
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 export type CreateCaseActionResult =
@@ -273,7 +312,7 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
 
   const redbrickProject = String(formData.get("redbrickProject") ?? "").trim();
   const guideId = String(formData.get("guideId") ?? "").trim();
-  const topicId = String(formData.get("topicId") ?? "").trim();
+  const topicIds = parseTopicIdsFromFormData(formData);
   const guideline = String(formData.get("guideline") ?? "").trim();
   const scopeOfWork = String(formData.get("scopeOfWork") ?? "").trim();
   const minMinutesPerCase = Number(formData.get("minMinutesPerCase"));
@@ -297,29 +336,13 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
     }
   }
 
-  if (topicId) {
-    const topic = await prisma.topic.findUnique({
-      where: { id: topicId },
-      select: {
-        id: true,
-        projects: { select: { redbrickProject: true } },
-        scopes: { select: { scopeOfWork: true } },
-      },
-    });
-    const linkedProjects = topic?.projects.map((p) => p.redbrickProject) ?? [];
-    const linkedScopes = topic?.scopes.map((s) => s.scopeOfWork) ?? [];
-    if (
-      !topic ||
-      (linkedProjects.length > 0 && !linkedProjects.includes(redbrickProject)) ||
-      (linkedScopes.length > 0 && !linkedScopes.includes(scopeOfWork))
-    ) {
-      return { ok: false as const, error: "required" };
-    }
+  if (!(await assertTopicsAllowedForCase(topicIds, redbrickProject, scopeOfWork))) {
+    return { ok: false as const, error: "required" };
   }
 
   if (
     !redbrickProject ||
-    (!guideId && !topicId && !normalizedGuideline) ||
+    (!guideId && topicIds.length === 0 && !normalizedGuideline) ||
     !scopeOfWork ||
     !Number.isFinite(minMinutesPerCase) ||
     minMinutesPerCase <= 0 ||
@@ -373,7 +396,6 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
   const base = {
     redbrickProject,
     guideId: guideId || null,
-    topicId: topicId || null,
     guideline: normalizedGuideline,
     scopeOfWork,
     minMinutesPerCase: Math.floor(minMinutesPerCase),
@@ -413,6 +435,15 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
         await pushNotification(allIds, NOTIF.NEW_CASE, row.id, row.caseId);
       }
     }
+
+    const uniqueTopicIds = [...new Set(topicIds.filter(Boolean))];
+    if (uniqueTopicIds.length > 0 && createdRows.length > 0) {
+      await prisma.annotationCaseTopic.createMany({
+        data: createdRows.flatMap((row) =>
+          uniqueTopicIds.map((topicId) => ({ annotationCaseId: row.id, topicId })),
+        ),
+      });
+    }
   }
 
   revalidatePath("/reviewer");
@@ -425,8 +456,28 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
   };
 }
 
+async function annotatorHasPendingReviewAcknowledgment(annotatorUserId: string): Promise<boolean> {
+  const rows = await prisma.annotationCase.findMany({
+    where: {
+      annotatorId: annotatorUserId,
+      isReference: false,
+      status: { in: [CaseStatus.REJECTED, CaseStatus.AUDITED, CaseStatus.ACCEPTED] },
+    },
+    select: {
+      annotatorAcknowledgedReviewId: true,
+      reviews: { orderBy: { createdAt: "desc" }, take: 1, select: { id: true } },
+    },
+  });
+  return rows.some((r) => r.reviews[0] && r.reviews[0].id !== r.annotatorAcknowledgedReviewId);
+}
+
 export async function assignCaseAction(caseDbId: string) {
   const user = await requireAnyRole(["ANNOTATOR", "REVIEWER"]);
+  if (user.role === "ANNOTATOR") {
+    if (await annotatorHasPendingReviewAcknowledgment(user.id)) {
+      return { ok: false as const, error: "pending_review_ack" as const };
+    }
+  }
   const updated = await prisma.annotationCase.updateMany({
     where: {
       id: caseDbId,
@@ -440,11 +491,93 @@ export async function assignCaseAction(caseDbId: string) {
       assignedAt: new Date(),
       completedAt: null,
       annotationMinutes: null,
+      annotatorAcknowledgedReviewId: null,
     },
   });
   if (updated.count !== 1) {
     return { ok: false as const, error: "state" as const };
   }
+  revalidatePath("/reviewer");
+  revalidatePath("/annotator");
+  return { ok: true as const };
+}
+
+export type PendingReviewAckCase = {
+  caseDbId: string;
+  caseId: string;
+  redbrickProject: string;
+  status: CaseStatus;
+  qualityRating: number | null;
+  review: { id: string; decision: string; comment: string | null; createdAt: string };
+};
+
+/** Cases where the annotator must read reviewer feedback before self-claiming another case from the pool. */
+export async function getAnnotatorPendingReviewAcknowledgments(): Promise<PendingReviewAckCase[]> {
+  const user = await requireAnyRole(["ANNOTATOR", "REVIEWER"]);
+  const rows = await prisma.annotationCase.findMany({
+    where: {
+      annotatorId: user.id,
+      isReference: false,
+      status: { in: [CaseStatus.REJECTED, CaseStatus.AUDITED, CaseStatus.ACCEPTED] },
+    },
+    select: {
+      id: true,
+      caseId: true,
+      redbrickProject: true,
+      status: true,
+      qualityRating: true,
+      annotatorAcknowledgedReviewId: true,
+      reviews: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { id: true, decision: true, comment: true, createdAt: true },
+      },
+    },
+  });
+  return rows
+    .filter((r) => r.reviews[0] && r.reviews[0].id !== r.annotatorAcknowledgedReviewId)
+    .map((r) => {
+      const rev = r.reviews[0]!;
+      return {
+        caseDbId: r.id,
+        caseId: r.caseId,
+        redbrickProject: r.redbrickProject,
+        status: r.status,
+        qualityRating: r.qualityRating,
+        review: {
+          id: rev.id,
+          decision: rev.decision,
+          comment: rev.comment,
+          createdAt: rev.createdAt.toISOString(),
+        },
+      };
+    });
+}
+
+export async function acknowledgeAnnotatorReviewAction(caseDbId: string) {
+  const user = await requireAnyRole(["ANNOTATOR", "REVIEWER"]);
+  if (user.role !== "ANNOTATOR") {
+    return { ok: false as const, error: "forbidden" as const };
+  }
+  const row = await prisma.annotationCase.findUnique({
+    where: { id: caseDbId },
+    select: { id: true, annotatorId: true, isReference: true },
+  });
+  if (!row || row.isReference || row.annotatorId !== user.id) {
+    return { ok: false as const, error: "forbidden" as const };
+  }
+  const latest = await prisma.review.findFirst({
+    where: { annotationCaseId: caseDbId },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  if (!latest) {
+    return { ok: false as const, error: "notfound" as const };
+  }
+  await prisma.annotationCase.update({
+    where: { id: caseDbId },
+    data: { annotatorAcknowledgedReviewId: latest.id },
+  });
   revalidatePath("/reviewer");
   revalidatePath("/annotator");
   return { ok: true as const };
@@ -481,6 +614,7 @@ export async function unassignCaseAction(caseDbId: string) {
       auditedAt: null,
       auditedById: null,
       qualityRating: null,
+      annotatorAcknowledgedReviewId: null,
     },
   });
 
@@ -499,6 +633,9 @@ export async function reviewerAssignCaseAction(caseDbId: string, annotatorUserId
   if (!target || target.role !== "ANNOTATOR") {
     return { ok: false as const, error: "invalid_annotator" as const };
   }
+  if (await annotatorHasPendingReviewAcknowledgment(target.id)) {
+    return { ok: false as const, error: "pending_review_ack" as const };
+  }
   const updated = await prisma.annotationCase.updateMany({
     where: {
       id: caseDbId,
@@ -512,6 +649,7 @@ export async function reviewerAssignCaseAction(caseDbId: string, annotatorUserId
       assignedAt: new Date(),
       completedAt: null,
       annotationMinutes: null,
+      annotatorAcknowledgedReviewId: null,
     },
   });
   if (updated.count !== 1) {
@@ -574,7 +712,7 @@ export async function updateCaseDetailsAction(input: {
   status: CaseStatus;
   redbrickProject: string;
   guideId?: string | null;
-  topicId?: string | null;
+  topicIds: string[];
   guideline: string;
   scopeOfWork: string;
   minMinutesPerCase: number;
@@ -589,7 +727,7 @@ export async function updateCaseDetailsAction(input: {
   const caseId = input.caseId.trim();
   const redbrickProject = input.redbrickProject.trim();
   const guideId = input.guideId?.trim() || "";
-  const topicId = input.topicId?.trim() || "";
+  const topicIds = [...new Set(input.topicIds.map((id) => id.trim()).filter(Boolean))];
   const guideline = input.guideline.trim();
   const scopeOfWork = input.scopeOfWork.trim();
   const minMinutesPerCase = Math.floor(input.minMinutesPerCase);
@@ -598,7 +736,7 @@ export async function updateCaseDetailsAction(input: {
   if (
     !caseId ||
     !redbrickProject ||
-    (!guideId && !topicId && !guideline) ||
+    (!guideId && topicIds.length === 0 && !guideline) ||
     !scopeOfWork ||
     !Number.isFinite(minMinutesPerCase) ||
     minMinutesPerCase <= 0 ||
@@ -647,24 +785,8 @@ export async function updateCaseDetailsAction(input: {
     }
   }
 
-  if (topicId) {
-    const topic = await prisma.topic.findUnique({
-      where: { id: topicId },
-      select: {
-        id: true,
-        projects: { select: { redbrickProject: true } },
-        scopes: { select: { scopeOfWork: true } },
-      },
-    });
-    const linkedProjects = topic?.projects.map((p) => p.redbrickProject) ?? [];
-    const linkedScopes = topic?.scopes.map((s) => s.scopeOfWork) ?? [];
-    if (
-      !topic ||
-      (linkedProjects.length > 0 && !linkedProjects.includes(redbrickProject)) ||
-      (linkedScopes.length > 0 && !linkedScopes.includes(scopeOfWork))
-    ) {
-      return { ok: false as const, error: "required" as const };
-    }
+  if (!(await assertTopicsAllowedForCase(topicIds, redbrickProject, scopeOfWork))) {
+    return { ok: false as const, error: "required" as const };
   }
 
   const row = await prisma.annotationCase.findUnique({
@@ -697,27 +819,34 @@ export async function updateCaseDetailsAction(input: {
         }
       : {};
 
-  await prisma.annotationCase.update({
-    where: { id: input.caseDbId },
-    data: {
-      caseId,
-      status: input.status,
-      redbrickProject,
-      guideId: guideId || null,
-      topicId: topicId || null,
-      guideline,
-      scopeOfWork,
-      minMinutesPerCase,
-      maxMinutesPerCase,
-      compensationType: input.compensationType,
-      compensationAmount: input.compensationAmount,
-      annotatorBonus: input.annotatorBonus,
-      isReference: input.isReference,
-      videoGuideUrls: videoGuideUrlsToDbColumn(
-        parseVideoGuideUrlsInput(input.videoGuideUrls.join("\n")),
-      ),
-      ...releaseAssignment,
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.annotationCase.update({
+      where: { id: input.caseDbId },
+      data: {
+        caseId,
+        status: input.status,
+        redbrickProject,
+        guideId: guideId || null,
+        guideline,
+        scopeOfWork,
+        minMinutesPerCase,
+        maxMinutesPerCase,
+        compensationType: input.compensationType,
+        compensationAmount: input.compensationAmount,
+        annotatorBonus: input.annotatorBonus,
+        isReference: input.isReference,
+        videoGuideUrls: videoGuideUrlsToDbColumn(
+          parseVideoGuideUrlsInput(input.videoGuideUrls.join("\n")),
+        ),
+        ...releaseAssignment,
+      },
+    });
+    await tx.annotationCaseTopic.deleteMany({ where: { annotationCaseId: input.caseDbId } });
+    if (topicIds.length > 0) {
+      await tx.annotationCaseTopic.createMany({
+        data: topicIds.map((topicId) => ({ annotationCaseId: input.caseDbId, topicId })),
+      });
+    }
   });
 
   revalidatePath("/reviewer");
@@ -729,7 +858,7 @@ export async function batchUpdateCasesAction(input: {
   caseDbIds: string[];
   redbrickProject: string;
   guideId?: string | null;
-  topicId?: string | null;
+  topicIds: string[];
   guideline: string;
   videoGuideUrls: string[];
   scopeOfWork: string;
@@ -743,7 +872,7 @@ export async function batchUpdateCasesAction(input: {
   const caseDbIds = [...new Set(input.caseDbIds.map((id) => id.trim()).filter(Boolean))];
   const redbrickProject = input.redbrickProject.trim();
   const guideId = input.guideId?.trim() || "";
-  const topicId = input.topicId?.trim() || "";
+  const topicIds = [...new Set(input.topicIds.map((id) => id.trim()).filter(Boolean))];
   const guideline = input.guideline.trim();
   const scopeOfWork = input.scopeOfWork.trim();
   const minMinutesPerCase = Math.floor(input.minMinutesPerCase);
@@ -754,7 +883,7 @@ export async function batchUpdateCasesAction(input: {
   }
   if (
     !redbrickProject ||
-    (!guideId && !topicId && !guideline) ||
+    (!guideId && topicIds.length === 0 && !guideline) ||
     !scopeOfWork ||
     !Number.isFinite(minMinutesPerCase) ||
     minMinutesPerCase <= 0 ||
@@ -790,24 +919,8 @@ export async function batchUpdateCasesAction(input: {
     }
   }
 
-  if (topicId) {
-    const topic = await prisma.topic.findUnique({
-      where: { id: topicId },
-      select: {
-        id: true,
-        projects: { select: { redbrickProject: true } },
-        scopes: { select: { scopeOfWork: true } },
-      },
-    });
-    const linkedProjects = topic?.projects.map((p) => p.redbrickProject) ?? [];
-    const linkedScopes = topic?.scopes.map((s) => s.scopeOfWork) ?? [];
-    if (
-      !topic ||
-      (linkedProjects.length > 0 && !linkedProjects.includes(redbrickProject)) ||
-      (linkedScopes.length > 0 && !linkedScopes.includes(scopeOfWork))
-    ) {
-      return { ok: false as const, error: "required" as const };
-    }
+  if (!(await assertTopicsAllowedForCase(topicIds, redbrickProject, scopeOfWork))) {
+    return { ok: false as const, error: "required" as const };
   }
 
   const rows = await prisma.annotationCase.findMany({
@@ -827,7 +940,6 @@ export async function batchUpdateCasesAction(input: {
     data: {
       redbrickProject,
       guideId: guideId || null,
-      topicId: topicId || null,
       guideline,
       videoGuideUrls: videoGuideUrlsCol,
       scopeOfWork,
@@ -838,6 +950,15 @@ export async function batchUpdateCasesAction(input: {
       annotatorBonus: input.annotatorBonus,
     },
   });
+
+  await prisma.annotationCaseTopic.deleteMany({ where: { annotationCaseId: { in: caseDbIds } } });
+  if (topicIds.length > 0) {
+    await prisma.annotationCaseTopic.createMany({
+      data: caseDbIds.flatMap((annotationCaseId) =>
+        topicIds.map((topicId) => ({ annotationCaseId, topicId })),
+      ),
+    });
+  }
 
   revalidatePath("/reviewer");
   revalidatePath("/annotator");
@@ -1123,7 +1244,7 @@ export async function listCasesForReviewer() {
     orderBy: { createdAt: "desc" },
     include: {
       guide: { select: { id: true, title: true } },
-      topic: { include: { projects: true, scopes: true } },
+      caseTopics: { include: { topic: { include: { projects: true, scopes: true } } } },
       annotator: { select: { id: true, name: true, email: true } },
       auditedBy: { select: { id: true, name: true, email: true } },
       reviews: {
@@ -1480,7 +1601,7 @@ export async function saveAnnotatorAvailabilityAction(formData: FormData) {
 
 const annotatorCaseListBase = {
   guide: { select: { id: true, title: true } },
-  topic: { include: { projects: true, scopes: true } },
+  caseTopics: { include: { topic: { include: { projects: true, scopes: true } } } },
 } as const;
 
 const annotatorReviewInclude = {
@@ -1543,11 +1664,17 @@ export async function listCasesForAnnotator(userId: string) {
     select: { scopeOfWork: true, template: true },
   });
   const templateByScope = new Map(templates.map((t) => [t.scopeOfWork.trim(), t.template] as const));
-  function withTemplate<T extends { scopeOfWork: string }>(rows: T[]) {
-    return rows.map((r) => ({
-      ...r,
-      scopeOfWorkTemplate: templateByScope.get(r.scopeOfWork.trim()) ?? null,
-    }));
+  function withTemplate<T extends { scopeOfWork: string; caseTopics: Parameters<typeof mapPrismaCaseTopics>[0] }>(
+    rows: T[],
+  ) {
+    return rows.map((r) => {
+      const { caseTopics, ...rest } = r;
+      return {
+        ...rest,
+        topics: mapPrismaCaseTopics(caseTopics),
+        scopeOfWorkTemplate: templateByScope.get(r.scopeOfWork.trim()) ?? null,
+      };
+    });
   }
   return {
     available: withTemplate(available),

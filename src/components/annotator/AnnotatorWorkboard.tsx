@@ -1,14 +1,20 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useActionState, useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useActionState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { assignCaseAction, submitAnnotationAction, unassignCaseAction } from "@/app/actions/cases";
+import {
+  assignCaseAction,
+  submitAnnotationAction,
+  unassignCaseAction,
+  type PendingReviewAckCase,
+} from "@/app/actions/cases";
 import { MentionTextarea } from "@/components/CaseDiscussion";
 import {
   AnnotatorCaseDetailPanel,
   type AnnotatorCaseRow,
 } from "@/components/annotator/AnnotatorCaseDetailPanel";
+import { AnnotatorReviewAckModal } from "@/components/annotator/AnnotatorReviewAckModal";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
 import { createCaseNote, fetchCaseNotes } from "@/lib/case-note-api";
@@ -21,6 +27,7 @@ import { buildMentionOptionsForCase, type GuideOption, type TopicOption } from "
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import { CaseStatus } from "@prisma/client";
+import { useDebouncedSearchNeedle } from "@/lib/use-debounced-search-needle";
 
 type CaseTree<T> = {
   project: string;
@@ -65,6 +72,37 @@ function groupByHierarchy<T extends { redbrickProject: string; scopeOfWork: stri
             })),
         })),
     }));
+}
+
+type AnnotatorTreeSection = "ref" | "pool" | "active" | "doneAct" | "doneInact";
+
+const AN_TREE_SEP = "\u001f";
+
+function makeAnnotatorTreePath(parts: string[]): string {
+  return parts.join(AN_TREE_SEP);
+}
+
+function collectAnnotatorExpandPathsForRow(section: AnnotatorTreeSection, row: AnnotatorCaseRow): Set<string> {
+  const project = getProjectName(row.caseId);
+  const scope = (row.scopeOfWork || "").trim() || "—";
+  const rb = (row.redbrickProject || "").trim() || "—";
+  const outerKey =
+    section === "ref"
+      ? "ref"
+      : section === "pool"
+        ? "pool"
+        : section === "active"
+          ? "active"
+          : "done";
+  const out = new Set<string>();
+  out.add(makeAnnotatorTreePath(["annot", "outer", outerKey]));
+  const chains: string[][] = [
+    ["annot", section, project],
+    ["annot", section, project, scope],
+    ["annot", section, project, scope, rb],
+  ];
+  for (const parts of chains) out.add(makeAnnotatorTreePath(parts));
+  return out;
 }
 
 function StatusCountBadges({ cases }: { cases: AnnotatorCaseRow[] }) {
@@ -115,7 +153,15 @@ function CommentActionLabel({
   );
 }
 
-function AnnotatorAssignForm({ lang, caseDbId }: { lang: Lang; caseDbId: string }) {
+function AnnotatorAssignForm({
+  lang,
+  caseDbId,
+  takeDisabled = false,
+}: {
+  lang: Lang;
+  caseDbId: string;
+  takeDisabled?: boolean;
+}) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
   const [state, action, pending] = useActionState(
@@ -130,14 +176,18 @@ function AnnotatorAssignForm({ lang, caseDbId }: { lang: Lang; caseDbId: string 
       <form action={action}>
         <button
           type="submit"
-          disabled={pending}
+          disabled={pending || takeDisabled}
           className="rounded border border-[var(--accent)] bg-[var(--accent)]/15 px-2 py-0.5 text-[var(--accent)] hover:bg-[var(--accent)]/25 disabled:opacity-50"
         >
           {tk("assign")}
         </button>
       </form>
       {state && !state.ok && (
-        <span className="max-w-[12rem] text-[var(--danger)]">{tk("reviewer_assign_taken")}</span>
+        <span className="max-w-[14rem] text-[var(--danger)]">
+          {state.error === "pending_review_ack"
+            ? tk("annotator_review_ack_block_take")
+            : tk("reviewer_assign_taken")}
+        </span>
       )}
     </div>
   );
@@ -265,6 +315,7 @@ export function AnnotatorWorkboard({
   reference,
   guides,
   topics,
+  pendingReviewAcks = [],
 }: {
   lang: Lang;
   available: AnnotatorCaseRow[];
@@ -273,11 +324,15 @@ export function AnnotatorWorkboard({
   reference: AnnotatorCaseRow[];
   guides: GuideOption[];
   topics: TopicOption[];
+  pendingReviewAcks?: PendingReviewAckCase[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const [searchInput, setSearchInput] = useState("");
+  const searchNeedle = useDebouncedSearchNeedle(searchInput, 300);
+  const annotatorBoardRef = useRef<HTMLDivElement | null>(null);
 
   const { inProgress, completed } = useMemo(() => {
     const activeStatuses = new Set<CaseStatus>([
@@ -294,10 +349,40 @@ export function AnnotatorWorkboard({
     return { inProgress: progress, completed: done };
   }, [mine, rejected]);
 
-  const poolGroups = useMemo(() => groupByHierarchy(available), [available]);
-  const activeGroups = useMemo(() => groupByHierarchy(inProgress), [inProgress]);
-  const doneGroups = useMemo(() => groupByHierarchy(completed), [completed]);
-  const referenceGroups = useMemo(() => groupByHierarchy(reference), [reference]);
+  const matchesSearchNeedle = useCallback(
+    (c: AnnotatorCaseRow) => {
+      const n = searchNeedle.toLowerCase();
+      if (!n) return true;
+      return (
+        c.id.toLowerCase().includes(n) ||
+        c.caseId.toLowerCase().includes(n) ||
+        (c.redbrickProject || "").trim().toLowerCase().includes(n) ||
+        (c.scopeOfWork || "").trim().toLowerCase().includes(n)
+      );
+    },
+    [searchNeedle],
+  );
+
+  const filteredAvailable = useMemo(
+    () => (searchNeedle ? available.filter(matchesSearchNeedle) : available),
+    [available, searchNeedle, matchesSearchNeedle],
+  );
+  const filteredInProgress = useMemo(
+    () => (searchNeedle ? inProgress.filter(matchesSearchNeedle) : inProgress),
+    [inProgress, searchNeedle, matchesSearchNeedle],
+  );
+  const filteredCompleted = useMemo(
+    () => (searchNeedle ? completed.filter(matchesSearchNeedle) : completed),
+    [completed, searchNeedle, matchesSearchNeedle],
+  );
+  const filteredReference = useMemo(
+    () => (searchNeedle ? reference.filter(matchesSearchNeedle) : reference),
+    [reference, searchNeedle, matchesSearchNeedle],
+  );
+
+  const poolGroups = useMemo(() => groupByHierarchy(filteredAvailable), [filteredAvailable]);
+  const activeGroups = useMemo(() => groupByHierarchy(filteredInProgress), [filteredInProgress]);
+  const referenceGroups = useMemo(() => groupByHierarchy(filteredReference), [filteredReference]);
   const allRows = useMemo(
     () => [...available, ...inProgress, ...completed, ...reference],
     [available, inProgress, completed, reference],
@@ -325,8 +410,40 @@ export function AnnotatorWorkboard({
       completed.filter((c) => !projectActivity.get((c.redbrickProject || "").trim() || "—")),
     [completed, projectActivity],
   );
-  const doneActiveGroups = useMemo(() => groupByHierarchy(doneActiveCases), [doneActiveCases]);
-  const doneInactiveGroups = useMemo(() => groupByHierarchy(doneInactiveCases), [doneInactiveCases]);
+  const filteredDoneActiveCases = useMemo(
+    () => (searchNeedle ? doneActiveCases.filter(matchesSearchNeedle) : doneActiveCases),
+    [doneActiveCases, searchNeedle, matchesSearchNeedle],
+  );
+  const filteredDoneInactiveCases = useMemo(
+    () => (searchNeedle ? doneInactiveCases.filter(matchesSearchNeedle) : doneInactiveCases),
+    [doneInactiveCases, searchNeedle, matchesSearchNeedle],
+  );
+  const doneActiveGroups = useMemo(
+    () => groupByHierarchy(filteredDoneActiveCases),
+    [filteredDoneActiveCases],
+  );
+  const doneInactiveGroups = useMemo(
+    () => groupByHierarchy(filteredDoneInactiveCases),
+    [filteredDoneInactiveCases],
+  );
+
+  const annotatorSearchHitIds = useMemo(() => {
+    if (!searchNeedle) return null;
+    const ids = new Set<string>();
+    for (const c of filteredReference) ids.add(c.id);
+    for (const c of filteredAvailable) ids.add(c.id);
+    for (const c of filteredInProgress) ids.add(c.id);
+    for (const c of filteredDoneActiveCases) ids.add(c.id);
+    for (const c of filteredDoneInactiveCases) ids.add(c.id);
+    return ids;
+  }, [
+    searchNeedle,
+    filteredReference,
+    filteredAvailable,
+    filteredInProgress,
+    filteredDoneActiveCases,
+    filteredDoneInactiveCases,
+  ]);
 
   const [detailId, setDetailId] = useState<string | null>(null);
   const [noteCaseId, setNoteCaseId] = useState<string | null>(null);
@@ -337,6 +454,41 @@ export function AnnotatorWorkboard({
   const [showInactiveProjects, setShowInactiveProjects] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
+
+  const annotatorExpandPaths = useMemo(() => {
+    if (!searchNeedle) return new Set<string>();
+    const out = new Set<string>();
+    const add = (rows: AnnotatorCaseRow[], section: AnnotatorTreeSection) => {
+      for (const c of rows) {
+        for (const p of collectAnnotatorExpandPathsForRow(section, c)) out.add(p);
+      }
+    };
+    add(filteredReference, "ref");
+    add(filteredAvailable, "pool");
+    add(filteredInProgress, "active");
+    add(filteredDoneActiveCases, "doneAct");
+    if (showInactiveProjects) add(filteredDoneInactiveCases, "doneInact");
+    return out;
+  }, [
+    searchNeedle,
+    filteredReference,
+    filteredAvailable,
+    filteredInProgress,
+    filteredDoneActiveCases,
+    filteredDoneInactiveCases,
+    showInactiveProjects,
+  ]);
+
+  useLayoutEffect(() => {
+    const root = annotatorBoardRef.current;
+    if (!root || annotatorExpandPaths.size === 0) return;
+    for (const el of root.querySelectorAll("details[data-tree-path]")) {
+      const p = el.getAttribute("data-tree-path");
+      if (p && annotatorExpandPaths.has(p)) (el as HTMLDetailsElement).open = true;
+    }
+    const hit = root.querySelector<HTMLElement>("[data-case-search-hit='1']");
+    hit?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [annotatorExpandPaths, searchNeedle, poolGroups, activeGroups, referenceGroups, doneActiveGroups, doneInactiveGroups]);
 
   const detailRow = detailId ? (allRows.find((c) => c.id === detailId) ?? null) : null;
   const noteCase = noteCaseId ? (allRows.find((c) => c.id === noteCaseId) ?? null) : null;
@@ -506,6 +658,7 @@ export function AnnotatorWorkboard({
   function renderProjectTable(
     cases: AnnotatorCaseRow[],
     mode: "pool" | "active" | "done" | "reference",
+    searchHitIds: Set<string> | null,
   ) {
     const isPool = mode === "pool";
     return (
@@ -545,6 +698,7 @@ export function AnnotatorWorkboard({
               <tr
                 key={c.id}
                 tabIndex={0}
+                data-case-search-hit={searchHitIds?.has(c.id) ? "1" : undefined}
                 className={`cursor-pointer border-b ${
                   isPool
                       ? "border-amber-200/80 bg-amber-50/90 hover:bg-amber-100/90"
@@ -616,7 +770,13 @@ export function AnnotatorWorkboard({
                 )}
                 <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
                   <div className="flex flex-wrap gap-1">
-                    {mode === "pool" && <AnnotatorAssignForm lang={lang} caseDbId={c.id} />}
+                    {mode === "pool" && (
+                      <AnnotatorAssignForm
+                        lang={lang}
+                        caseDbId={c.id}
+                        takeDisabled={pendingReviewAcks.length > 0}
+                      />
+                    )}
                     {mode === "active" &&
                       (c.status === CaseStatus.ASSIGNED || c.status === CaseStatus.REJECTED) && (
                         <AnnotatorSubmitForm
@@ -666,7 +826,8 @@ export function AnnotatorWorkboard({
                   </div>
                 </td>
               </tr>
-            )})}
+            );
+            })}
           </tbody>
         </table>
       </div>
@@ -677,12 +838,15 @@ export function AnnotatorWorkboard({
     groups: CaseTree<AnnotatorCaseRow>[],
     mode: "pool" | "active" | "done" | "reference",
     className: string,
+    treeSectionId: AnnotatorTreeSection,
   ) {
     const isPool = mode === "pool";
     return (
       <div className="space-y-2">
-        {groups.map((projectGroup) => (
-          <details key={projectGroup.project} className={className}>
+        {groups.map((projectGroup) => {
+          const projectPath = makeAnnotatorTreePath(["annot", treeSectionId, projectGroup.project]);
+          return (
+          <details key={projectPath} data-tree-path={projectPath} className={className}>
             <summary
               className={`cursor-pointer select-none px-3 py-2 text-sm font-medium ${
                 isPool ? "text-amber-950 hover:bg-amber-100/80" : "text-[var(--text)] hover:bg-[var(--bg)]"
@@ -704,8 +868,15 @@ export function AnnotatorWorkboard({
                 isPool ? "border-amber-300/70" : "border-[var(--border)]"
               }`}
             >
-              {projectGroup.scopes.map((scopeGroup) => (
-                <details key={`${projectGroup.project}-${scopeGroup.scope}`} className="rounded-md border border-[var(--border)]/60 bg-[var(--surface)]">
+              {projectGroup.scopes.map((scopeGroup) => {
+                const scopePath = makeAnnotatorTreePath([
+                  "annot",
+                  treeSectionId,
+                  projectGroup.project,
+                  scopeGroup.scope,
+                ]);
+                return (
+                <details key={scopePath} data-tree-path={scopePath} className="rounded-md border border-[var(--border)]/60 bg-[var(--surface)]">
                   <summary className="cursor-pointer select-none px-2 py-1.5 text-xs font-medium text-[var(--text)] hover:text-[var(--accent)]">
                     <span>{scopeGroup.scope}</span>
                     <span className="ml-1">(</span>
@@ -715,8 +886,16 @@ export function AnnotatorWorkboard({
                     <span>)</span>
                   </summary>
                   <div className="space-y-2 border-t border-[var(--border)]/60 px-2 pb-2 pt-2">
-                    {scopeGroup.rbProjects.map((rbGroup) => (
-                      <details key={`${scopeGroup.scope}-${rbGroup.rbProject}`} className="rounded-md border border-[var(--border)]/60 bg-[var(--surface)]">
+                    {scopeGroup.rbProjects.map((rbGroup) => {
+                      const rbPath = makeAnnotatorTreePath([
+                        "annot",
+                        treeSectionId,
+                        projectGroup.project,
+                        scopeGroup.scope,
+                        rbGroup.rbProject,
+                      ]);
+                      return (
+                      <details key={rbPath} data-tree-path={rbPath} className="rounded-md border border-[var(--border)]/60 bg-[var(--surface)]">
                         <summary className="cursor-pointer select-none px-2 py-1.5 text-xs font-medium text-[var(--text)] hover:text-[var(--accent)]">
                           <span>{rbGroup.rbProject}</span>
                           <span className="ml-1">(</span>
@@ -724,16 +903,19 @@ export function AnnotatorWorkboard({
                           <span>)</span>
                         </summary>
                         <div className="border-t border-[var(--border)]/60">
-                          {renderProjectTable(rbGroup.cases, mode)}
+                          {renderProjectTable(rbGroup.cases, mode, annotatorSearchHitIds)}
                         </div>
                       </details>
-                    ))}
+                    );
+                    })}
                   </div>
                 </details>
-              ))}
+                );
+              })}
             </div>
           </details>
-        ))}
+          );
+        })}
       </div>
     );
   }
@@ -743,34 +925,66 @@ export function AnnotatorWorkboard({
     inProgress.length === 0 &&
     completed.length === 0 &&
     reference.length === 0;
-  const openPoolCount = available.length;
-  const undoneCount = inProgress.length;
+  const openPoolCount = filteredAvailable.length;
+  const undoneCount = filteredInProgress.length;
+
+  function clearCaseSearch() {
+    setSearchInput("");
+  }
 
   return (
     <div className="space-y-6">
+      {pendingReviewAcks.length > 0 && (
+        <AnnotatorReviewAckModal lang={lang} pending={pendingReviewAcks} />
+      )}
       <div>
         <h2 className="text-lg font-medium">{tk("annotator_board_title")}</h2>
         <p className="mt-1 text-sm text-[var(--muted)]">{tk("annotator_board_hint")}</p>
       </div>
 
+      <div className="flex flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 sm:flex-row sm:items-end">
+        <label className="flex-1">
+          <span className="text-sm text-[var(--muted)]">{tk("reviewer_search_case_id")}</span>
+          <input
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder={tk("reviewer_search_case_id_placeholder")}
+            className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={clearCaseSearch}
+          className="self-start rounded-md border border-[var(--border)] px-4 py-2 text-sm hover:border-[var(--accent)] sm:self-end"
+        >
+          {tk("clear_search")}
+        </button>
+      </div>
+
       {emptyAll ? (
         <p className="text-[var(--muted)]">{tk("no_cases")}</p>
       ) : (
-        <>
+        <div ref={annotatorBoardRef} className="space-y-2">
           <section className="space-y-2">
-            <details className="rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+            <details
+              data-tree-path={makeAnnotatorTreePath(["annot", "outer", "ref"])}
+              className="rounded-xl border border-[var(--border)] bg-[var(--surface)]"
+            >
               <summary className="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-[var(--text)] hover:bg-[var(--bg)]">
                 <span>{tk("annotator_section_reference")}</span>
-                <span className="ml-2 text-xs text-[var(--muted)]">({reference.length})</span>
+                <span className="ml-2 text-xs text-[var(--muted)]">({filteredReference.length})</span>
               </summary>
               <div className="border-t border-[var(--border)] p-3">
                 {reference.length === 0 ? (
+                  <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
+                ) : filteredReference.length === 0 ? (
                   <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
                 ) : (
                   renderHierarchy(
                     referenceGroups,
                     "reference",
                     "rounded-lg border border-[var(--accent)]/35 bg-[var(--accent)]/5",
+                    "ref",
                   )
                 )}
               </div>
@@ -778,7 +992,10 @@ export function AnnotatorWorkboard({
           </section>
 
           <section className="space-y-2">
-            <details className="rounded-xl border border-amber-500/40 bg-amber-500/10 shadow-sm shadow-amber-500/10">
+            <details
+              data-tree-path={makeAnnotatorTreePath(["annot", "outer", "pool"])}
+              className="rounded-xl border border-amber-500/40 bg-amber-500/10 shadow-sm shadow-amber-500/10"
+            >
               <summary className="cursor-pointer list-none select-none px-3 py-3 hover:bg-amber-200/20">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
@@ -797,11 +1014,14 @@ export function AnnotatorWorkboard({
               <div className="border-t border-amber-500/30 p-3">
                 {available.length === 0 ? (
                   <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
+                ) : filteredAvailable.length === 0 ? (
+                  <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
                 ) : (
                   renderHierarchy(
                     poolGroups,
                     "pool",
                     "rounded-lg border border-amber-500/40 bg-amber-100/40 shadow-sm shadow-amber-500/5",
+                    "pool",
                   )
                 )}
               </div>
@@ -809,7 +1029,10 @@ export function AnnotatorWorkboard({
           </section>
 
           <section className="space-y-2">
-            <details className="rounded-xl border border-[var(--accent)]/35 bg-[var(--accent)]/8 shadow-sm shadow-[var(--accent)]/10">
+            <details
+              data-tree-path={makeAnnotatorTreePath(["annot", "outer", "active"])}
+              className="rounded-xl border border-[var(--accent)]/35 bg-[var(--accent)]/8 shadow-sm shadow-[var(--accent)]/10"
+            >
               <summary className="cursor-pointer list-none select-none px-3 py-3 hover:bg-[var(--accent)]/10">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold text-[var(--text)]">
@@ -823,11 +1046,14 @@ export function AnnotatorWorkboard({
               <div className="border-t border-[var(--accent)]/25 p-3">
                 {inProgress.length === 0 ? (
                   <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
+                ) : filteredInProgress.length === 0 ? (
+                  <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
                 ) : (
                   renderHierarchy(
                     activeGroups,
                     "active",
                     "rounded-lg border border-[var(--border)] bg-[var(--surface)]",
+                    "active",
                   )
                 )}
               </div>
@@ -835,13 +1061,18 @@ export function AnnotatorWorkboard({
           </section>
 
           <section className="space-y-2">
-            <details className="rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+            <details
+              data-tree-path={makeAnnotatorTreePath(["annot", "outer", "done"])}
+              className="rounded-xl border border-[var(--border)] bg-[var(--surface)]"
+            >
               <summary className="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-[var(--text)] hover:bg-[var(--bg)]">
                 <span>{tk("annotator_section_done")}</span>
-                <span className="ml-2 text-xs text-[var(--muted)]">({completed.length})</span>
+                <span className="ml-2 text-xs text-[var(--muted)]">({filteredCompleted.length})</span>
               </summary>
               <div className="border-t border-[var(--border)] p-3">
                 {completed.length === 0 ? (
+                  <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
+                ) : filteredCompleted.length === 0 ? (
                   <p className="text-sm text-[var(--muted)]">{tk("no_cases")}</p>
                 ) : (
                   <div className="space-y-4">
@@ -867,6 +1098,7 @@ export function AnnotatorWorkboard({
                           doneActiveGroups,
                           "done",
                           "rounded-lg border border-[var(--border)] bg-[var(--surface)]",
+                          "doneAct",
                         )
                       )}
                     </div>
@@ -880,6 +1112,7 @@ export function AnnotatorWorkboard({
                           doneInactiveGroups,
                           "done",
                           "rounded-lg border border-[var(--border)] bg-[var(--surface)] opacity-90",
+                          "doneInact",
                         )}
                       </div>
                     )}
@@ -888,7 +1121,7 @@ export function AnnotatorWorkboard({
               </div>
             </details>
           </section>
-        </>
+        </div>
       )}
 
       {detailRow && (

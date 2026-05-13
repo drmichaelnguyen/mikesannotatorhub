@@ -13,12 +13,13 @@ import { ReviewerCaseEditor } from "@/components/reviewer/ReviewerCaseEditor";
 import { StarRating } from "@/components/StarRating";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate } from "@/lib/format";
-import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
+import type { SerializedCaseTopic, SerializedReviewerCase } from "@/lib/reviewer-serialize";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import type { MentionOption } from "@/lib/guide-topic";
-import type { GuideOption } from "@/lib/guide-topic";
+import type { GuideOption, TopicOption } from "@/lib/guide-topic";
 import { CaseStatus, type CompensationType } from "@prisma/client";
+import { TopicDetailModal } from "@/components/TopicDetailModal";
 
 function compLabel(lang: Lang, type: CompensationType, amount: number) {
   if (type === "PER_MINUTE") return `${amount} × ${t(lang, "comp_per_minute")}`;
@@ -77,6 +78,7 @@ function ReviewerCaseDetailPanelImpl({
   guides = [],
   scopeOptions = [],
   mentionOptions = [],
+  topics = [],
   /** Scope-of-work checklist text; used to label template-row notes in discussion export only. */
   scopeOfWorkTemplate = null,
 }: {
@@ -86,9 +88,11 @@ function ReviewerCaseDetailPanelImpl({
   guides?: GuideOption[];
   scopeOptions?: string[];
   mentionOptions?: MentionOption[];
+  topics?: TopicOption[];
   scopeOfWorkTemplate?: string | null;
 }) {
   const tk = (k: DictKey) => t(lang, k);
+  const [topicModal, setTopicModal] = useState<SerializedCaseTopic | null>(null);
   const showAuditedInfo =
     c.status === CaseStatus.AUDITED || c.status === CaseStatus.ACCEPTED;
   const earned = computeCompensation(
@@ -161,23 +165,20 @@ function ReviewerCaseDetailPanelImpl({
             </dd>
           </div>
         )}
-        {c.topic && (
+        {c.topics.length > 0 && (
           <div className="md:col-span-2">
             <dt className="text-[var(--muted)]">{tk("case_topic")}</dt>
-            <dd>
-              <div className="font-medium">{c.topic.name}</div>
-              <div className="text-xs text-[var(--muted)]">
-                {[
-                  c.topic.projects.length
-                    ? `RB: ${c.topic.projects.map((p) => p.redbrickProject).join(", ")}`
-                    : "",
-                  c.topic.scopes.length
-                    ? `Scope: ${c.topic.scopes.map((s) => s.scopeOfWork).join(", ")}`
-                    : "",
-                ]
-                  .filter(Boolean)
-                  .join(" | ") || "—"}
-              </div>
+            <dd className="flex flex-wrap gap-2">
+              {c.topics.map((topic) => (
+                <button
+                  key={topic.id}
+                  type="button"
+                  onClick={() => setTopicModal(topic)}
+                  className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1 text-left text-sm font-medium text-[var(--accent)] underline-offset-2 hover:bg-[var(--surface)] hover:underline"
+                >
+                  {topic.name}
+                </button>
+              ))}
             </dd>
           </div>
         )}
@@ -257,7 +258,7 @@ function ReviewerCaseDetailPanelImpl({
           </>
         )}
       </dl>
-      <ReviewerCaseEditor lang={lang} c={c} guides={guides} scopeOptions={scopeOptions} />
+      <ReviewerCaseEditor lang={lang} c={c} guides={guides} topics={topics} scopeOptions={scopeOptions} />
       <div>
         <h3 className="mb-2 text-sm font-medium text-[var(--muted)]">{tk("discussion_title")}</h3>
         <CaseDiscussion
@@ -287,6 +288,7 @@ function ReviewerCaseDetailPanelImpl({
           <ReviewCasePanel lang={lang} caseDbId={c.id} />
         </div>
       )}
+      <TopicDetailModal lang={lang} topic={topicModal} onClose={() => setTopicModal(null)} />
     </div>
   );
 }

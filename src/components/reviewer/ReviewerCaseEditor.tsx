@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { updateCaseDetailsAction } from "@/app/actions/cases";
-import type { GuideOption } from "@/lib/guide-topic";
+import type { GuideOption, TopicOption } from "@/lib/guide-topic";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import { parseVideoGuideUrlsInput } from "@/lib/video-guides";
@@ -13,6 +13,7 @@ export function ReviewerCaseEditor({
   lang,
   c,
   guides = [],
+  topics = [],
   scopeOptions = [],
 }: {
   lang: Lang;
@@ -22,7 +23,7 @@ export function ReviewerCaseEditor({
     status: CaseStatus;
     redbrickProject: string;
     guide?: { id: string } | null;
-    topic?: { id: string } | null;
+    topics: { id: string }[];
     guideline: string;
     videoGuideUrls: string[];
     scopeOfWork: string;
@@ -34,6 +35,7 @@ export function ReviewerCaseEditor({
     isReference: boolean;
   };
   guides?: GuideOption[];
+  topics?: TopicOption[];
   scopeOptions?: string[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
@@ -42,7 +44,7 @@ export function ReviewerCaseEditor({
   const [status, setStatus] = useState<CaseStatus>(c.status);
   const [redbrickProject, setRedbrickProject] = useState(c.redbrickProject);
   const [guideId, setGuideId] = useState(c.guide?.id ?? "");
-  const [topicId, setTopicId] = useState(c.topic?.id ?? "");
+  const [topicIds, setTopicIds] = useState<string[]>(() => c.topics.map((t) => t.id));
   const [guideline, setGuideline] = useState(c.guideline);
   const [videoGuideUrlsText, setVideoGuideUrlsText] = useState(() => c.videoGuideUrls.join("\n"));
   const [scopeOfWork, setScopeOfWork] = useState(c.scopeOfWork);
@@ -56,12 +58,26 @@ export function ReviewerCaseEditor({
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
+  const visibleTopics = useMemo(
+    () =>
+      topics.filter(
+        (topic) =>
+          (topic.projects.length === 0 ||
+            !redbrickProject.trim() ||
+            topic.projects.some((p) => p.redbrickProject === redbrickProject.trim())) &&
+          (topic.scopes.length === 0 ||
+            !scopeOfWork.trim() ||
+            topic.scopes.some((s) => s.scopeOfWork === scopeOfWork.trim())),
+      ),
+    [topics, redbrickProject, scopeOfWork],
+  );
+
   useEffect(() => {
     setCaseId(c.caseId);
     setStatus(c.status);
     setRedbrickProject(c.redbrickProject);
     setGuideId(c.guide?.id ?? "");
-    setTopicId(c.topic?.id ?? "");
+    setTopicIds(c.topics.map((t) => t.id));
     setGuideline(c.guideline);
     setVideoGuideUrlsText(c.videoGuideUrls.join("\n"));
     setScopeOfWork(c.scopeOfWork);
@@ -100,7 +116,7 @@ export function ReviewerCaseEditor({
         status,
         redbrickProject,
         guideId,
-        topicId,
+        topicIds,
         guideline,
         videoGuideUrls: parseVideoGuideUrlsInput(videoGuideUrlsText),
         scopeOfWork,
@@ -175,7 +191,33 @@ export function ReviewerCaseEditor({
             className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
           />
         </label>
-        <input type="hidden" name="topicId" value={topicId} />
+        <div className="md:col-span-2 text-sm">
+          <span className="text-[var(--muted)]">{tk("case_topic")}</span>
+          <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("case_topic_multi_hint")}</p>
+          <div className="mt-2 max-h-40 space-y-2 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--surface)] p-2">
+            {visibleTopics.length === 0 ? (
+              <p className="text-xs text-[var(--muted)]">—</p>
+            ) : (
+              visibleTopics.map((topic) => (
+                <label key={topic.id} className="flex cursor-pointer items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={topicIds.includes(topic.id)}
+                    onChange={() =>
+                      setTopicIds((prev) =>
+                        prev.includes(topic.id)
+                          ? prev.filter((id) => id !== topic.id)
+                          : [...prev, topic.id],
+                      )
+                    }
+                  />
+                  <span>{topic.name}</span>
+                </label>
+              ))
+            )}
+          </div>
+        </div>
         <label className="md:col-span-2 text-sm">
           <span className="text-[var(--muted)]">{tk("case_guideline")}</span>
           <textarea

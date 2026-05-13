@@ -4,6 +4,7 @@ import {
   getAnnotatorBoard,
   getAnnotatorAvailabilitySummary,
   getAnnotatorCompensationSummary,
+  getAnnotatorPendingReviewAcknowledgments,
   listGuidesAndTopics,
 } from "@/app/actions/cases";
 import { AnnotatorAvailabilityPanel } from "@/components/AnnotatorAvailabilityPanel";
@@ -28,13 +29,17 @@ export default async function AnnotatorPage() {
   let availability;
   let guidesAndTopics;
   let notifGroups;
+  let pendingReviewAcks;
   try {
-    [board, summary, availability, guidesAndTopics, notifGroups] = await Promise.all([
+    [board, summary, availability, guidesAndTopics, notifGroups, pendingReviewAcks] = await Promise.all([
       getAnnotatorBoard(),
       getAnnotatorCompensationSummary(),
       getAnnotatorAvailabilitySummary(),
       listGuidesAndTopics(),
       getNotifications(),
+      user.role === "ANNOTATOR"
+        ? getAnnotatorPendingReviewAcknowledgments()
+        : Promise.resolve([]),
     ]);
   } catch {
     redirect("/login");
@@ -84,6 +89,7 @@ export default async function AnnotatorPage() {
             reference={board.reference}
             guides={guidesAndTopics.guides}
             topics={guidesAndTopics.topics}
+            pendingReviewAcks={pendingReviewAcks}
           />
         </section>
       </main>

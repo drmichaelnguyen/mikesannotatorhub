@@ -28,6 +28,8 @@ export const dict = {
     case_video_open_link: "Open video in new tab",
     case_guide: "Guide",
     case_topic: "Topic",
+    case_topic_multi_hint:
+      "Optional. Pick one or more topics; in case details, click a topic name to open its full description.",
     case_scope: "Scope of work",
     case_scope_hint: "Choose from existing scopes or type a new one (max 12 words).",
     case_minMinutes_recommended: "Min time per case (recommended, minutes)",
@@ -85,6 +87,19 @@ export const dict = {
     annotator_board_title: "Cases by project",
     annotator_board_hint:
       "Expand a RedbrickAI project. One row per study ID: take an open case, submit your time, or open details for guidelines and discussion. Completed cases are below.",
+    annotator_review_ack_title: "Read reviewer feedback",
+    annotator_review_ack_intro:
+      "Before taking another case from the open pool, read this review (rating and comment) and tap Mark as read.",
+    annotator_review_ack_remaining: "Cases still to acknowledge",
+    annotator_review_ack_mark_read: "Mark as read",
+    annotator_review_ack_outcome_rejected: "Outcome: Rejected — your submission needs changes.",
+    annotator_review_ack_outcome_audited: "Outcome: Audited (accepted)",
+    annotator_review_ack_reviewed_at: "Reviewed",
+    annotator_review_ack_no_comment: "The reviewer did not leave a written comment.",
+    annotator_review_ack_block_take:
+      "Read and mark as read on each case’s feedback before taking a new one from the pool.",
+    annotator_review_ack_block_assign:
+      "This annotator must read and acknowledge reviewer feedback on their existing cases before receiving another assignment.",
     annotator_section_pool: "Open pool",
     annotator_section_reference: "Reference cases",
     annotator_section_active: "My open cases",
@@ -338,6 +353,8 @@ export const dict = {
     case_video_open_link: "Mở video trong tab mới",
     case_guide: "Guide",
     case_topic: "Topic",
+    case_topic_multi_hint:
+      "Tuỳ chọn. Chọn một hoặc nhiều topic; trong chi tiết ca, bấm tên topic để xem mô tả đầy đủ.",
     case_scope: "Phạm vi công việc",
     case_scope_hint: "Chọn phạm vi có sẵn hoặc nhập mới (tối đa 12 từ).",
     case_minMinutes_recommended: "Thời gian tối thiểu / ca (khuyến nghị, phút)",
@@ -395,6 +412,19 @@ export const dict = {
     annotator_board_title: "Ca theo dự án",
     annotator_board_hint:
       "Mở rộng dự án RedbrickAI. Mỗi dòng một mã nghiên cứu: nhận ca trống, gửi số phút, hoặc mở chi tiết để xem hướng dẫn và trao đổi. Ca hoàn tất nằm bên dưới.",
+    annotator_review_ack_title: "Đọc phản hồi từ người duyệt",
+    annotator_review_ack_intro:
+      "Trước khi nhận ca mới từ kho chung, hãy đọc bản duyệt (đánh giá sao và nhận xét) và nhấn Đã đọc.",
+    annotator_review_ack_remaining: "Số ca còn cần xác nhận đã đọc",
+    annotator_review_ack_mark_read: "Đã đọc",
+    annotator_review_ack_outcome_rejected: "Kết quả: Từ chối — bản nộp cần chỉnh sửa.",
+    annotator_review_ack_outcome_audited: "Kết quả: Đã kiểm duyệt (chấp nhận)",
+    annotator_review_ack_reviewed_at: "Ngày duyệt",
+    annotator_review_ack_no_comment: "Người duyệt không để lại nhận xét bằng chữ.",
+    annotator_review_ack_block_take:
+      "Hãy đọc và xác nhận đã đọc phản hồi trên từng ca trước khi nhận ca mới từ kho chung.",
+    annotator_review_ack_block_assign:
+      "Người gán nhãn này cần đọc và xác nhận phản hồi duyệt trên các ca hiện có trước khi được giao ca mới.",
     annotator_section_pool: "Ca trống (chung)",
     annotator_section_reference: "Ca tham khảo",
     annotator_section_active: "Ca đang làm",

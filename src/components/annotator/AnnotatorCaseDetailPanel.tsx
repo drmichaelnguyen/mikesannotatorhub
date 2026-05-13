@@ -1,6 +1,7 @@
 "use client";
 
 import { CaseDiscussion } from "@/components/CaseDiscussion";
+import { TopicDetailModal } from "@/components/TopicDetailModal";
 import { CaseVideoGuidesSection } from "@/components/CaseVideoGuides";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { RichTextContent } from "@/components/RichTextContent";
@@ -9,23 +10,16 @@ import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
+import type { SerializedCaseTopic } from "@/lib/reviewer-serialize";
 import type { GuideOption, MentionOption } from "@/lib/guide-topic";
 import { videoGuideUrlsFromDb } from "@/lib/video-guides";
 import type { AnnotationCase, CompensationType, Review } from "@prisma/client";
 import { CaseStatus } from "@prisma/client";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 export type AnnotatorCaseRow = AnnotationCase & {
   guide: { id: string; title: string } | null;
-  topic:
-    | {
-        id: string;
-        name: string;
-        description: string | null;
-        projects: { id: string; redbrickProject: string }[];
-        scopes: { id: string; scopeOfWork: string }[];
-      }
-    | null;
+  topics: SerializedCaseTopic[];
   reviews?: Pick<Review, "id" | "decision" | "comment" | "createdAt">[];
   _count?: { caseNotes: number };
   auditedBy?: { id: string; name: string; email: string } | null;
@@ -78,6 +72,7 @@ export function AnnotatorCaseDetailPanel({
   );
   const showGuideline = !row.guide || row.guideline.trim() !== guideGuideline;
   const videoUrls = videoGuideUrlsFromDb(row.videoGuideUrls);
+  const [topicModal, setTopicModal] = useState<SerializedCaseTopic | null>(null);
 
   return (
     <div className="space-y-4 p-4">
@@ -135,23 +130,20 @@ export function AnnotatorCaseDetailPanel({
             </dd>
           </div>
         )}
-        {row.topic && (
+        {row.topics.length > 0 && (
           <div className="md:col-span-2">
             <dt className="text-[var(--muted)]">{tk("case_topic")}</dt>
-            <dd>
-              <div className="font-medium">{row.topic.name}</div>
-              <div className="text-xs text-[var(--muted)]">
-                {[
-                  row.topic.projects.length
-                    ? `RB: ${row.topic.projects.map((p) => p.redbrickProject).join(", ")}`
-                    : "",
-                  row.topic.scopes.length
-                    ? `Scope: ${row.topic.scopes.map((s) => s.scopeOfWork).join(", ")}`
-                    : "",
-                ]
-                  .filter(Boolean)
-                  .join(" | ") || "—"}
-              </div>
+            <dd className="flex flex-wrap gap-2">
+              {row.topics.map((topic) => (
+                <button
+                  key={topic.id}
+                  type="button"
+                  onClick={() => setTopicModal(topic)}
+                  className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1 text-left text-sm font-medium text-[var(--accent)] underline-offset-2 hover:bg-[var(--surface)] hover:underline"
+                >
+                  {topic.name}
+                </button>
+              ))}
             </dd>
           </div>
         )}
@@ -251,6 +243,7 @@ export function AnnotatorCaseDetailPanel({
           requireComposerTemplate={true}
         />
       </div>
+      <TopicDetailModal lang={lang} topic={topicModal} onClose={() => setTopicModal(null)} />
     </div>
   );
 }

@@ -35,7 +35,6 @@ export function CreateCaseForm({
   const router = useRouter();
   const [redbrickProject, setRedbrickProject] = useState("");
   const [guideId, setGuideId] = useState("");
-  const [topicId, setTopicId] = useState("");
   const [guideline, setGuideline] = useState("");
   const [scopeOfWork, setScopeOfWork] = useState("");
   const [minMinutesPerCase, setMinMinutesPerCase] = useState("");
@@ -110,21 +109,21 @@ export function CreateCaseForm({
           ))}
         </select>
       </label>
-      <label>
+      <label className="md:col-span-2">
         <span className="text-sm text-[var(--muted)]">{tk("case_topic")}</span>
-        <select
-          name="topicId"
-          value={topicId}
-          onChange={(e) => setTopicId(e.target.value)}
-          className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
-        >
-          <option value="">—</option>
-          {visibleTopics.map((topic) => (
-            <option key={topic.id} value={topic.id}>
-              {topic.name}
-            </option>
-          ))}
-        </select>
+        <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("case_topic_multi_hint")}</p>
+        <div className="mt-2 max-h-48 space-y-2 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--bg)] p-2">
+          {visibleTopics.length === 0 ? (
+            <p className="text-sm text-[var(--muted)]">—</p>
+          ) : (
+            visibleTopics.map((topic) => (
+              <label key={topic.id} className="flex cursor-pointer items-start gap-2 text-sm">
+                <input type="checkbox" name="topicIds" value={topic.id} className="mt-1" />
+                <span>{topic.name}</span>
+              </label>
+            ))
+          )}
+        </div>
       </label>
       <label className="md:col-span-2">
         <span className="text-sm text-[var(--muted)]">{tk("case_guideline")}</span>
