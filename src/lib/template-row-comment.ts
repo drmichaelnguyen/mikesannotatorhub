@@ -60,6 +60,19 @@ export function parseTemplateRowStored(content: string): { rowIndex: number; val
   return { rowIndex, value: (match[2] ?? "").trim() };
 }
 
+/** Scope template row text for this note (read-only thread badge). Null if not a template-row note. */
+export function getTemplateRowThreadBadgeLabel(
+  stored: string | null,
+  templateRows: string[],
+): string | null {
+  if (!stored) return null;
+  const parsed = parseTemplateRowStored(stored);
+  if (!parsed || templateRows.length === 0) return null;
+  const rowLabel = templateRows[parsed.rowIndex]?.trim();
+  if (!rowLabel) return null;
+  return rowLabel;
+}
+
 /** Plain text shown in thread / export when template rows are known. */
 export function formatTemplateNoteBodyForDisplay(
   stored: string | null,

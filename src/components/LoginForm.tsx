@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { loginAction } from "@/app/actions/auth";
 import { safeNextPath } from "@/lib/safe-next-path";
 import type { DictKey, Lang } from "@/lib/i18n";
@@ -12,12 +12,21 @@ type LoginState =
   | { ok: true; role: "REVIEWER" | "ANNOTATOR" }
   | { ok: false; error: "login" | "required" };
 
+const fieldClass =
+  "mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2";
+
 export function LoginForm({ lang, next }: { lang: Lang; next?: string }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
+  /** Real inputs mount only on the client so password-manager extensions (e.g. Keeper) cannot mutate SSR HTML before hydration. */
+  const [inputsReady, setInputsReady] = useState(false);
   const [state, formAction, pending] = useActionState(async (_: LoginState, fd: FormData) => {
     return loginAction(fd);
   }, null);
+
+  useEffect(() => {
+    setInputsReady(true);
+  }, []);
 
   useEffect(() => {
     if (state?.ok) {
@@ -35,23 +44,37 @@ export function LoginForm({ lang, next }: { lang: Lang; next?: string }) {
       <h1 className="text-xl font-semibold">{tk("login")}</h1>
       <label className="block">
         <span className="text-sm text-[var(--muted)]">{tk("email")}</span>
-        <input
-          name="email"
-          type="email"
-          required
-          autoComplete="username"
-          className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
-        />
+        {inputsReady ? (
+          <input
+            name="email"
+            type="email"
+            required
+            autoComplete="username"
+            className={fieldClass}
+          />
+        ) : (
+          <div
+            aria-hidden
+            className={`${fieldClass} block h-[42px] animate-pulse bg-[var(--border)]/30`}
+          />
+        )}
       </label>
       <label className="block">
         <span className="text-sm text-[var(--muted)]">{tk("password")}</span>
-        <input
-          name="password"
-          type="password"
-          required
-          autoComplete="current-password"
-          className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
-        />
+        {inputsReady ? (
+          <input
+            name="password"
+            type="password"
+            required
+            autoComplete="current-password"
+            className={fieldClass}
+          />
+        ) : (
+          <div
+            aria-hidden
+            className={`${fieldClass} block h-[42px] animate-pulse bg-[var(--border)]/30`}
+          />
+        )}
       </label>
       {state && !state.ok && (
         <p className="text-sm text-[var(--danger)]">
@@ -60,7 +83,7 @@ export function LoginForm({ lang, next }: { lang: Lang; next?: string }) {
       )}
       <button
         type="submit"
-        disabled={pending}
+        disabled={pending || !inputsReady}
         className="w-full rounded-md bg-[var(--accent)] py-2 text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
       >
         {tk("signIn")}

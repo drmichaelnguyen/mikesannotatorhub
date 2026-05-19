@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   markAllNotificationsReadAction,
   markCaseNotificationsReadAction,
 } from "@/app/actions/notifications";
 import type { NotificationGroup } from "@/app/actions/notifications";
+import { CaseDetailLink } from "@/components/CaseDetailLink";
 import { formatDate } from "@/lib/format";
 import { NOTIF } from "@/lib/notification-types";
 import type { DictKey, Lang } from "@/lib/i18n";
@@ -41,20 +42,10 @@ export function NotificationBell({
   const tk = (k: DictKey) => t(lang, k);
   const [open, setOpen] = useState(false);
   const [groups, setGroups] = useState(initialGroups);
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
   const router = useRouter();
   const [, start] = useTransition();
 
   const total = groups.reduce((n, g) => n + g.items.length, 0);
-
-  function openCase(annotationCaseId: string) {
-    setOpen(false);
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("case", annotationCaseId);
-    const query = params.toString();
-    router.push(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  }
 
   function dismissCase(annotationCaseId: string) {
     setGroups((prev) => prev.filter((g) => g.annotationCaseId !== annotationCaseId));
@@ -130,16 +121,16 @@ export function NotificationBell({
                 {groups.map((g) => (
                   <div key={g.annotationCaseId} className="px-3 py-2.5">
                     <div className="flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openCase(g.annotationCaseId)}
-                        className="min-w-0 flex-1 text-left"
-                      >
-                        <span className="font-mono text-sm font-semibold text-[var(--text)] hover:text-[var(--accent)]">
+                      <div className="min-w-0 flex-1 text-left">
+                        <CaseDetailLink
+                          caseDbId={g.annotationCaseId}
+                          onClick={() => setOpen(false)}
+                          className="font-mono text-sm font-semibold text-[var(--accent)] underline-offset-2 hover:underline"
+                        >
                           {g.caseLabel}
-                        </span>
+                        </CaseDetailLink>
                         <span className="ml-2 text-[10px] text-[var(--muted)]">{tk("action_details")}</span>
-                      </button>
+                      </div>
                       <button
                         type="button"
                         className="shrink-0 text-xs text-[var(--muted)] hover:text-[var(--text)]"
@@ -151,10 +142,10 @@ export function NotificationBell({
                     <ul className="mt-1.5 space-y-1">
                       {g.items.map((item) => (
                         <li key={item.id}>
-                          <button
-                            type="button"
-                            onClick={() => openCase(g.annotationCaseId)}
-                            className="flex w-full items-start gap-1.5 text-left text-xs text-[var(--muted)] hover:text-[var(--text)]"
+                          <CaseDetailLink
+                            caseDbId={g.annotationCaseId}
+                            onClick={() => setOpen(false)}
+                            className="flex w-full items-start gap-1.5 rounded-sm text-left text-xs text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--text)]"
                           >
                             <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${typeDot(item.type)}`} />
                             <span className="min-w-0">
@@ -163,7 +154,7 @@ export function NotificationBell({
                                 {formatDate(lang, item.createdAt)}
                               </span>
                             </span>
-                          </button>
+                          </CaseDetailLink>
                         </li>
                       ))}
                     </ul>

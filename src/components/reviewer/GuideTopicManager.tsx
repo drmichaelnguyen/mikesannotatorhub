@@ -113,15 +113,18 @@ export function GuideTopicManager({
                 className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
               />
             </label>
-            <label className="block text-sm">
-              <span className="text-[var(--muted)]">{tk("reviewer_guide_content")}</span>
+            <div className="block text-sm">
+              <label htmlFor="guide-content-create" className="text-[var(--muted)]">
+                {tk("reviewer_guide_content")}
+              </label>
               <RichTextEditor
+                id="guide-content-create"
                 value={guideContent}
                 onChange={setGuideContent}
                 placeholder={tk("reviewer_guide_content")}
               />
               <input type="hidden" name="content" value={guideContent} />
-            </label>
+            </div>
             {createGuideState && !createGuideState.ok && (
               <p className="text-sm text-[var(--danger)]">{tk("required")}</p>
             )}
@@ -148,15 +151,18 @@ export function GuideTopicManager({
                   className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
                 />
               </label>
-              <label className="block text-sm">
-                <span className="text-[var(--muted)]">{tk("reviewer_guide_content")}</span>
+              <div className="block text-sm">
+                <label htmlFor="guide-content-edit" className="text-[var(--muted)]">
+                  {tk("reviewer_guide_content")}
+                </label>
                 <RichTextEditor
+                  id="guide-content-edit"
                   value={editingGuideContent}
                   onChange={setEditingGuideContent}
                   placeholder={tk("reviewer_guide_content")}
                 />
                 <input type="hidden" name="content" value={editingGuideContent} />
-              </label>
+              </div>
               {updateGuideState && !updateGuideState.ok && (
                 <p className="text-sm text-[var(--danger)]">{tk("required")}</p>
               )}
@@ -196,15 +202,18 @@ export function GuideTopicManager({
               className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
             />
           </label>
-          <label className="block text-sm">
-            <span className="text-[var(--muted)]">{tk("reviewer_topic_desc")}</span>
+          <div className="block text-sm">
+            <label htmlFor="topic-desc-create" className="text-[var(--muted)]">
+              {tk("reviewer_topic_desc")}
+            </label>
             <RichTextEditor
+              id="topic-desc-create"
               value={topicDescription}
               onChange={setTopicDescription}
               placeholder={tk("reviewer_topic_desc")}
             />
             <input type="hidden" name="description" value={topicDescription} />
-          </label>
+          </div>
           <label className="block text-sm">
             <span className="text-[var(--muted)]">{tk("reviewer_topic_projects")}</span>
             <p className="text-xs text-[var(--muted)]">{tk("reviewer_topic_projects_hint")}</p>
@@ -397,15 +406,18 @@ export function GuideTopicManager({
               className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
             />
           </label>
-          <label className="block text-sm">
-            <span className="text-[var(--muted)]">{tk("reviewer_topic_desc")}</span>
+          <div className="block text-sm">
+            <label htmlFor="topic-desc-edit" className="text-[var(--muted)]">
+              {tk("reviewer_topic_desc")}
+            </label>
             <RichTextEditor
+              id="topic-desc-edit"
               value={editingTopicDescription}
               onChange={setEditingTopicDescription}
               placeholder={tk("reviewer_topic_desc")}
             />
             <input type="hidden" name="description" value={editingTopicDescription} />
-          </label>
+          </div>
           <label className="block text-sm">
             <span className="text-[var(--muted)]">{tk("reviewer_topic_projects")}</span>
             <p className="text-xs text-[var(--muted)]">{tk("reviewer_topic_projects_hint")}</p>

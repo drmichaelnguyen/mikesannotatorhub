@@ -25,6 +25,7 @@ export async function createCaseNote(input: {
   content: string;
   imageDataList: string[];
   parentNoteId?: string | null;
+  isQuestion?: boolean;
 }): Promise<NotePostResult> {
   const res = await fetch(`/api/cases/${encodeURIComponent(input.caseDbId)}/notes`, {
     method: "POST",
@@ -33,6 +34,7 @@ export async function createCaseNote(input: {
       content: input.content,
       imageDataList: input.imageDataList,
       parentNoteId: input.parentNoteId ?? null,
+      isQuestion: input.isQuestion === true,
     }),
   });
   return (await res.json()) as NotePostResult;
@@ -43,6 +45,7 @@ export async function updateCaseNote(input: {
   noteId: string;
   content: string;
   imageDataList: string[];
+  isQuestion?: boolean;
 }): Promise<NoteMutationResult> {
   const res = await fetch(
     `/api/cases/${encodeURIComponent(input.caseDbId)}/notes/${encodeURIComponent(input.noteId)}`,
@@ -52,6 +55,7 @@ export async function updateCaseNote(input: {
       body: JSON.stringify({
         content: input.content,
         imageDataList: input.imageDataList,
+        isQuestion: input.isQuestion,
       }),
     },
   );

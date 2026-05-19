@@ -15,6 +15,7 @@ import {
   type AnnotatorCaseRow,
 } from "@/components/annotator/AnnotatorCaseDetailPanel";
 import { AnnotatorReviewAckModal } from "@/components/annotator/AnnotatorReviewAckModal";
+import { CaseDetailLink } from "@/components/CaseDetailLink";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
 import { createCaseNote, fetchCaseNotes } from "@/lib/case-note-api";
@@ -732,7 +733,19 @@ export function AnnotatorWorkboard({
                         ★
                       </span>
                     )}
-                    <span>{c.caseId}</span>
+                    <CaseDetailLink
+                      caseDbId={c.id}
+                      onClick={(e) => e.stopPropagation()}
+                      className={`font-mono font-medium underline-offset-2 hover:underline ${
+                        c.status === CaseStatus.REJECTED
+                          ? "text-[var(--danger)]"
+                          : isPool
+                            ? "text-slate-900"
+                            : "text-[var(--text)]"
+                      }`}
+                    >
+                      {c.caseId}
+                    </CaseDetailLink>
                     <CopyTextButton lang={lang} value={c.caseId} />
                   </div>
                 </td>
@@ -1125,7 +1138,7 @@ export function AnnotatorWorkboard({
       )}
 
       {detailRow && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/50" role="presentation">
+        <div className="fixed inset-0 z-[110] flex justify-end bg-black/50" role="presentation">
           <div
             className="absolute inset-0 h-full w-full cursor-default"
             aria-label={tk("drawer_close")}
@@ -1175,7 +1188,19 @@ export function AnnotatorWorkboard({
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="mb-2 font-medium">{tk("action_comment")}</h3>
-            <p className="mb-2 text-xs text-[var(--muted)]">{noteCase.caseId}</p>
+            <p className="mb-2 text-xs text-[var(--muted)]">
+              <CaseDetailLink
+                caseDbId={noteCase.id}
+                onClick={() => {
+                  setNoteCaseId(null);
+                  resetNoteComposer();
+                  setErr(null);
+                }}
+                className="font-mono font-medium text-[var(--accent)] underline-offset-2 hover:underline"
+              >
+                {noteCase.caseId}
+              </CaseDetailLink>
+            </p>
             {noteTemplateOptions.length > 0 && (
               <label className="mb-2 block">
                 <span className="text-sm text-[var(--muted)]">{tk("discussion_template_field")}</span>

@@ -39,6 +39,7 @@ export async function PATCH(
     | {
         content?: unknown;
         imageDataList?: unknown;
+        isQuestion?: unknown;
       }
     | null;
 
@@ -54,12 +55,16 @@ export async function PATCH(
     return jsonError(400, "empty");
   }
 
+  const isQuestion =
+    typeof body?.isQuestion === "boolean" ? body.isQuestion : undefined;
+
   await prisma.caseNote.update({
     where: { id: noteId },
     data: {
       content: text || null,
       imageData: images[0] ?? null,
       imageDataListJson: images.length > 0 ? JSON.stringify(images) : null,
+      ...(isQuestion !== undefined ? { isQuestion } : {}),
     },
   });
 

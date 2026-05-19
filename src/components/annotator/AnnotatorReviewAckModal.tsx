@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState, useTransition } from "react";
 import { acknowledgeAnnotatorReviewAction, type PendingReviewAckCase } from "@/app/actions/cases";
+import { CaseDetailLink } from "@/components/CaseDetailLink";
 import { StarRating } from "@/components/StarRating";
 import { formatDate } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
@@ -61,7 +62,12 @@ export function AnnotatorReviewAckModal({
         <div className="mt-4 space-y-3 rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4 text-sm">
           <div>
             <span className="text-[var(--muted)]">{tk("case_caseId")}: </span>
-            <span className="font-mono font-medium text-[var(--text)]">{current.caseId}</span>
+            <CaseDetailLink
+              caseDbId={current.caseDbId}
+              className="font-mono font-medium text-[var(--accent)] underline-offset-2 hover:underline"
+            >
+              {current.caseId}
+            </CaseDetailLink>
           </div>
           <div>
             <span className="text-[var(--muted)]">{tk("case_redbrick")}: </span>

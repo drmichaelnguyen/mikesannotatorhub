@@ -171,6 +171,7 @@ model CaseNote {
   content          String?
   imageData        String?
   imageDataListJson String?
+  isQuestion       Boolean        @default(false)
   createdAt        DateTime       @default(now())
 
   @@index([annotationCaseId])

@@ -11,6 +11,7 @@ import {
   composerAnswerDraftForTemplateRow,
   formatTemplateNoteBodyForDisplay,
   formatTemplateNoteBodyForExport,
+  getTemplateRowThreadBadgeLabel,
   parseTemplateRowStored,
 } from "@/lib/template-row-comment";
 import { getClipboardImageFiles, readFilesAsDataUrls } from "@/lib/client-image-data";
@@ -25,6 +26,7 @@ export type CaseDiscussionNote = {
   parentNoteId: string | null;
   content: string | null;
   images: string[];
+  isQuestion: boolean;
   createdAt: string;
   author: { id: string; name: string; role: UserRole };
 };
@@ -107,6 +109,7 @@ type ExportRow = {
   noteId: string;
   image: string | null;
   comment: string;
+  isQuestion: boolean;
   authorName: string;
   authorRole: UserRole;
   createdAt: string;
@@ -115,6 +118,7 @@ type ExportRow = {
 type ExportCommentRow = {
   noteId: string;
   comment: string;
+  isQuestion: boolean;
 };
 
 function flattenDiscussion(nodes: DiscussionNode[]): DiscussionNode[] {
@@ -142,6 +146,7 @@ function buildExportRows(nodes: DiscussionNode[], templateRows: string[]): Expor
     const base = {
       noteId: note.id,
       comment: content,
+      isQuestion: !!note.isQuestion,
       authorName: note.author.name,
       authorRole: note.author.role,
       createdAt: note.createdAt,
@@ -162,6 +167,7 @@ function buildExportCommentRows(nodes: DiscussionNode[], templateRows: string[])
     rows.push({
       noteId: note.id,
       comment: content,
+      isQuestion: !!note.isQuestion,
     });
     return rows;
   }, []);
@@ -184,7 +190,15 @@ function buildClipboardHtml({
 
   const tableRows = rows
     .map((row) => {
-      const commentParts = row.comment ? [escapeHtml(row.comment)] : [];
+      const labeledComment = row.isQuestion
+        ? `${t(lang, "discussion_question_export_prefix")}${row.comment}`
+        : row.comment;
+      const commentParts =
+        labeledComment.trim().length > 0
+          ? [escapeHtml(labeledComment)]
+          : row.isQuestion
+            ? [escapeHtml(t(lang, "discussion_question_badge"))]
+            : [];
       const imageCell = row.image
         ? `<img src="${row.image}" alt="" style="display:block;max-width:320px;max-height:240px;width:auto;height:auto;border:1px solid #d4d4d8;border-radius:6px;" />`
         : `<div style="color:#999;font-size:12px;">${escapeHtml(t(lang, "discussion_export_no_image"))}</div>`;
@@ -232,11 +246,20 @@ function buildClipboardText({
     title,
     "",
     ...rows.map((row, index) => {
+      const labeledComment = row.isQuestion
+        ? `${t(lang, "discussion_question_export_prefix")}${row.comment}`
+        : row.comment;
+      const commentText =
+        labeledComment.trim().length > 0
+          ? labeledComment
+          : row.isQuestion
+            ? t(lang, "discussion_question_badge")
+            : "—";
       return [
         `${index + 1}. ${t(lang, "discussion_export_image_col")}: ${
           row.image ? t(lang, "discussion_export_image_included") : t(lang, "discussion_export_no_image")
         }`,
-        `${t(lang, "discussion_export_comment_col")}: ${row.comment || "—"}`,
+        `${t(lang, "discussion_export_comment_col")}: ${commentText}`,
       ].join("\n");
     }),
   ].join("\n");
@@ -258,9 +281,18 @@ function buildCommentsOnlyClipboardHtml({
 
   const blocks = rows
     .map((row, index) => {
+      const labeledComment = row.isQuestion
+        ? `${t(lang, "discussion_question_export_prefix")}${row.comment}`
+        : row.comment;
+      const body =
+        labeledComment.trim().length > 0
+          ? labeledComment
+          : row.isQuestion
+            ? t(lang, "discussion_question_badge")
+            : row.comment;
       return `<div style="margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #e4e4e7;">
   <div style="margin-bottom:6px;color:#666;font-size:12px;">${index + 1}.</div>
-  <div style="white-space:pre-wrap;">${escapeHtml(row.comment)}</div>
+  <div style="white-space:pre-wrap;">${escapeHtml(body)}</div>
 </div>`;
     })
     .join("");
@@ -292,7 +324,18 @@ function buildCommentsOnlyClipboardText({
   return [
     title,
     "",
-    ...rows.map((row) => row.comment),
+    ...rows.map((row) => {
+      const labeledComment = row.isQuestion
+        ? `${t(lang, "discussion_question_export_prefix")}${row.comment}`
+        : row.comment;
+      const body =
+        labeledComment.trim().length > 0
+          ? labeledComment
+          : row.isQuestion
+            ? t(lang, "discussion_question_badge")
+            : row.comment;
+      return body;
+    }),
   ].join("\n\n");
 }
 
@@ -512,6 +555,7 @@ export function MentionTextarea({
 type ComposerState = {
   value: string;
   images: string[];
+  isQuestion: boolean;
   err: string | null;
   pending: boolean;
   mentionOptions: MentionOption[];
@@ -520,6 +564,7 @@ type ComposerState = {
   onFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onRemoveImage: (index: number) => void;
   onUpdateImage: (index: number, url: string | null) => void;
+  onQuestionChange: (value: boolean) => void;
   onPost: (parentNoteId: string | null) => void;
   onCancelReply: () => void;
 };
@@ -748,6 +793,15 @@ function Composer({
                 ))}
               </div>
             )}
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-[var(--muted)]">
+              <input
+                type="checkbox"
+                checked={state.isQuestion}
+                onChange={(e) => state.onQuestionChange(e.target.checked)}
+                className="rounded border-[var(--border)]"
+              />
+              <span>{tk("discussion_mark_question")}</span>
+            </label>
             {state.err && <p className="text-sm text-[var(--danger)]">{state.err}</p>}
             <div className="flex flex-wrap gap-2 pt-1">
               {parentNoteId && (
@@ -820,6 +874,15 @@ function Composer({
               ))}
             </div>
           )}
+          <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-[var(--muted)]">
+            <input
+              type="checkbox"
+              checked={state.isQuestion}
+              onChange={(e) => state.onQuestionChange(e.target.checked)}
+              className="rounded border-[var(--border)]"
+            />
+            <span>{tk("discussion_mark_question")}</span>
+          </label>
           {state.err && <p className="mt-2 text-sm text-[var(--danger)]">{state.err}</p>}
           <div className="mt-3 flex flex-wrap gap-2">
             {parentNoteId && (
@@ -877,6 +940,7 @@ function NoteItem({
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(note.content ?? "");
   const [editImages, setEditImages] = useState<string[]>(() => [...note.images]);
+  const [editIsQuestion, setEditIsQuestion] = useState(note.isQuestion);
   const [editErr, setEditErr] = useState<string | null>(null);
   const [mutating, startMutate] = useTransition();
 
@@ -884,8 +948,9 @@ function NoteItem({
     if (!editing) {
       setEditContent(note.content ?? "");
       setEditImages([...note.images]);
+      setEditIsQuestion(note.isQuestion);
     }
-  }, [editing, note.id, note.content, note.images]);
+  }, [editing, note.id, note.content, note.images, note.isQuestion]);
 
   const onPasteEdit = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const files = getClipboardImageFiles(e.clipboardData);
@@ -914,8 +979,9 @@ function NoteItem({
     setEditErr(null);
     setEditContent(note.content ?? "");
     setEditImages([...note.images]);
+    setEditIsQuestion(note.isQuestion);
     setEditing(true);
-  }, [note.content, note.images]);
+  }, [note.content, note.images, note.isQuestion]);
 
   const cancelEdit = useCallback(() => {
     setEditing(false);
@@ -930,6 +996,7 @@ function NoteItem({
         noteId: note.id,
         content: editContent,
         imageDataList: editImages,
+        isQuestion: editIsQuestion,
       });
       if (!res.ok) {
         setEditErr(
@@ -940,7 +1007,7 @@ function NoteItem({
       setEditing(false);
       await onReloadNotes();
     });
-  }, [caseDbId, editContent, editImages, lang, note.id, onReloadNotes]);
+  }, [caseDbId, editContent, editImages, editIsQuestion, lang, note.id, onReloadNotes]);
 
   const doDelete = useCallback(() => {
     if (!window.confirm(t(lang, "discussion_delete_confirm"))) return;
@@ -962,8 +1029,14 @@ function NoteItem({
   return (
     <li
       className={`rounded-lg border p-3 text-sm shadow-sm ${
+        note.isQuestion
+          ? "border-[var(--accent)]/35 bg-[var(--accent)]/[0.06] ring-1 ring-inset ring-[var(--accent)]/20"
+          : ""
+      } ${
         depth === 0
-          ? "border-[var(--border)] bg-[var(--bg)]"
+          ? note.isQuestion
+            ? ""
+            : "border-[var(--border)] bg-[var(--bg)]"
           : "relative ml-4 border-[var(--border)]/70 bg-[var(--surface)]"
       }`}
     >
@@ -980,6 +1053,11 @@ function NoteItem({
             {note.author.role === "REVIEWER" ? tk("role_reviewer") : tk("role_annotator")}
           </span>
           <span>{formatDate(lang, new Date(note.createdAt))}</span>
+          {note.isQuestion && !editing ? (
+            <span className="rounded-full bg-[var(--accent)]/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--accent)]">
+              {tk("discussion_question_badge")}
+            </span>
+          ) : null}
         </div>
         {editing ? (
           <div className="mt-2 space-y-2">
@@ -1018,6 +1096,15 @@ function NoteItem({
                 ))}
               </div>
             ) : null}
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-[var(--muted)]">
+              <input
+                type="checkbox"
+                checked={editIsQuestion}
+                onChange={(e) => setEditIsQuestion(e.target.checked)}
+                className="rounded border-[var(--border)]"
+              />
+              <span>{tk("discussion_mark_question")}</span>
+            </label>
             {editErr ? <p className="text-sm text-[var(--danger)]">{editErr}</p> : null}
             <div className="flex flex-wrap gap-2">
               <button
@@ -1041,9 +1128,27 @@ function NoteItem({
         ) : (
           <>
             {note.content ? (
-              <p className="mt-2 whitespace-pre-wrap text-[var(--text)]">
-                {formatTemplateNoteBodyForDisplay(note.content, templateRows)}
-              </p>
+              <>
+                {(() => {
+                  const badge = getTemplateRowThreadBadgeLabel(note.content, templateRows);
+                  const bodyDisplay = formatTemplateNoteBodyForDisplay(note.content, templateRows).trim();
+                  return (
+                    <>
+                      {badge ? (
+                        <div
+                          className="mt-2 select-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-xs leading-snug text-[var(--text)]"
+                        >
+                          <span className="text-[var(--muted)]">{tk("discussion_template_field")}: </span>
+                          <span className="font-medium">{badge}</span>
+                        </div>
+                      ) : null}
+                      {bodyDisplay ? (
+                        <p className="mt-2 whitespace-pre-wrap text-[var(--text)]">{bodyDisplay}</p>
+                      ) : null}
+                    </>
+                  );
+                })()}
+              </>
             ) : null}
             {note.images.length > 0 ? (
               <div className="mt-2 flex flex-wrap gap-2">
@@ -1142,6 +1247,7 @@ export function CaseDiscussion({
   const [selectedTemplateRowIndex, setSelectedTemplateRowIndex] = useState<number | null>(null);
   const [templateSelectionTouched, setTemplateSelectionTouched] = useState(false);
   const [images, setImages] = useState<string[]>([]);
+  const [isQuestion, setIsQuestion] = useState(false);
   const [notes, setNotes] = useState<CaseDiscussionNote[]>(initialNotes);
   const [notesLoaded, setNotesLoaded] = useState(false);
   const [viewerId, setViewerId] = useState<string | null>(null);
@@ -1190,7 +1296,12 @@ export function CaseDiscussion({
     setNotesLoaded(false);
     const res = await fetchCaseNotes(caseDbId);
     if (res.ok) {
-      setNotes(res.notes);
+      setNotes(
+        res.notes.map((n) => ({
+          ...n,
+          isQuestion: n.isQuestion === true,
+        })),
+      );
       setViewerId(res.viewerId);
     } else {
       setViewerId(null);
@@ -1204,6 +1315,7 @@ export function CaseDiscussion({
     setSelectedTemplateRowIndex(null);
     setTemplateSelectionTouched(false);
     setImages([]);
+    setIsQuestion(false);
     setReplyToId(null);
     setErr(null);
     setTemplateApplied(false);
@@ -1310,6 +1422,7 @@ export function CaseDiscussion({
   const resetComposer = useCallback(() => {
     setContent("");
     setImages([]);
+    setIsQuestion(false);
     setReplyToId(null);
   }, []);
 
@@ -1352,6 +1465,7 @@ export function CaseDiscussion({
           content: finalContent,
           imageDataList: currentImages,
           parentNoteId,
+          isQuestion,
         });
         if (!res.ok) {
           setErr(
@@ -1370,6 +1484,7 @@ export function CaseDiscussion({
     [
       caseDbId,
       composerTemplate,
+      isQuestion,
       lang,
       loadNotes,
       requireComposerTemplate,
@@ -1385,6 +1500,7 @@ export function CaseDiscussion({
     setReplyToId(null);
     setContent("");
     setImages([]);
+    setIsQuestion(false);
     setErr(null);
   }, []);
 
@@ -1395,6 +1511,7 @@ export function CaseDiscussion({
       // When switching to a reply, start with a fresh draft to avoid mixing the root template/content.
       setContent("");
       setImages([]);
+      setIsQuestion(false);
       return next;
     });
   }, []);
@@ -1403,6 +1520,7 @@ export function CaseDiscussion({
     () => ({
       value: content,
       images,
+      isQuestion,
       err,
       pending,
       mentionOptions,
@@ -1411,10 +1529,11 @@ export function CaseDiscussion({
       onFile,
       onRemoveImage: removeImage,
       onUpdateImage: updateImage,
+      onQuestionChange: setIsQuestion,
       onPost: post,
       onCancelReply: cancelReply,
     }),
-    [content, images, err, pending, mentionOptions, onPasteComposer, onFile, removeImage, updateImage, post, cancelReply],
+    [content, images, isQuestion, err, pending, mentionOptions, onPasteComposer, onFile, removeImage, updateImage, post, cancelReply],
   );
 
   const templateComposerState = useMemo<TemplateComposerState | null>(

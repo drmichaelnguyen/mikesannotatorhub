@@ -12,6 +12,7 @@ function formatDay(lang: Lang, day: string) {
     weekday: "short",
     month: "short",
     day: "numeric",
+    timeZone: "UTC",
   }).format(dt);
 }
 
@@ -19,6 +20,7 @@ function weekdayLabel(lang: Lang, day: string) {
   const dt = new Date(`${day}T12:00:00Z`);
   return new Intl.DateTimeFormat(lang === "vi" ? "vi-VN" : "en-US", {
     weekday: "short",
+    timeZone: "UTC",
   }).format(dt);
 }
 
@@ -46,7 +48,11 @@ export function AnnotatorAvailabilityPanel({
   const [hours, setHours] = useState<Record<string, string>>(() =>
     Object.fromEntries(summary.days.map((d) => [d.day, String(d.availableHours || "")])),
   );
-  const todayKey = localDayKey();
+  const [todayKey, setTodayKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTodayKey(localDayKey());
+  }, []);
 
   useEffect(() => {
     setHours(Object.fromEntries(summary.days.map((d) => [d.day, String(d.availableHours || "")])));
@@ -98,14 +104,14 @@ export function AnnotatorAvailabilityPanel({
               <label
                 key={day.day}
                 className={`flex min-h-32 flex-col bg-[var(--surface)] p-3 text-sm transition ${
-                  day.day === todayKey
+                  todayKey !== null && day.day === todayKey
                     ? "bg-[var(--accent)]/8"
                     : "hover:bg-[var(--bg)]/70"
                 }`}
               >
               <div className="flex items-start justify-between gap-2">
                 <span className="font-medium text-[var(--text)]">{formatDay(lang, day.day)}</span>
-                {day.day === todayKey && (
+                {todayKey !== null && day.day === todayKey && (
                   <span className="rounded-full bg-[var(--accent)] px-2 py-0.5 text-[10px] font-semibold text-white">
                     {tk("availability_today")}
                   </span>

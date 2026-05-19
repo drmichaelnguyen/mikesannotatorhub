@@ -14,6 +14,7 @@ import {
 } from "react";
 import { batchUpdateCasesAction, reviewCaseAction, reviewerAssignCaseAction } from "@/app/actions/cases";
 import { MentionTextarea } from "@/components/CaseDiscussion";
+import { CaseDetailLink } from "@/components/CaseDetailLink";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
 import {
@@ -295,6 +296,7 @@ function formatMonthLabel(lang: Lang, monthKey: string) {
   return new Intl.DateTimeFormat(lang === "vi" ? "vi-VN" : "en-US", {
     year: "numeric",
     month: "short",
+    timeZone: "UTC",
   }).format(date);
 }
 
@@ -1023,7 +1025,13 @@ export function ReviewerWorkboard({
                         ★
                       </span>
                     )}
-                    <span>{c.caseId}</span>
+                    <CaseDetailLink
+                      caseDbId={c.id}
+                      onClick={(e) => e.stopPropagation()}
+                      className="font-mono font-medium text-[var(--text)] underline-offset-2 hover:underline"
+                    >
+                      {c.caseId}
+                    </CaseDetailLink>
                     <CopyTextButton lang={lang} value={c.caseId} />
                   </div>
                 </td>
@@ -1505,17 +1513,14 @@ export function ReviewerWorkboard({
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {statusGroup.cases.map((c) => (
-                            <button
+                            <CaseDetailLink
                               key={c.id}
-                              type="button"
-                              className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1 text-xs font-mono hover:border-[var(--accent)] hover:text-[var(--accent)]"
-                              onClick={() => {
-                                closeAnnotatorFocus();
-                                openDetail(c.id);
-                              }}
+                              caseDbId={c.id}
+                              onClick={() => closeAnnotatorFocus()}
+                              className="inline-flex rounded-full border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1 text-xs font-mono text-[var(--accent)] underline-offset-2 hover:border-[var(--accent)] hover:underline"
                             >
                               {c.caseId}
-                            </button>
+                            </CaseDetailLink>
                           ))}
                         </div>
                       </div>
@@ -1900,13 +1905,19 @@ export function ReviewerWorkboard({
                                             }`}
                                           >
                                             <td className="py-1.5 pr-2 font-mono font-medium text-[var(--text)]">
-                                              <button
-                                                type="button"
-                                                className="rounded px-0.5 hover:text-[var(--accent)]"
-                                                onClick={() => openCaseFromPerformance(c.id)}
+                                              <CaseDetailLink
+                                                caseDbId={c.id}
+                                                amendSearch={(p) => {
+                                                  p.delete("annotators");
+                                                }}
+                                                onClick={() => {
+                                                  setSelectedAnnotatorId(null);
+                                                  setSelectedProject(null);
+                                                }}
+                                                className="rounded px-0.5 underline-offset-2 hover:text-[var(--accent)] hover:underline"
                                               >
                                                 {c.caseId}
-                                              </button>
+                                              </CaseDetailLink>
                                             </td>
                                             <td className="py-1.5 pr-2 text-[var(--muted)]">{c.scopeOfWork}</td>
                                             <td className="py-1.5 pr-2 tabular-nums text-[var(--muted)]">
@@ -2023,7 +2034,19 @@ export function ReviewerWorkboard({
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="mb-2 font-medium">{tk("action_comment")}</h3>
-            <p className="mb-2 text-xs text-[var(--muted)]">{noteCase.caseId}</p>
+            <p className="mb-2 text-xs text-[var(--muted)]">
+              <CaseDetailLink
+                caseDbId={noteCase.id}
+                onClick={() => {
+                  setNoteCaseId(null);
+                  resetNoteComposer();
+                  setErr(null);
+                }}
+                className="font-mono font-medium text-[var(--accent)] underline-offset-2 hover:underline"
+              >
+                {noteCase.caseId}
+              </CaseDetailLink>
+            </p>
             <MentionTextarea
               lang={lang}
               value={noteText}

@@ -7,6 +7,8 @@ export function formatDate(lang: Lang, d: Date | string | null | undefined) {
   return dt.toLocaleString(lang === "vi" ? "vi-VN" : "en-US", {
     dateStyle: "medium",
     timeStyle: "short",
+    // Fixed zone so Node SSR and the browser render the same string (avoids hydration mismatch).
+    timeZone: "UTC",
   });
 }
 

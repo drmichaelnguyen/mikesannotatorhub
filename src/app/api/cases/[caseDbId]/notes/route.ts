@@ -46,6 +46,7 @@ export async function GET(
       parentNoteId: note.parentNoteId,
       content: note.content,
       images: getCaseNoteImages(note),
+      isQuestion: note.isQuestion,
       createdAt: note.createdAt.toISOString(),
       author: { id: note.author.id, name: note.author.name, role: note.author.role },
     })),
@@ -65,6 +66,7 @@ export async function POST(
         content?: unknown;
         imageDataList?: unknown;
         parentNoteId?: unknown;
+        isQuestion?: unknown;
       }
     | null;
 
@@ -104,6 +106,8 @@ export async function POST(
     return jsonError(400, "empty");
   }
 
+  const isQuestion = body?.isQuestion === true;
+
   await prisma.caseNote.create({
     data: {
       annotationCaseId: row.id,
@@ -112,6 +116,7 @@ export async function POST(
       content: text || null,
       imageData: images[0] ?? null,
       imageDataListJson: images.length > 0 ? JSON.stringify(images) : null,
+      isQuestion,
     },
   });
 

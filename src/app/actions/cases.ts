@@ -520,6 +520,7 @@ export async function getAnnotatorPendingReviewAcknowledgments(): Promise<Pendin
       isReference: false,
       status: { in: [CaseStatus.REJECTED, CaseStatus.AUDITED, CaseStatus.ACCEPTED] },
     },
+    orderBy: { updatedAt: "desc" },
     select: {
       id: true,
       caseId: true,
@@ -551,6 +552,11 @@ export async function getAnnotatorPendingReviewAcknowledgments(): Promise<Pendin
           createdAt: rev.createdAt.toISOString(),
         },
       };
+    })
+    .sort((a, b) => {
+      const t = new Date(b.review.createdAt).getTime() - new Date(a.review.createdAt).getTime();
+      if (t !== 0) return t;
+      return b.caseDbId.localeCompare(a.caseDbId);
     });
 }
 
@@ -1132,6 +1138,7 @@ export async function addCaseNoteAction(input: {
   content: string;
   imageDataList: string[];
   parentNoteId?: string | null;
+  isQuestion?: boolean;
 }) {
   const user = await getCurrentUser();
   if (!user) return { ok: false as const, error: "auth" as const };
@@ -1171,6 +1178,7 @@ export async function addCaseNoteAction(input: {
       content: text || null,
       imageData: images[0] ?? null,
       imageDataListJson: images.length > 0 ? JSON.stringify(images) : null,
+      isQuestion: input.isQuestion === true,
     },
   });
 
@@ -1232,6 +1240,7 @@ export async function listCaseNotesAction(caseDbId: string) {
       parentNoteId: note.parentNoteId,
       content: note.content,
       images: getCaseNoteImages(note),
+      isQuestion: note.isQuestion,
       createdAt: note.createdAt.toISOString(),
       author: { id: note.author.id, name: note.author.name, role: note.author.role },
     })),
