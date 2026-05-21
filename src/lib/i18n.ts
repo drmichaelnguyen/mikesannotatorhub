@@ -96,6 +96,9 @@ export const dict = {
     annotator_review_ack_outcome_audited: "Outcome: Audited (accepted)",
     annotator_review_ack_reviewed_at: "Reviewed",
     annotator_review_ack_no_comment: "The reviewer did not leave a written comment.",
+    annotator_review_ack_open: "Read feedback",
+    annotator_review_ack_dismiss_banner:
+      "You have unread reviewer feedback on {count} case(s). Mark each as read before taking a new case from the pool.",
     annotator_review_ack_block_take:
       "Read and mark as read on each case’s feedback before taking a new one from the pool.",
     annotator_review_ack_block_assign:
@@ -309,6 +312,8 @@ export const dict = {
     action_details: "Details",
     action_annotate: "Annotator view",
     drawer_close: "Close",
+    ui_loading: "Loading…",
+    discussion_loading: "Loading discussion…",
     audit_reject_need_comment: "Add a comment when rejecting.",
     audit_reject_placeholder: "Explain what needs to change…",
     reviewer_audit_title: "Audit",
@@ -424,6 +429,9 @@ export const dict = {
     annotator_review_ack_outcome_audited: "Kết quả: Đã kiểm duyệt (chấp nhận)",
     annotator_review_ack_reviewed_at: "Ngày duyệt",
     annotator_review_ack_no_comment: "Người duyệt không để lại nhận xét bằng chữ.",
+    annotator_review_ack_open: "Đọc phản hồi",
+    annotator_review_ack_dismiss_banner:
+      "Bạn còn {count} ca chưa xác nhận đã đọc phản hồi người duyệt. Nhấn Đã đọc trên từng ca trước khi nhận ca mới từ kho chung.",
     annotator_review_ack_block_take:
       "Hãy đọc và xác nhận đã đọc phản hồi trên từng ca trước khi nhận ca mới từ kho chung.",
     annotator_review_ack_block_assign:
@@ -637,6 +645,8 @@ export const dict = {
     action_details: "Chi tiết",
     action_annotate: "Chế độ người gán nhãn",
     drawer_close: "Đóng",
+    ui_loading: "Đang tải…",
+    discussion_loading: "Đang tải thảo luận…",
     audit_reject_need_comment: "Từ chối cần có nhận xét.",
     audit_reject_placeholder: "Giải thích cần chỉnh sửa gì…",
     reviewer_audit_title: "Kiểm duyệt",

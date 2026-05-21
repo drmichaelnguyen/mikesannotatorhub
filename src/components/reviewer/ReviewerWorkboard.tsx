@@ -15,6 +15,12 @@ import {
 import { batchUpdateCasesAction, reviewCaseAction, reviewerAssignCaseAction } from "@/app/actions/cases";
 import { MentionTextarea } from "@/components/CaseDiscussion";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
+import { replaceCaseQueryInBrowser, replaceSearchInBrowser } from "@/lib/case-detail-url";
+import {
+  useCaseDetailSync,
+  useCaseDetailUrlState,
+  useDeferredCaseDetailClose,
+} from "@/lib/use-case-detail-sync";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
 import {
@@ -569,6 +575,11 @@ export function ReviewerWorkboard({
   );
 
   const [detailId, setDetailId] = useState<string | null>(null);
+  const {
+    isClosing: detailClosing,
+    scheduleUnmount: scheduleDetailUnmount,
+    cancelScheduledUnmount: cancelDetailUnmount,
+  } = useDeferredCaseDetailClose();
   const [detailMode, setDetailMode] = useState<"reviewer" | "annotator">("reviewer");
   const [noteCaseId, setNoteCaseId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
@@ -630,7 +641,6 @@ export function ReviewerWorkboard({
   const selectedAnnotator = selectedAnnotatorId
     ? annotatorPerformance.find((annotator) => annotator.id === selectedAnnotatorId) ?? null
     : null;
-  const selectedCaseId = searchParams.get("case");
   const annotatorsQuery = searchParams.get("annotators");
   const detailMentionOptions = useMemo(
     () =>
@@ -655,49 +665,43 @@ export function ReviewerWorkboard({
     [noteCase?.id, guides, topics],
   );
 
-  function syncCaseQuery(caseId: string | null) {
-    const params = new URLSearchParams(searchParams.toString());
-    if (caseId) params.set("case", caseId);
-    else params.delete("case");
-    const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  function syncCaseQuery(caseId: string | null, amendSearch?: (params: URLSearchParams) => void) {
+    replaceCaseQueryInBrowser(pathname, searchParams.toString(), caseId, amendSearch);
   }
 
-  useEffect(() => {
-    if (!selectedCaseId) {
-      setDetailId(null);
-      return;
-    }
-    if (cases.some((c) => c.id === selectedCaseId) && detailId !== selectedCaseId) {
-      setDetailId(selectedCaseId);
-    }
-  }, [cases, detailId, selectedCaseId]);
+  const isValidCase = useCallback((id: string) => cases.some((c) => c.id === id), [cases]);
 
-  useEffect(() => {
-    if (annotatorsQuery === "1") {
-      setDetailId(null);
-      return;
-    }
-    setSelectedAnnotatorId(null);
-    setSelectedProject(null);
-  }, [annotatorsQuery]);
-
-  function openDetail(caseId: string) {
+  function openDetail(caseId: string, amendSearch?: (params: URLSearchParams) => void) {
+    cancelDetailUnmount();
     setDetailMode("reviewer");
     setDetailId(caseId);
-    syncCaseQuery(caseId);
+    syncCaseQuery(caseId, amendSearch);
   }
 
   function openAnnotatorDetail(caseId: string) {
+    cancelDetailUnmount();
     setDetailMode("annotator");
     setDetailId(caseId);
     syncCaseQuery(caseId);
   }
 
   function closeDetail() {
-    setDetailId(null);
+    if (!detailId) return;
     syncCaseQuery(null);
+    scheduleDetailUnmount(() => setDetailId(null));
   }
+
+  useCaseDetailSync(isValidCase, openDetail, closeDetail);
+  useCaseDetailUrlState(setDetailId, isValidCase);
+
+  useEffect(() => {
+    if (annotatorsQuery === "1") {
+      closeDetail();
+      return;
+    }
+    setSelectedAnnotatorId(null);
+    setSelectedProject(null);
+  }, [annotatorsQuery]);
 
   function refresh() {
     router.refresh();
@@ -789,10 +793,9 @@ export function ReviewerWorkboard({
   function closeAnnotatorPerformance() {
     setSelectedAnnotatorId(null);
     setSelectedProject(null);
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete("annotators");
-    const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    replaceSearchInBrowser(pathname, searchParams.toString(), (params) => {
+      params.delete("annotators");
+    });
   }
 
   function openAnnotatorPerformanceDetail(annotatorId: string) {
@@ -807,11 +810,9 @@ export function ReviewerWorkboard({
   function openCaseFromPerformance(caseId: string) {
     setSelectedAnnotatorId(null);
     setSelectedProject(null);
-    setDetailId(caseId);
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete("annotators");
-    params.set("case", caseId);
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    openDetail(caseId, (params) => {
+      params.delete("annotators");
+    });
   }
 
   function resetNoteComposer() {
@@ -1027,7 +1028,10 @@ export function ReviewerWorkboard({
                     )}
                     <CaseDetailLink
                       caseDbId={c.id}
-                      onClick={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openDetail(c.id);
+                      }}
                       className="font-mono font-medium text-[var(--text)] underline-offset-2 hover:underline"
                     >
                       {c.caseId}
@@ -1410,7 +1414,12 @@ export function ReviewerWorkboard({
       )}
 
       {detailCase && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/50" role="presentation">
+        <div
+          className={`fixed inset-0 z-50 flex justify-end bg-black/50 transition-opacity duration-75 ${
+            detailClosing ? "pointer-events-none opacity-0" : ""
+          }`}
+          role="presentation"
+        >
           <div
             className="absolute inset-0 h-full w-full cursor-default"
             aria-label={tk("drawer_close")}
@@ -1516,7 +1525,10 @@ export function ReviewerWorkboard({
                             <CaseDetailLink
                               key={c.id}
                               caseDbId={c.id}
-                              onClick={() => closeAnnotatorFocus()}
+                              onClick={() => {
+                                closeAnnotatorFocus();
+                                openDetail(c.id);
+                              }}
                               className="inline-flex rounded-full border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1 text-xs font-mono text-[var(--accent)] underline-offset-2 hover:border-[var(--accent)] hover:underline"
                             >
                               {c.caseId}
@@ -1913,6 +1925,9 @@ export function ReviewerWorkboard({
                                                 onClick={() => {
                                                   setSelectedAnnotatorId(null);
                                                   setSelectedProject(null);
+                                                  openDetail(c.id, (p) => {
+                                                    p.delete("annotators");
+                                                  });
                                                 }}
                                                 className="rounded px-0.5 underline-offset-2 hover:text-[var(--accent)] hover:underline"
                                               >
@@ -2041,6 +2056,7 @@ export function ReviewerWorkboard({
                   setNoteCaseId(null);
                   resetNoteComposer();
                   setErr(null);
+                  openDetail(noteCase.id);
                 }}
                 className="font-mono font-medium text-[var(--accent)] underline-offset-2 hover:underline"
               >

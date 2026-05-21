@@ -1,10 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { acknowledgeAnnotatorReviewAction, type PendingReviewAckCase } from "@/app/actions/cases";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
 import { StarRating } from "@/components/StarRating";
+import { dispatchOpenCaseDetail } from "@/lib/case-detail-url";
 import { formatDate } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -13,9 +14,11 @@ import { CaseStatus } from "@prisma/client";
 export function AnnotatorReviewAckModal({
   lang,
   pending,
+  onClose,
 }: {
   lang: Lang;
   pending: PendingReviewAckCase[];
+  onClose: () => void;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
@@ -31,7 +34,15 @@ export function AnnotatorReviewAckModal({
       return tk("annotator_review_ack_outcome_rejected");
     }
     return tk("annotator_review_ack_outcome_audited");
-  }, [current, tk]);
+  }, [current, lang]);
+
+  useEffect(() => {
+    function onKey(ev: KeyboardEvent) {
+      if (ev.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   const onMarkRead = useCallback(() => {
     if (!current) return;
@@ -49,9 +60,30 @@ export function AnnotatorReviewAckModal({
   if (total === 0 || !current) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal>
-      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-2xl">
-        <h2 className="text-lg font-semibold text-[var(--text)]">{tk("annotator_review_ack_title")}</h2>
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4"
+      role="dialog"
+      aria-modal
+      aria-labelledby="annotator-review-ack-title"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <h2 id="annotator-review-ack-title" className="text-lg font-semibold text-[var(--text)]">
+            {tk("annotator_review_ack_title")}
+          </h2>
+          <button
+            type="button"
+            className="shrink-0 rounded px-2 py-1 text-sm text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--text)]"
+            onClick={onClose}
+            aria-label={tk("drawer_close")}
+          >
+            {tk("drawer_close")}
+          </button>
+        </div>
         <p className="mt-2 text-sm text-[var(--muted)]">{tk("annotator_review_ack_intro")}</p>
         {total > 1 && (
           <p className="mt-3 text-xs text-[var(--muted)]">
@@ -64,6 +96,10 @@ export function AnnotatorReviewAckModal({
             <span className="text-[var(--muted)]">{tk("case_caseId")}: </span>
             <CaseDetailLink
               caseDbId={current.caseDbId}
+              onClick={() => {
+                dispatchOpenCaseDetail(current.caseDbId);
+                onClose();
+              }}
               className="font-mono font-medium text-[var(--accent)] underline-offset-2 hover:underline"
             >
               {current.caseId}
@@ -95,7 +131,14 @@ export function AnnotatorReviewAckModal({
 
         {err && <p className="mt-3 text-sm text-[var(--danger)]">{err}</p>}
 
-        <div className="mt-5 flex flex-wrap gap-2">
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-[var(--border)] px-4 py-2 text-sm hover:bg-[var(--bg)]"
+            onClick={onClose}
+          >
+            {tk("drawer_close")}
+          </button>
           <button
             type="button"
             disabled={pendingTransition}

@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
+import { resolveAnnotatorWorkspaceUserId } from "@/lib/annotator-workspace";
 
 function jsonError(status: number, error: string) {
   return NextResponse.json({ ok: false as const, error }, { status });
@@ -22,10 +23,9 @@ export async function PATCH(
   });
   if (!row) return jsonError(404, "notfound");
 
-  if (user.role === "ANNOTATOR") {
-    if (!row.isReference && row.annotatorId !== user.id) return jsonError(403, "forbidden");
-  } else if (user.role !== "REVIEWER") {
-    return jsonError(403, "forbidden");
+  const workspaceUserId = await resolveAnnotatorWorkspaceUserId(user);
+  if (user.role !== "REVIEWER") {
+    if (!row.isReference && row.annotatorId !== workspaceUserId) return jsonError(403, "forbidden");
   }
 
   const note = await prisma.caseNote.findUnique({
@@ -88,10 +88,9 @@ export async function DELETE(
   });
   if (!row) return jsonError(404, "notfound");
 
-  if (user.role === "ANNOTATOR") {
-    if (!row.isReference && row.annotatorId !== user.id) return jsonError(403, "forbidden");
-  } else if (user.role !== "REVIEWER") {
-    return jsonError(403, "forbidden");
+  const workspaceUserId = await resolveAnnotatorWorkspaceUserId(user);
+  if (user.role !== "REVIEWER") {
+    if (!row.isReference && row.annotatorId !== workspaceUserId) return jsonError(403, "forbidden");
   }
 
   const note = await prisma.caseNote.findUnique({

@@ -1674,7 +1674,19 @@ export function CaseDiscussion({
           </button>
         </div>
       </div>
-      {thread.length === 0 ? (
+      {!notesLoaded ? (
+        <div
+          className="mb-3 flex items-center gap-2 text-sm text-[var(--muted)]"
+          role="status"
+          aria-live="polite"
+        >
+          <span
+            className="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[var(--border)] border-t-[var(--accent)]"
+            aria-hidden
+          />
+          {tk("discussion_loading")}
+        </div>
+      ) : thread.length === 0 ? (
         <p className="mb-3 text-sm text-[var(--muted)]">{tk("discussion_empty")}</p>
       ) : (
         <ul className="mb-4 space-y-3">
@@ -1696,7 +1708,7 @@ export function CaseDiscussion({
           ))}
         </ul>
       )}
-      {canPost && replyToId == null && (
+      {canPost && replyToId == null && notesLoaded && (
         <Composer
           lang={lang}
           state={composerState}

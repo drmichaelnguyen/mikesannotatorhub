@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
+import { resolveAnnotatorWorkspaceUserId } from "@/lib/annotator-workspace";
 import { getReviewerNotificationRecipients, pushNotification } from "@/app/actions/notifications";
 import { NOTIF } from "@/lib/notification-types";
 import { getCaseNoteImages } from "@/lib/case-note-images";
@@ -32,10 +33,9 @@ export async function GET(
   });
   if (!row) return jsonError(404, "notfound");
 
-  if (user.role === "ANNOTATOR") {
-    if (!row.isReference && row.annotatorId !== user.id) return jsonError(403, "forbidden");
-  } else if (user.role !== "REVIEWER") {
-    return jsonError(403, "forbidden");
+  const workspaceUserId = await resolveAnnotatorWorkspaceUserId(user);
+  if (user.role !== "REVIEWER") {
+    if (!row.isReference && row.annotatorId !== workspaceUserId) return jsonError(403, "forbidden");
   }
 
   return NextResponse.json({
@@ -73,10 +73,9 @@ export async function POST(
   const row = await prisma.annotationCase.findUnique({ where: { id: caseDbId } });
   if (!row) return jsonError(404, "notfound");
 
-  if (user.role === "ANNOTATOR") {
-    if (!row.isReference && row.annotatorId !== user.id) return jsonError(403, "forbidden");
-  } else if (user.role !== "REVIEWER") {
-    return jsonError(403, "forbidden");
+  const workspaceUserId = await resolveAnnotatorWorkspaceUserId(user);
+  if (user.role !== "REVIEWER") {
+    if (!row.isReference && row.annotatorId !== workspaceUserId) return jsonError(403, "forbidden");
   }
 
   const parentNoteId =
@@ -131,10 +130,14 @@ export async function POST(
       row.id,
       row.caseId,
     );
-  } else if (user.role === "REVIEWER" && row.annotatorId) {
+  } else if (
+    user.role === "REVIEWER" &&
+    row.annotatorId &&
+    row.annotatorId !== workspaceUserId
+  ) {
     await pushNotification([row.annotatorId], NOTIF.NEW_COMMENT, row.id, row.caseId);
   }
-  if (user.role === "ANNOTATOR") {
+  if (!row.isReference && row.annotatorId === workspaceUserId) {
     const reviewerIds = await getReviewerNotificationRecipients();
     await pushNotification(reviewerIds, NOTIF.NEW_COMMENT, row.id, row.caseId);
   }

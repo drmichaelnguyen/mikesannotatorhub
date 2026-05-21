@@ -8,6 +8,7 @@ import {
 } from "@/app/actions/notifications";
 import type { NotificationGroup } from "@/app/actions/notifications";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
+import { dispatchOpenCaseDetail } from "@/lib/case-detail-url";
 import { formatDate } from "@/lib/format";
 import { NOTIF } from "@/lib/notification-types";
 import type { DictKey, Lang } from "@/lib/i18n";
@@ -124,7 +125,10 @@ export function NotificationBell({
                       <div className="min-w-0 flex-1 text-left">
                         <CaseDetailLink
                           caseDbId={g.annotationCaseId}
-                          onClick={() => setOpen(false)}
+                          onClick={() => {
+                            setOpen(false);
+                            dispatchOpenCaseDetail(g.annotationCaseId);
+                          }}
                           className="font-mono text-sm font-semibold text-[var(--accent)] underline-offset-2 hover:underline"
                         >
                           {g.caseLabel}
@@ -144,7 +148,10 @@ export function NotificationBell({
                         <li key={item.id}>
                           <CaseDetailLink
                             caseDbId={g.annotationCaseId}
-                            onClick={() => setOpen(false)}
+                            onClick={() => {
+                              setOpen(false);
+                              dispatchOpenCaseDetail(g.annotationCaseId);
+                            }}
                             className="flex w-full items-start gap-1.5 rounded-sm text-left text-xs text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--text)]"
                           >
                             <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${typeDot(item.type)}`} />

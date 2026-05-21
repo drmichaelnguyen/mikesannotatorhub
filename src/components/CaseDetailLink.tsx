@@ -47,7 +47,17 @@ export function CaseDetailLink({ caseDbId, children, className, onClick, amendSe
   }
 
   return (
-    <Link href={href} scroll={false} className={cn} onClick={onClick}>
+    <Link
+      href={href}
+      scroll={false}
+      className={cn}
+      onClick={(e) => {
+        if (onClick) {
+          e.preventDefault();
+          onClick(e);
+        }
+      }}
+    >
       {children}
     </Link>
   );

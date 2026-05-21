@@ -37,9 +37,7 @@ export default async function AnnotatorPage() {
       getAnnotatorAvailabilitySummary(),
       listGuidesAndTopics(),
       getNotifications(),
-      user.role === "ANNOTATOR"
-        ? getAnnotatorPendingReviewAcknowledgments()
-        : Promise.resolve([]),
+      getAnnotatorPendingReviewAcknowledgments(),
     ]);
   } catch {
     redirect("/login");

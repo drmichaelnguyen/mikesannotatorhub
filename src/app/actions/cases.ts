@@ -4,7 +4,8 @@ import { CaseStatus, CompensationType } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { computeCompensation } from "@/lib/compensation";
-import { getCurrentUser, requireAnyRole, requireRole } from "@/lib/auth";
+import { getCurrentUser, requireRole } from "@/lib/auth";
+import { requireAnnotatorWorkspace, resolveAnnotatorWorkspaceUserId } from "@/lib/annotator-workspace";
 import { getReviewerNotificationRecipients, pushNotification } from "@/app/actions/notifications";
 import { NOTIF } from "@/lib/notification-types";
 import { getCaseNoteImages } from "@/lib/case-note-images";
@@ -472,11 +473,9 @@ async function annotatorHasPendingReviewAcknowledgment(annotatorUserId: string):
 }
 
 export async function assignCaseAction(caseDbId: string) {
-  const user = await requireAnyRole(["ANNOTATOR", "REVIEWER"]);
-  if (user.role === "ANNOTATOR") {
-    if (await annotatorHasPendingReviewAcknowledgment(user.id)) {
-      return { ok: false as const, error: "pending_review_ack" as const };
-    }
+  const { workspaceUserId } = await requireAnnotatorWorkspace();
+  if (await annotatorHasPendingReviewAcknowledgment(workspaceUserId)) {
+    return { ok: false as const, error: "pending_review_ack" as const };
   }
   const updated = await prisma.annotationCase.updateMany({
     where: {
@@ -486,7 +485,7 @@ export async function assignCaseAction(caseDbId: string) {
       isReference: false,
     },
     data: {
-      annotatorId: user.id,
+      annotatorId: workspaceUserId,
       status: CaseStatus.ASSIGNED,
       assignedAt: new Date(),
       completedAt: null,
@@ -513,10 +512,10 @@ export type PendingReviewAckCase = {
 
 /** Cases where the annotator must read reviewer feedback before self-claiming another case from the pool. */
 export async function getAnnotatorPendingReviewAcknowledgments(): Promise<PendingReviewAckCase[]> {
-  const user = await requireAnyRole(["ANNOTATOR", "REVIEWER"]);
+  const { workspaceUserId } = await requireAnnotatorWorkspace();
   const rows = await prisma.annotationCase.findMany({
     where: {
-      annotatorId: user.id,
+      annotatorId: workspaceUserId,
       isReference: false,
       status: { in: [CaseStatus.REJECTED, CaseStatus.AUDITED, CaseStatus.ACCEPTED] },
     },
@@ -561,15 +560,12 @@ export async function getAnnotatorPendingReviewAcknowledgments(): Promise<Pendin
 }
 
 export async function acknowledgeAnnotatorReviewAction(caseDbId: string) {
-  const user = await requireAnyRole(["ANNOTATOR", "REVIEWER"]);
-  if (user.role !== "ANNOTATOR") {
-    return { ok: false as const, error: "forbidden" as const };
-  }
+  const { workspaceUserId } = await requireAnnotatorWorkspace();
   const row = await prisma.annotationCase.findUnique({
     where: { id: caseDbId },
     select: { id: true, annotatorId: true, isReference: true },
   });
-  if (!row || row.isReference || row.annotatorId !== user.id) {
+  if (!row || row.isReference || row.annotatorId !== workspaceUserId) {
     return { ok: false as const, error: "forbidden" as const };
   }
   const latest = await prisma.review.findFirst({
@@ -590,7 +586,7 @@ export async function acknowledgeAnnotatorReviewAction(caseDbId: string) {
 }
 
 export async function unassignCaseAction(caseDbId: string) {
-  const user = await requireAnyRole(["ANNOTATOR", "REVIEWER"]);
+  const { user, workspaceUserId } = await requireAnnotatorWorkspace();
   const row = await prisma.annotationCase.findUnique({
     where: { id: caseDbId },
     select: { id: true, annotatorId: true, status: true, isReference: true },
@@ -602,8 +598,8 @@ export async function unassignCaseAction(caseDbId: string) {
     return { ok: false as const, error: "state" as const };
   }
   if (
-    user.role === "ANNOTATOR" &&
-    (row.annotatorId !== user.id || row.status !== CaseStatus.ASSIGNED)
+    user.role !== "REVIEWER" &&
+    (row.annotatorId !== workspaceUserId || row.status !== CaseStatus.ASSIGNED)
   ) {
     return { ok: false as const, error: "forbidden" as const };
   }
@@ -985,7 +981,7 @@ export async function submitAnnotationAction(
   minutes: number,
   difficultyRating: number,
 ) {
-  const user = await requireAnyRole(["ANNOTATOR", "REVIEWER"]);
+  const { user, workspaceUserId } = await requireAnnotatorWorkspace();
   if (!Number.isFinite(minutes) || minutes <= 0) {
     return { ok: false as const, error: "minutes" };
   }
@@ -997,7 +993,7 @@ export async function submitAnnotationAction(
     return { ok: false as const, error: "rating" as const };
   }
   const row = await prisma.annotationCase.findUnique({ where: { id: caseDbId } });
-  if (!row || row.annotatorId !== user.id) {
+  if (!row || row.annotatorId !== workspaceUserId) {
     return { ok: false as const, error: "forbidden" };
   }
   if (row.isReference) {
@@ -1156,12 +1152,11 @@ export async function addCaseNoteAction(input: {
     }
   }
 
-  if (user.role === "ANNOTATOR") {
-    if (!row.isReference && row.annotatorId !== user.id) {
+  const workspaceUserId = await resolveAnnotatorWorkspaceUserId(user);
+  if (user.role !== "REVIEWER") {
+    if (!row.isReference && row.annotatorId !== workspaceUserId) {
       return { ok: false as const, error: "forbidden" as const };
     }
-  } else if (user.role !== "REVIEWER") {
-    return { ok: false as const, error: "forbidden" as const };
   }
 
   const text = input.content.trim();
@@ -1193,10 +1188,14 @@ export async function addCaseNoteAction(input: {
       row.id,
       row.caseId,
     );
-  } else if (user.role === "REVIEWER" && row.annotatorId) {
+  } else if (
+    user.role === "REVIEWER" &&
+    row.annotatorId &&
+    row.annotatorId !== workspaceUserId
+  ) {
     await pushNotification([row.annotatorId], NOTIF.NEW_COMMENT, row.id, row.caseId);
   }
-  if (user.role === "ANNOTATOR") {
+  if (!row.isReference && row.annotatorId === workspaceUserId) {
     const reviewerIds = await getReviewerNotificationRecipients();
     await pushNotification(reviewerIds, NOTIF.NEW_COMMENT, row.id, row.caseId);
   }
@@ -1224,12 +1223,11 @@ export async function listCaseNotesAction(caseDbId: string) {
   });
   if (!row) return { ok: false as const, error: "notfound" as const };
 
-  if (user.role === "ANNOTATOR") {
-    if (!row.isReference && row.annotatorId !== user.id) {
+  const workspaceUserId = await resolveAnnotatorWorkspaceUserId(user);
+  if (user.role !== "REVIEWER") {
+    if (!row.isReference && row.annotatorId !== workspaceUserId) {
       return { ok: false as const, error: "forbidden" as const };
     }
-  } else if (user.role !== "REVIEWER") {
-    return { ok: false as const, error: "forbidden" as const };
   }
 
   return {
@@ -1267,8 +1265,8 @@ export async function listCasesForReviewer() {
 }
 
 export async function getAnnotatorBoard() {
-  const user = await requireAnyRole(["ANNOTATOR", "REVIEWER"]);
-  return listCasesForAnnotator(user.id);
+  const { workspaceUserId } = await requireAnnotatorWorkspace();
+  return listCasesForAnnotator(workspaceUserId);
 }
 
 export type AnnotatorProjectRow = {
@@ -1389,9 +1387,9 @@ function buildCapacityWindows(
 
 /** Audited (and legacy accepted) cases; month boundaries use the viewer's local calendar. */
 export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompensationSummary> {
-  const user = await requireAnyRole(["ANNOTATOR", "REVIEWER"]);
+  const { workspaceUserId } = await requireAnnotatorWorkspace();
   const cases = await prisma.annotationCase.findMany({
-    where: { annotatorId: user.id, isReference: false },
+    where: { annotatorId: workspaceUserId, isReference: false },
     include: {
       reviews: {
         where: { decision: "ACCEPT" },
@@ -1498,16 +1496,16 @@ export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompen
 }
 
 export async function getAnnotatorAvailabilitySummary(): Promise<AnnotatorAvailabilitySummary> {
-  const user = await requireAnyRole(["ANNOTATOR", "REVIEWER"]);
+  const { workspaceUserId } = await requireAnnotatorWorkspace();
   const days = getNextSevenDays();
   const [availabilityRows, assignedCases] = await Promise.all([
     prisma.annotatorAvailability.findMany({
-      where: { userId: user.id, day: { in: days } },
+      where: { userId: workspaceUserId, day: { in: days } },
       select: { day: true, availableHours: true },
     }),
     prisma.annotationCase.findMany({
       where: {
-        annotatorId: user.id,
+        annotatorId: workspaceUserId,
         isReference: false,
         status: { in: [CaseStatus.ASSIGNED, CaseStatus.SUBMITTED, CaseStatus.REJECTED] },
       },
@@ -1578,7 +1576,7 @@ export async function getAnnotatorCapacityRows(): Promise<AnnotatorCapacityRow[]
 }
 
 export async function saveAnnotatorAvailabilityAction(formData: FormData) {
-  const user = await requireAnyRole(["ANNOTATOR", "REVIEWER"]);
+  const { workspaceUserId } = await requireAnnotatorWorkspace();
   const days = getNextSevenDays();
   const entries = days.map((day) => {
     const raw = String(formData.get(`availability_${day}`) ?? "").trim();
@@ -1591,9 +1589,9 @@ export async function saveAnnotatorAvailabilityAction(formData: FormData) {
   await prisma.$transaction(
     entries.map((entry) =>
       prisma.annotatorAvailability.upsert({
-        where: { userId_day: { userId: user.id, day: entry.day } },
+        where: { userId_day: { userId: workspaceUserId, day: entry.day } },
         create: {
-          userId: user.id,
+          userId: workspaceUserId,
           day: entry.day,
           availableHours: entry.availableHours,
         },

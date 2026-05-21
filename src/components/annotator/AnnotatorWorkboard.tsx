@@ -16,6 +16,12 @@ import {
 } from "@/components/annotator/AnnotatorCaseDetailPanel";
 import { AnnotatorReviewAckModal } from "@/components/annotator/AnnotatorReviewAckModal";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
+import { replaceCaseQueryInBrowser } from "@/lib/case-detail-url";
+import {
+  useCaseDetailSync,
+  useCaseDetailUrlState,
+  useDeferredCaseDetailClose,
+} from "@/lib/use-case-detail-sync";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
 import { createCaseNote, fetchCaseNotes } from "@/lib/case-note-api";
@@ -447,6 +453,11 @@ export function AnnotatorWorkboard({
   ]);
 
   const [detailId, setDetailId] = useState<string | null>(null);
+  const {
+    isClosing: detailClosing,
+    scheduleUnmount: scheduleDetailUnmount,
+    cancelScheduledUnmount: cancelDetailUnmount,
+  } = useDeferredCaseDetailClose();
   const [noteCaseId, setNoteCaseId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
   const [noteTemplateOptions, setNoteTemplateOptions] = useState<Array<{ index: number; label: string }>>([]);
@@ -455,6 +466,11 @@ export function AnnotatorWorkboard({
   const [showInactiveProjects, setShowInactiveProjects] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const [showReviewAckModal, setShowReviewAckModal] = useState(pendingReviewAcks.length > 0);
+
+  useEffect(() => {
+    if (pendingReviewAcks.length > 0) setShowReviewAckModal(true);
+  }, [pendingReviewAcks.length]);
 
   const annotatorExpandPaths = useMemo(() => {
     if (!searchNeedle) return new Set<string>();
@@ -493,7 +509,6 @@ export function AnnotatorWorkboard({
 
   const detailRow = detailId ? (allRows.find((c) => c.id === detailId) ?? null) : null;
   const noteCase = noteCaseId ? (allRows.find((c) => c.id === noteCaseId) ?? null) : null;
-  const selectedCaseId = searchParams.get("case");
   const detailMentionOptions = detailRow
     ? buildMentionOptionsForCase(guides, topics, {
         redbrickProject: detailRow.redbrickProject,
@@ -507,33 +522,26 @@ export function AnnotatorWorkboard({
       })
     : [];
 
-  useEffect(() => {
-    if (!selectedCaseId) {
-      setDetailId(null);
-      return;
-    }
-    if (allRows.some((c) => c.id === selectedCaseId) && detailId !== selectedCaseId) {
-      setDetailId(selectedCaseId);
-    }
-  }, [allRows, detailId, selectedCaseId]);
-
   function syncCaseQuery(caseId: string | null) {
-    const params = new URLSearchParams(searchParams.toString());
-    if (caseId) params.set("case", caseId);
-    else params.delete("case");
-    const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    replaceCaseQueryInBrowser(pathname, searchParams.toString(), caseId);
   }
 
   function openDetail(caseId: string) {
+    cancelDetailUnmount();
     setDetailId(caseId);
     syncCaseQuery(caseId);
   }
 
   function closeDetail() {
-    setDetailId(null);
+    if (!detailId) return;
     syncCaseQuery(null);
+    scheduleDetailUnmount(() => setDetailId(null));
   }
+
+  const isValidCase = useCallback((id: string) => allRows.some((c) => c.id === id), [allRows]);
+
+  useCaseDetailSync(isValidCase, openDetail, closeDetail);
+  useCaseDetailUrlState(setDetailId, isValidCase);
 
   function refresh() {
     router.refresh();
@@ -735,7 +743,10 @@ export function AnnotatorWorkboard({
                     )}
                     <CaseDetailLink
                       caseDbId={c.id}
-                      onClick={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openDetail(c.id);
+                      }}
                       className={`font-mono font-medium underline-offset-2 hover:underline ${
                         c.status === CaseStatus.REJECTED
                           ? "text-[var(--danger)]"
@@ -947,8 +958,32 @@ export function AnnotatorWorkboard({
 
   return (
     <div className="space-y-6">
-      {pendingReviewAcks.length > 0 && (
-        <AnnotatorReviewAckModal lang={lang} pending={pendingReviewAcks} />
+      {pendingReviewAcks.length > 0 && !showReviewAckModal && (
+        <div
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--accent)]/40 bg-[var(--accent)]/10 px-4 py-3"
+          role="status"
+        >
+          <p className="text-sm text-[var(--text)]">
+            {tk("annotator_review_ack_dismiss_banner").replace(
+              "{count}",
+              String(pendingReviewAcks.length),
+            )}
+          </p>
+          <button
+            type="button"
+            className="shrink-0 rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--accent-hover)]"
+            onClick={() => setShowReviewAckModal(true)}
+          >
+            {tk("annotator_review_ack_open")}
+          </button>
+        </div>
+      )}
+      {pendingReviewAcks.length > 0 && showReviewAckModal && (
+        <AnnotatorReviewAckModal
+          lang={lang}
+          pending={pendingReviewAcks}
+          onClose={() => setShowReviewAckModal(false)}
+        />
       )}
       <div>
         <h2 className="text-lg font-medium">{tk("annotator_board_title")}</h2>
@@ -1138,7 +1173,12 @@ export function AnnotatorWorkboard({
       )}
 
       {detailRow && (
-        <div className="fixed inset-0 z-[110] flex justify-end bg-black/50" role="presentation">
+        <div
+          className={`fixed inset-0 z-[110] flex justify-end bg-black/50 transition-opacity duration-75 ${
+            detailClosing ? "pointer-events-none opacity-0" : ""
+          }`}
+          role="presentation"
+        >
           <div
             className="absolute inset-0 h-full w-full cursor-default"
             aria-label={tk("drawer_close")}
