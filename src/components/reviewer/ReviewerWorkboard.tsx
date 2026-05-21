@@ -15,7 +15,11 @@ import {
 import { batchUpdateCasesAction, reviewCaseAction, reviewerAssignCaseAction } from "@/app/actions/cases";
 import { MentionTextarea } from "@/components/CaseDiscussion";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
-import { replaceCaseQueryInBrowser, replaceSearchInBrowser } from "@/lib/case-detail-url";
+import {
+  readAnnotatorsPanelFromBrowser,
+  replaceCaseQueryInBrowser,
+  replaceSearchInBrowser,
+} from "@/lib/case-detail-url";
 import {
   useCaseDetailSync,
   useCaseDetailUrlState,
@@ -607,6 +611,9 @@ export function ReviewerWorkboard({
   const [batchCompAmount, setBatchCompAmount] = useState("");
   const [batchBonusAmount, setBatchBonusAmount] = useState("");
   const [annotatorFocusId, setAnnotatorFocusId] = useState<string | null>(null);
+  const [annotatorsPanelOpen, setAnnotatorsPanelOpen] = useState(
+    () => searchParams.get("annotators") === "1",
+  );
   const [selectedAnnotatorId, setSelectedAnnotatorId] = useState<string | null>(null);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -641,7 +648,6 @@ export function ReviewerWorkboard({
   const selectedAnnotator = selectedAnnotatorId
     ? annotatorPerformance.find((annotator) => annotator.id === selectedAnnotatorId) ?? null
     : null;
-  const annotatorsQuery = searchParams.get("annotators");
   const detailMentionOptions = useMemo(
     () =>
       detailCase
@@ -695,13 +701,25 @@ export function ReviewerWorkboard({
   useCaseDetailUrlState(setDetailId, isValidCase);
 
   useEffect(() => {
-    if (annotatorsQuery === "1") {
+    setAnnotatorsPanelOpen(readAnnotatorsPanelFromBrowser());
+  }, [searchParams]);
+
+  useEffect(() => {
+    function onPopState() {
+      setAnnotatorsPanelOpen(readAnnotatorsPanelFromBrowser());
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  useEffect(() => {
+    if (annotatorsPanelOpen) {
       closeDetail();
       return;
     }
     setSelectedAnnotatorId(null);
     setSelectedProject(null);
-  }, [annotatorsQuery]);
+  }, [annotatorsPanelOpen]);
 
   function refresh() {
     router.refresh();
@@ -791,6 +809,7 @@ export function ReviewerWorkboard({
   }
 
   function closeAnnotatorPerformance() {
+    setAnnotatorsPanelOpen(false);
     setSelectedAnnotatorId(null);
     setSelectedProject(null);
     replaceSearchInBrowser(pathname, searchParams.toString(), (params) => {
@@ -1545,7 +1564,7 @@ export function ReviewerWorkboard({
         </div>
       )}
 
-      {annotatorsQuery === "1" && (
+      {annotatorsPanelOpen && (
         <div className="fixed inset-0 z-[70] flex justify-end bg-black/50" role="presentation">
           <div
             className="absolute inset-0 h-full w-full cursor-default"

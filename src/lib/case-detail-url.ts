@@ -33,6 +33,12 @@ export function readCaseIdFromBrowser(): string | null {
   return new URLSearchParams(window.location.search).get("case");
 }
 
+/** Whether the reviewer annotator-performance drawer should be open (`?annotators=1`). */
+export function readAnnotatorsPanelFromBrowser(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("annotators") === "1";
+}
+
 /** Open a case drawer from anywhere on the workboard page (e.g. notifications). */
 export function dispatchOpenCaseDetail(caseDbId: string) {
   if (typeof window === "undefined") return;

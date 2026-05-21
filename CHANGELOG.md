@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.0.4] — 2026-05-21
+
+### Reviewer annotator performance drawer
+
+- Fix **Close** on the annotator performance panel: local open state stays in sync with the address bar when `?annotators=1` is cleared via `replaceState` (same `useSearchParams` mismatch as the case detail drawer).
+
 ## [1.0.3] — 2026-05-21
 
 ### Case detail drawer
