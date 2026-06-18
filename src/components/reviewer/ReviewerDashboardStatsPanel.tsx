@@ -64,10 +64,15 @@ export function ReviewerDashboardStatsPanel({
           />
         </Link>
         <StatCard label={tk("reviewer_cases_done")} value={String(caseDone)} />
-        <StatCard
-          label={tk("reviewer_cases_submitted_pending")}
-          value={String(caseSubmittedPendingReview)}
-        />
+        <Link
+          href="/reviewer?status=SUBMITTED#reviewer-workboard"
+          className="block rounded-xl outline-none ring-offset-2 ring-offset-[var(--bg)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        >
+          <StatCard
+            label={tk("reviewer_cases_submitted_pending")}
+            value={String(caseSubmittedPendingReview)}
+          />
+        </Link>
         <StatCard label={tk("reviewer_cases_approved")} value={String(caseApproved)} />
         <StatCard
           label={tk("dash_avg_difficulty")}

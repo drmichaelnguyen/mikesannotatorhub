@@ -1,5 +1,10 @@
 import type { CompensationType } from "@prisma/client";
 
+/** Calendar month key (UTC) for grouping audited payouts. */
+export function compensationMonthKeyUtc(d: Date): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 /** Final compensation for an audited (or legacy accepted) case. */
 export function computeCompensation(
   type: CompensationType,

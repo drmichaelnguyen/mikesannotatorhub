@@ -15,7 +15,7 @@ export function mapPrismaCaseTopics(
     topic: {
       id: string;
       name: string;
-      description: string | null;
+      description?: string | null;
       projects: { id: string; redbrickProject: string }[];
       scopes: { id: string; scopeOfWork: string }[];
     };
@@ -24,7 +24,7 @@ export function mapPrismaCaseTopics(
   return rows.map((r) => ({
     id: r.topic.id,
     name: r.topic.name,
-    description: r.topic.description,
+    description: r.topic.description ?? null,
     projects: r.topic.projects.map((p) => ({ id: p.id, redbrickProject: p.redbrickProject })),
     scopes: r.topic.scopes.map((s) => ({ id: s.id, scopeOfWork: s.scopeOfWork })),
   }));
@@ -52,6 +52,7 @@ export type SerializedReviewerCase = {
   auditedAt: string | null;
   qualityRating: number | null;
   isReference: boolean;
+  hasContinuityReport: boolean;
   annotator: { id: string; name: string; email: string } | null;
   auditedBy: { id: string; name: string; email: string } | null;
   reviews: { id: string; decision: string; comment: string | null; createdAt: string }[];
@@ -81,6 +82,7 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
     auditedAt: c.auditedAt?.toISOString() ?? null,
     qualityRating: c.qualityRating,
     isReference: c.isReference,
+    hasContinuityReport: c.hasContinuityReport,
     annotator: c.annotator
       ? { id: c.annotator.id, name: c.annotator.name, email: c.annotator.email }
       : null,

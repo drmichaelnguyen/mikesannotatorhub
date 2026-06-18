@@ -1,5 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { getTopicDetailAction } from "@/app/actions/cases";
+import { LoadingProgressBar } from "@/components/LoadingProgressBar";
+import { RichTextContent } from "@/components/RichTextContent";
 import type { SerializedCaseTopic } from "@/lib/reviewer-serialize";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -14,7 +18,50 @@ export function TopicDetailModal({
   onClose: () => void;
 }) {
   const tk = (k: DictKey) => t(lang, k);
+  const [detail, setDetail] = useState<SerializedCaseTopic | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!topic) {
+      setDetail(null);
+      setLoading(false);
+      return;
+    }
+    if (topic.description?.trim()) {
+      setDetail(topic);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    getTopicDetailAction(topic.id)
+      .then((full) => {
+        if (cancelled) return;
+        setDetail(
+          full
+            ? {
+                id: full.id,
+                name: full.name,
+                description: full.description,
+                projects: full.projects,
+                scopes: full.scopes,
+              }
+            : topic,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setDetail(topic);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [topic]);
+
   if (!topic) return null;
+  const display = detail ?? topic;
 
   return (
     <div
@@ -31,7 +78,7 @@ export function TopicDetailModal({
       >
         <div className="flex items-start justify-between gap-2 border-b border-[var(--border)] pb-3">
           <h2 id="topic-detail-title" className="text-lg font-semibold text-[var(--text)]">
-            {topic.name}
+            {display.name}
           </h2>
           <button
             type="button"
@@ -46,19 +93,26 @@ export function TopicDetailModal({
             <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
               {tk("reviewer_topic_desc")}
             </p>
-            <p className="mt-1 whitespace-pre-wrap text-[var(--text)]">
-              {topic.description?.trim() ? topic.description : "—"}
-            </p>
+            {loading ? (
+              <div className="mt-2 overflow-hidden rounded-md border border-[var(--border)]">
+                <LoadingProgressBar />
+                <p className="px-3 py-4 text-sm text-[var(--muted)]">{tk("ui_loading")}</p>
+              </div>
+            ) : display.description?.trim() ? (
+              <RichTextContent html={display.description} className="mt-1" />
+            ) : (
+              <p className="mt-1 text-[var(--muted)]">—</p>
+            )}
           </div>
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
               {tk("reviewer_topic_projects")}
             </p>
-            {topic.projects.length === 0 ? (
+            {display.projects.length === 0 ? (
               <p className="mt-1 text-[var(--muted)]">—</p>
             ) : (
               <ul className="mt-1 list-inside list-disc text-[var(--text)]">
-                {topic.projects.map((p) => (
+                {display.projects.map((p) => (
                   <li key={p.id}>{p.redbrickProject}</li>
                 ))}
               </ul>
@@ -68,11 +122,11 @@ export function TopicDetailModal({
             <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
               {tk("case_scope")}
             </p>
-            {topic.scopes.length === 0 ? (
+            {display.scopes.length === 0 ? (
               <p className="mt-1 text-[var(--muted)]">—</p>
             ) : (
               <ul className="mt-1 list-inside list-disc whitespace-pre-wrap text-[var(--text)]">
-                {topic.scopes.map((s) => (
+                {display.scopes.map((s) => (
                   <li key={s.id}>{s.scopeOfWork}</li>
                 ))}
               </ul>

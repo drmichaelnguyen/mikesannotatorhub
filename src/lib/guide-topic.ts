@@ -1,15 +1,21 @@
-export type GuideOption = {
+export type GuideOptionLite = {
   id: string;
   title: string;
+};
+
+export type GuideOption = GuideOptionLite & {
   content: string;
 };
 
-export type TopicOption = {
+export type TopicOptionLite = {
   id: string;
   name: string;
-  description: string | null;
   projects: { id: string; redbrickProject: string }[];
   scopes: { id: string; scopeOfWork: string }[];
+};
+
+export type TopicOption = TopicOptionLite & {
+  description: string | null;
 };
 
 export type MentionOption = {
@@ -20,8 +26,8 @@ export type MentionOption = {
 };
 
 export function buildMentionOptionsForCase(
-  guides: GuideOption[],
-  topics: TopicOption[],
+  guides: GuideOptionLite[],
+  topics: TopicOptionLite[],
   context?: { redbrickProject: string; scopeOfWork: string },
 ): MentionOption[] {
   const guideOptions = guides.map((guide) => ({

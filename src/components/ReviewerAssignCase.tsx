@@ -28,6 +28,8 @@ export function ReviewerAssignCase({
       if (!res.ok) {
         if (res.error === "invalid_annotator") setErr(tk("reviewer_assign_invalid"));
         else if (res.error === "required") setErr(tk("required"));
+        else if (res.error === "pending_review_ack") setErr(tk("annotator_review_ack_block_assign"));
+        else if (res.error === "active_case") setErr(tk("annotator_active_case_block_assign"));
         else setErr(tk("reviewer_assign_taken"));
         return;
       }

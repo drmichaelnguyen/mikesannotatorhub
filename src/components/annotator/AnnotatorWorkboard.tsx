@@ -4,7 +4,6 @@ import { useRouter } from "next/navigation";
 import { useActionState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
-  assignCaseAction,
   submitAnnotationAction,
   unassignCaseAction,
   type PendingReviewAckCase,
@@ -30,7 +29,7 @@ import { StarRating } from "@/components/StarRating";
 import { getClipboardImageFiles, readFilesAsDataUrls } from "@/lib/client-image-data";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount } from "@/lib/format";
-import { buildMentionOptionsForCase, type GuideOption, type TopicOption } from "@/lib/guide-topic";
+import { buildMentionOptionsForCase, type GuideOptionLite, type TopicOptionLite } from "@/lib/guide-topic";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import { CaseStatus } from "@prisma/client";
@@ -46,6 +45,10 @@ type CaseTree<T> = {
 
 function getProjectName(_caseId: string): string {
   return "BC2";
+}
+
+function normalizeScopeKey(scope: string): string {
+  return scope.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function groupByHierarchy<T extends { redbrickProject: string; scopeOfWork: string; caseId: string }>(
@@ -160,6 +163,25 @@ function CommentActionLabel({
   );
 }
 
+type AssignCaseResult =
+  | { ok: true }
+  | { ok: false; error: "pending_review_ack" | "state" | "auth" | string };
+
+async function assignCase(caseDbId: string): Promise<AssignCaseResult> {
+  const res = await fetch(`/api/cases/${encodeURIComponent(caseDbId)}/assign`, {
+    method: "POST",
+    cache: "no-store",
+  });
+  const data = (await res.json().catch(() => null)) as AssignCaseResult | null;
+  if (!res.ok || !data?.ok) {
+    return {
+      ok: false,
+      error: data && "error" in data && typeof data.error === "string" ? data.error : "state",
+    };
+  }
+  return data;
+}
+
 function AnnotatorAssignForm({
   lang,
   caseDbId,
@@ -171,29 +193,35 @@ function AnnotatorAssignForm({
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
-  const [state, action, pending] = useActionState(
-    async () => assignCaseAction(caseDbId),
-    null as Awaited<ReturnType<typeof assignCaseAction>> | null,
-  );
-  useEffect(() => {
-    if (state?.ok) router.refresh();
-  }, [state, router]);
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
   return (
     <div className="flex flex-col items-start gap-1">
-      <form action={action}>
-        <button
-          type="submit"
-          disabled={pending || takeDisabled}
-          className="rounded border border-[var(--accent)] bg-[var(--accent)]/15 px-2 py-0.5 text-[var(--accent)] hover:bg-[var(--accent)]/25 disabled:opacity-50"
-        >
-          {tk("assign")}
-        </button>
-      </form>
-      {state && !state.ok && (
+      <button
+        type="button"
+        disabled={pending || takeDisabled}
+        className="rounded border border-[var(--accent)] bg-[var(--accent)]/15 px-2 py-0.5 text-[var(--accent)] hover:bg-[var(--accent)]/25 disabled:opacity-50"
+        onClick={() =>
+          start(async () => {
+            setError(null);
+            const result = await assignCase(caseDbId);
+            if (!result.ok) {
+              setError(result.error);
+              return;
+            }
+            router.refresh();
+          })
+        }
+      >
+        {tk("assign")}
+      </button>
+      {error && (
         <span className="max-w-[14rem] text-[var(--danger)]">
-          {state.error === "pending_review_ack"
+          {error === "pending_review_ack"
             ? tk("annotator_review_ack_block_take")
-            : tk("reviewer_assign_taken")}
+            : error === "active_case"
+              ? tk("annotator_active_case_block_take")
+              : tk("reviewer_assign_taken")}
         </span>
       )}
     </div>
@@ -236,15 +264,17 @@ function AnnotatorSubmitForm({
   caseDbId,
   initialMinutes,
   initialDifficultyRating,
+  isResubmit = false,
 }: {
   lang: Lang;
   caseDbId: string;
   initialMinutes: number | null;
   initialDifficultyRating: number | null;
+  isResubmit?: boolean;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
-  const [minutes, setMinutes] = useState(String(initialMinutes ?? ""));
+  const [minutes, setMinutes] = useState(isResubmit ? "" : String(initialMinutes ?? ""));
   const [difficultyRating, setDifficultyRating] = useState<number | null>(initialDifficultyRating);
   const [state, action, pending] = useActionState(
     async (_: SubmitResult | null, fd: FormData) => {
@@ -258,15 +288,22 @@ function AnnotatorSubmitForm({
     if (state?.ok) router.refresh();
   }, [state, router]);
   useEffect(() => {
-    setMinutes(String(initialMinutes ?? ""));
-  }, [initialMinutes, caseDbId]);
+    setMinutes(isResubmit ? "" : String(initialMinutes ?? ""));
+  }, [initialMinutes, caseDbId, isResubmit]);
+
+  const minutesLabel = isResubmit ? tk("additional_minutes") : tk("minutes_spent");
 
   return (
     <div className="flex flex-col items-start gap-1">
+      {isResubmit && initialMinutes != null && initialMinutes > 0 && (
+        <p className="text-xs text-[var(--muted)]">
+          {tk("additional_minutes_hint").replace("{count}", String(initialMinutes))}
+        </p>
+      )}
       <form action={action} className="flex flex-wrap items-end gap-1">
         <input type="hidden" name="difficultyRating" value={difficultyRating ?? ""} />
         <label className="flex items-center gap-1 text-[var(--muted)]">
-          <span className="sr-only">{tk("minutes_spent")}</span>
+          <span className="sr-only">{minutesLabel}</span>
           <input
             name="minutes"
             type="number"
@@ -274,7 +311,8 @@ function AnnotatorSubmitForm({
             value={minutes}
             onChange={(e) => setMinutes(e.target.value)}
             className="w-14 rounded border border-[var(--border)] bg-[var(--bg)] px-1 py-0.5 tabular-nums"
-            aria-label={tk("minutes_spent")}
+            aria-label={minutesLabel}
+            placeholder={isResubmit ? "+" : undefined}
           />
         </label>
         <button
@@ -329,8 +367,8 @@ export function AnnotatorWorkboard({
   mine: AnnotatorCaseRow[];
   rejected: AnnotatorCaseRow[];
   reference: AnnotatorCaseRow[];
-  guides: GuideOption[];
-  topics: TopicOption[];
+  guides: GuideOptionLite[];
+  topics: TopicOptionLite[];
   pendingReviewAcks?: PendingReviewAckCase[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
@@ -355,6 +393,11 @@ export function AnnotatorWorkboard({
     );
     return { inProgress: progress, completed: done };
   }, [mine, rejected]);
+
+  const hasUnsubmittedCase = useMemo(
+    () => mine.some((c) => !c.isReference && c.status === CaseStatus.ASSIGNED),
+    [mine],
+  );
 
   const matchesSearchNeedle = useCallback(
     (c: AnnotatorCaseRow) => {
@@ -508,6 +551,14 @@ export function AnnotatorWorkboard({
   }, [annotatorExpandPaths, searchNeedle, poolGroups, activeGroups, referenceGroups, doneActiveGroups, doneInactiveGroups]);
 
   const detailRow = detailId ? (allRows.find((c) => c.id === detailId) ?? null) : null;
+  const detailReferenceCases = useMemo(() => {
+    if (!detailRow) return [];
+    const scope = normalizeScopeKey(detailRow.scopeOfWork);
+    if (!scope) return [];
+    return reference
+      .filter((c) => c.id !== detailRow.id && normalizeScopeKey(c.scopeOfWork) === scope)
+      .sort((a, b) => a.caseId.localeCompare(b.caseId));
+  }, [detailRow, reference]);
   const noteCase = noteCaseId ? (allRows.find((c) => c.id === noteCaseId) ?? null) : null;
   const detailMentionOptions = detailRow
     ? buildMentionOptionsForCase(guides, topics, {
@@ -798,7 +849,7 @@ export function AnnotatorWorkboard({
                       <AnnotatorAssignForm
                         lang={lang}
                         caseDbId={c.id}
-                        takeDisabled={pendingReviewAcks.length > 0}
+                        takeDisabled={pendingReviewAcks.length > 0 || hasUnsubmittedCase}
                       />
                     )}
                     {mode === "active" &&
@@ -808,6 +859,7 @@ export function AnnotatorWorkboard({
                           caseDbId={c.id}
                           initialMinutes={c.annotationMinutes}
                           initialDifficultyRating={c.difficultyRating}
+                          isResubmit={c.status === CaseStatus.REJECTED}
                         />
                       )}
                     {mode === "active" && c.status === CaseStatus.ASSIGNED && (
@@ -1045,19 +1097,19 @@ export function AnnotatorWorkboard({
               className="rounded-xl border border-amber-500/40 bg-amber-500/10 shadow-sm shadow-amber-500/10"
             >
               <summary className="cursor-pointer list-none select-none px-3 py-3 hover:bg-amber-200/20">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-semibold text-amber-800">
+                <span className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold text-amber-800">
                       {tk("annotator_section_pool")}
-                    </h3>
-                    <p className="mt-0.5 text-xs font-medium text-amber-800/90">
+                    </span>
+                    <span className="mt-0.5 block text-xs font-medium text-amber-800/90">
                       Available work waiting for assignment
-                    </p>
-                  </div>
-                  <span className="rounded-full bg-amber-600 px-2.5 py-1 text-xs font-semibold text-white">
+                    </span>
+                  </span>
+                  <span className="shrink-0 rounded-full bg-amber-600 px-2.5 py-1 text-xs font-semibold text-white">
                     {openPoolCount} available
                   </span>
-                </div>
+                </span>
               </summary>
               <div className="border-t border-amber-500/30 p-3">
                 {available.length === 0 ? (
@@ -1082,14 +1134,14 @@ export function AnnotatorWorkboard({
               className="rounded-xl border border-[var(--accent)]/35 bg-[var(--accent)]/8 shadow-sm shadow-[var(--accent)]/10"
             >
               <summary className="cursor-pointer list-none select-none px-3 py-3 hover:bg-[var(--accent)]/10">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-[var(--text)]">
+                <span className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-[var(--text)]">
                     {tk("annotator_section_active")}
-                  </h3>
-                  <span className="rounded-full bg-[var(--accent)] px-2.5 py-1 text-xs font-semibold text-white">
+                  </span>
+                  <span className="shrink-0 rounded-full bg-[var(--accent)] px-2.5 py-1 text-xs font-semibold text-white">
                     {undoneCount} undone
                   </span>
-                </div>
+                </span>
               </summary>
               <div className="border-t border-[var(--accent)]/25 p-3">
                 {inProgress.length === 0 ? (
@@ -1207,6 +1259,7 @@ export function AnnotatorWorkboard({
                 guides={guides}
                 canPostDiscussion={canPostInDetail(detailRow)}
                 mentionOptions={detailMentionOptions}
+                referenceCases={detailReferenceCases}
               />
             </div>
           </div>

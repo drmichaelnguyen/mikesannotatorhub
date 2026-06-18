@@ -2,12 +2,16 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { updateCaseDetailsAction } from "@/app/actions/cases";
-import type { GuideOption, TopicOption } from "@/lib/guide-topic";
+import type { GuideOptionLite, TopicOptionLite } from "@/lib/guide-topic";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import { parseVideoGuideUrlsInput } from "@/lib/video-guides";
 import { CaseStatus, CompensationType } from "@prisma/client";
+
+function sameStringArray(a: string[], b: string[]) {
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
+}
 
 export function ReviewerCaseEditor({
   lang,
@@ -34,8 +38,8 @@ export function ReviewerCaseEditor({
     annotatorBonus: number;
     isReference: boolean;
   };
-  guides?: GuideOption[];
-  topics?: TopicOption[];
+  guides?: GuideOptionLite[];
+  topics?: TopicOptionLite[];
   scopeOptions?: string[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
@@ -110,27 +114,53 @@ export function ReviewerCaseEditor({
     }
 
     start(async () => {
-      const res = await updateCaseDetailsAction({
-        caseDbId: c.id,
-        caseId,
-        status,
-        redbrickProject,
-        guideId,
-        topicIds,
-        guideline,
-        videoGuideUrls: parseVideoGuideUrlsInput(videoGuideUrlsText),
-        scopeOfWork,
-        minMinutesPerCase,
-        maxMinutesPerCase,
-        compensationType: compType,
-        compensationAmount,
-        annotatorBonus,
-        isReference,
+      const parsedVideoGuideUrls = parseVideoGuideUrlsInput(videoGuideUrlsText);
+      const detailsChanged =
+        caseId !== c.caseId ||
+        status !== c.status ||
+        redbrickProject !== c.redbrickProject ||
+        guideId !== (c.guide?.id ?? "") ||
+        !sameStringArray(topicIds, c.topics.map((t) => t.id)) ||
+        guideline !== c.guideline ||
+        !sameStringArray(parsedVideoGuideUrls, c.videoGuideUrls) ||
+        scopeOfWork !== c.scopeOfWork ||
+        minMinutesPerCase !== c.minMinutesPerCase ||
+        maxMinutesPerCase !== c.maxMinutesPerCase ||
+        compType !== c.compensationType ||
+        compensationAmount !== c.compensationAmount ||
+        annotatorBonus !== c.annotatorBonus;
+      const requestBody = detailsChanged
+        ? {
+            caseId,
+            status,
+            redbrickProject,
+            guideId,
+            topicIds,
+            guideline,
+            videoGuideUrls: parsedVideoGuideUrls,
+            scopeOfWork,
+            minMinutesPerCase,
+            maxMinutesPerCase,
+            compensationType: compType,
+            compensationAmount,
+            annotatorBonus,
+            isReference,
+          }
+        : { isReference };
+      const response = await fetch(`/api/reviewer/cases/${encodeURIComponent(c.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
       });
-      if (!res.ok) {
-        if (res.error === "case_exists") setErr(tk("case_exists"));
-        else if (res.error === "limits") setErr(tk("case_limits_invalid"));
-        else if (res.error === "scope_words") setErr(tk("scope_word_limit"));
+      const res = (await response.json().catch(() => null)) as
+        | { ok: true }
+        | { ok: false; error?: string }
+        | null;
+      if (!res?.ok) {
+        const error = res?.error;
+        if (error === "case_exists") setErr(tk("case_exists"));
+        else if (error === "limits") setErr(tk("case_limits_invalid"));
+        else if (error === "scope_words") setErr(tk("scope_word_limit"));
         else setErr(tk("required"));
         return;
       }

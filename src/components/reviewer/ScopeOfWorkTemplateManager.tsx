@@ -110,44 +110,46 @@ export function ScopeOfWorkTemplateManager({
           <p className="text-sm text-[var(--muted)]">{tk("reviewer_scope_template_no_templates")}</p>
         ) : (
           templates.map((row) => (
-            <details key={row.id} className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3">
-              <summary className="cursor-pointer select-none text-sm font-medium hover:text-[var(--accent)]">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span>{row.scopeOfWork}</span>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      className="rounded-md border border-[var(--border)] px-2 py-1 text-xs hover:border-[var(--accent)]"
-                      onClick={() => {
-                        setScopeOfWork(row.scopeOfWork);
-                        setTemplate(row.template);
-                      }}
-                    >
-                      {tk("edit")}
-                    </button>
-                    <form
-                      action={async (fd) => {
-                        await deleteScopeOfWorkTemplateAction(fd);
-                      }}
-                      onSubmit={(e) => {
-                        if (!window.confirm(tk("delete_confirm"))) e.preventDefault();
-                      }}
-                    >
-                      <input type="hidden" name="scopeOfWork" value={row.scopeOfWork} />
-                      <button
-                        type="submit"
-                        className="rounded-md border border-[var(--danger)] px-2 py-1 text-xs text-[var(--danger)] hover:bg-[var(--danger)]/10"
-                      >
-                        {tk("delete")}
-                      </button>
-                    </form>
+            <div key={row.id} className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <details className="min-w-0 flex-1">
+                  <summary className="cursor-pointer select-none text-sm font-medium hover:text-[var(--accent)]">
+                    {row.scopeOfWork}
+                  </summary>
+                  <div className="mt-2 whitespace-pre-wrap rounded-md border border-[var(--border)] bg-[var(--surface)] p-3 text-sm text-[var(--text)]">
+                    {row.template}
                   </div>
+                </details>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className="rounded-md border border-[var(--border)] px-2 py-1 text-xs hover:border-[var(--accent)]"
+                    onClick={() => {
+                      setScopeOfWork(row.scopeOfWork);
+                      setTemplate(row.template);
+                    }}
+                  >
+                    {tk("edit")}
+                  </button>
+                  <form
+                    action={async (fd) => {
+                      await deleteScopeOfWorkTemplateAction(fd);
+                    }}
+                    onSubmit={(e) => {
+                      if (!window.confirm(tk("delete_confirm"))) e.preventDefault();
+                    }}
+                  >
+                    <input type="hidden" name="scopeOfWork" value={row.scopeOfWork} />
+                    <button
+                      type="submit"
+                      className="rounded-md border border-[var(--danger)] px-2 py-1 text-xs text-[var(--danger)] hover:bg-[var(--danger)]/10"
+                    >
+                      {tk("delete")}
+                    </button>
+                  </form>
                 </div>
-              </summary>
-              <div className="mt-2 whitespace-pre-wrap rounded-md border border-[var(--border)] bg-[var(--surface)] p-3 text-sm text-[var(--text)]">
-                {row.template}
               </div>
-            </details>
+            </div>
           ))
         )}
       </div>

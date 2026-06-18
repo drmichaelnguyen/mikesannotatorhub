@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { compressImageForEmbed, getClipboardImageFiles } from "@/lib/client-image-data";
 
 function exec(command: string, value?: string) {
   document.execCommand(command, false, value);
@@ -20,8 +21,9 @@ export function RichTextEditor({
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
-  /** HTML last pushed to the parent — avoids resetting the field while typing. */
-  const lastEmittedRef = useRef(value);
+  const [imageBusy, setImageBusy] = useState(false);
+  /** HTML last synced to the DOM — null until first mount so initial value is applied. */
+  const lastEmittedRef = useRef<string | null>(null);
 
   function isEditing() {
     const el = ref.current;
@@ -56,14 +58,29 @@ export function RichTextEditor({
     sync();
   }
 
-  function insertImageFromFile(file: File) {
-    const reader = new FileReader();
-    reader.onload = () => {
+  async function insertImageFromFile(file: File) {
+    setImageBusy(true);
+    try {
+      const dataUrl = await compressImageForEmbed(file);
+      if (!dataUrl) return;
       ref.current?.focus();
-      exec("insertHTML", `<img src="${String(reader.result)}" alt="" style="max-width:100%;height:auto;border-radius:8px;" />`);
+      exec(
+        "insertHTML",
+        `<img src="${dataUrl}" alt="" style="max-width:100%;height:auto;border-radius:8px;" />`,
+      );
       sync();
-    };
-    reader.readAsDataURL(file);
+    } finally {
+      setImageBusy(false);
+    }
+  }
+
+  async function onPaste(e: React.ClipboardEvent<HTMLDivElement>) {
+    const files = getClipboardImageFiles(e.clipboardData);
+    if (files.length === 0) return;
+    e.preventDefault();
+    for (const file of files) {
+      await insertImageFromFile(file);
+    }
   }
 
   return (
@@ -81,8 +98,17 @@ export function RichTextEditor({
         <button type="button" tabIndex={-1} className="rounded border border-[var(--border)] px-2 py-1 text-xs hover:border-[var(--accent)]" onMouseDown={(e) => { e.preventDefault(); runCommand("formatBlock", "h2"); }}>
           H2
         </button>
-        <button type="button" tabIndex={-1} className="rounded border border-[var(--border)] px-2 py-1 text-xs hover:border-[var(--accent)]" onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); }}>
-          Image
+        <button
+          type="button"
+          tabIndex={-1}
+          disabled={imageBusy}
+          className="rounded border border-[var(--border)] px-2 py-1 text-xs hover:border-[var(--accent)] disabled:opacity-50"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            fileRef.current?.click();
+          }}
+        >
+          {imageBusy ? "…" : "Image"}
         </button>
         <input
           ref={fileRef}
@@ -105,6 +131,7 @@ export function RichTextEditor({
         suppressContentEditableWarning
         onInput={sync}
         onBlur={sync}
+        onPaste={onPaste}
         onKeyDown={(e) => {
           if (e.key === "Enter" && e.shiftKey) {
             e.preventDefault();

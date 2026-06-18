@@ -12,7 +12,12 @@ import {
   useTransition,
   type ReactElement,
 } from "react";
-import { batchUpdateCasesAction, reviewCaseAction, reviewerAssignCaseAction } from "@/app/actions/cases";
+import {
+  batchUpdateCasesAction,
+  deleteCaseAction,
+  reviewCaseAction,
+  reviewerAssignCaseAction,
+} from "@/app/actions/cases";
 import { MentionTextarea } from "@/components/CaseDiscussion";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
 import {
@@ -30,6 +35,7 @@ import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
 import {
   AnnotatorCaseDetailPanel,
   type AnnotatorCaseRow,
+  type ReferenceCaseLinkRow,
 } from "@/components/annotator/AnnotatorCaseDetailPanel";
 import { createCaseNote } from "@/lib/case-note-api";
 import { StarRating } from "@/components/StarRating";
@@ -37,7 +43,7 @@ import { ReviewerCaseDetailPanel } from "@/components/reviewer/ReviewerCaseDetai
 import { getClipboardImageFile, getClipboardImageFiles, readFileAsDataUrl, readFilesAsDataUrls } from "@/lib/client-image-data";
 import { computeCompensation } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate, formatMinutes } from "@/lib/format";
-import { buildMentionOptionsForCase, type GuideOption, type TopicOption } from "@/lib/guide-topic";
+import { buildMentionOptionsForCase, type GuideOptionLite, type TopicOptionLite } from "@/lib/guide-topic";
 import { parseVideoGuideUrlsInput } from "@/lib/video-guides";
 import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
 import type { AnnotatorCapacityRow } from "@/app/actions/cases";
@@ -47,6 +53,10 @@ import { CaseStatus, CompensationType } from "@prisma/client";
 import { useDebouncedSearchNeedle } from "@/lib/use-debounced-search-needle";
 
 const TREE_PATH_SEP = "\u001f";
+
+function normalizeScopeKey(scope: string): string {
+  return scope.trim().toLowerCase().replace(/\s+/g, " ");
+}
 
 function makeTreePath(parts: string[]): string {
   return parts.join(TREE_PATH_SEP);
@@ -86,6 +96,25 @@ function formatRowCompensation(lang: Lang, c: SerializedReviewerCase): string {
     c.annotatorBonus,
   );
   return formatCompensationAmount(lang, v);
+}
+
+function readReviewerStatusFilter(params: Pick<URLSearchParams, "get">): CaseStatus | null {
+  return params.get("status") === CaseStatus.SUBMITTED ? CaseStatus.SUBMITTED : null;
+}
+
+function sameValue<T>(rows: SerializedReviewerCase[], getValue: (row: SerializedReviewerCase) => T): T | null {
+  if (rows.length === 0) return null;
+  const first = getValue(rows[0]);
+  return rows.every((row) => Object.is(getValue(row), first)) ? first : null;
+}
+
+function sameTopicIds(rows: SerializedReviewerCase[]): string[] {
+  if (rows.length === 0) return [];
+  const first = rows[0].topics.map((topic) => topic.id).sort();
+  const firstKey = first.join("\n");
+  return rows.every((row) => row.topics.map((topic) => topic.id).sort().join("\n") === firstKey)
+    ? first
+    : [];
 }
 
 type GroupDimension = "project" | "scope" | "rbProject" | "annotator";
@@ -299,10 +328,15 @@ function round2(n: number) {
   return Math.round(n * 100) / 100;
 }
 
+/** Calendar month key in UTC so Node SSR and browser hydration agree (local TZ differs). */
+function compensationMonthKeyUtc(d: Date): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 function formatMonthLabel(lang: Lang, monthKey: string) {
   const [y, m] = monthKey.split("-").map((v) => Number(v));
   if (!Number.isFinite(y) || !Number.isFinite(m)) return monthKey;
-  const date = new Date(y, m - 1, 1);
+  const date = new Date(Date.UTC(y, m - 1, 1));
   return new Intl.DateTimeFormat(lang === "vi" ? "vi-VN" : "en-US", {
     year: "numeric",
     month: "short",
@@ -315,9 +349,9 @@ function buildCompensationPeriods(
   cases: SerializedReviewerCase[],
 ): AnnotatorCompensationPeriods {
   const now = new Date();
-  const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const lastMonthKey = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, "0")}`;
+  const thisMonthKey = compensationMonthKeyUtc(now);
+  const lastMonthAnchor = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const lastMonthKey = compensationMonthKeyUtc(lastMonthAnchor);
 
   let thisMonth = 0;
   let lastMonth = 0;
@@ -349,7 +383,7 @@ function buildCompensationPeriods(
     const acceptedAtRaw = c.reviews[0]?.createdAt ?? c.auditedAt ?? c.completedAt;
     const acceptedAt = acceptedAtRaw ? new Date(acceptedAtRaw) : null;
     if (!acceptedAt || Number.isNaN(acceptedAt.getTime())) continue;
-    const monthKey = `${acceptedAt.getFullYear()}-${String(acceptedAt.getMonth() + 1).padStart(2, "0")}`;
+    const monthKey = compensationMonthKeyUtc(acceptedAt);
     if (monthKey === thisMonthKey) thisMonth += amount;
     if (monthKey === lastMonthKey) lastMonth += amount;
 
@@ -493,8 +527,8 @@ export function ReviewerWorkboard({
   cases: SerializedReviewerCase[];
   annotators: { id: string; name: string; email: string }[];
   capacityRows: AnnotatorCapacityRow[];
-  guides: GuideOption[];
-  topics: TopicOption[];
+  guides: GuideOptionLite[];
+  topics: TopicOptionLite[];
   scopeTemplates: { scopeOfWork: string; template: string }[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
@@ -503,6 +537,9 @@ export function ReviewerWorkboard({
   const searchParams = useSearchParams();
   const [searchInput, setSearchInput] = useState("");
   const searchNeedle = useDebouncedSearchNeedle(searchInput, 300);
+  const [statusFilter, setStatusFilter] = useState<CaseStatus | null>(() =>
+    readReviewerStatusFilter(searchParams),
+  );
   const [showInactiveProjects, setShowInactiveProjects] = useState(false);
   const [showGroupingControls, setShowGroupingControls] = useState(false);
   const [groupOrder, setGroupOrder] = useState<GroupDimension[]>([
@@ -511,7 +548,7 @@ export function ReviewerWorkboard({
     "rbProject",
     "annotator",
   ]);
-  const filteredCases = useMemo(() => {
+  const searchedCases = useMemo(() => {
     const needle = searchNeedle.toLowerCase();
     if (!needle) return cases;
     return cases.filter(
@@ -522,6 +559,10 @@ export function ReviewerWorkboard({
         c.scopeOfWork.toLowerCase().includes(needle),
     );
   }, [searchNeedle, cases]);
+  const filteredCases = useMemo(() => {
+    if (!statusFilter) return searchedCases;
+    return searchedCases.filter((c) => c.status === statusFilter);
+  }, [searchedCases, statusFilter]);
   const projectActivity = useMemo(() => {
     const map = new Map<string, boolean>();
     for (const row of cases) {
@@ -593,6 +634,7 @@ export function ReviewerWorkboard({
   );
   const [auditComment, setAuditComment] = useState("");
   const [auditQualityRating, setAuditQualityRating] = useState<number | null>(null);
+  const [auditAnnotatorBonus, setAuditAnnotatorBonus] = useState("");
   const [auditRawImage, setAuditRawImage] = useState<string | null>(null);
   const [auditMarkedImage, setAuditMarkedImage] = useState<string | null>(null);
   const [assignCaseId, setAssignCaseId] = useState<string | null>(null);
@@ -635,6 +677,20 @@ export function ReviewerWorkboard({
       scopeOfWorkTemplate: templateByScope.get(detailCase.scopeOfWork.trim()) ?? null,
     } as unknown as AnnotatorCaseRow;
   }, [detailCase, templateByScope]);
+  const detailReferenceCases = useMemo<ReferenceCaseLinkRow[]>(() => {
+    if (!detailCase) return [];
+    const scope = normalizeScopeKey(detailCase.scopeOfWork);
+    if (!scope) return [];
+    return cases
+      .filter((row) => row.isReference && row.id !== detailCase.id && normalizeScopeKey(row.scopeOfWork) === scope)
+      .sort((a, b) => a.caseId.localeCompare(b.caseId))
+      .map((row) => ({
+        id: row.id,
+        caseId: row.caseId,
+        redbrickProject: row.redbrickProject,
+        scopeOfWork: row.scopeOfWork,
+      }));
+  }, [detailCase, cases]);
   const noteCase = noteCaseId ? cases.find((c) => c.id === noteCaseId) ?? null : null;
   const assignCase = assignCaseId ? cases.find((c) => c.id === assignCaseId) ?? null : null;
   const annotatorFocus = useMemo(
@@ -702,6 +758,7 @@ export function ReviewerWorkboard({
 
   useEffect(() => {
     setAnnotatorsPanelOpen(readAnnotatorsPanelFromBrowser());
+    setStatusFilter(readReviewerStatusFilter(searchParams));
   }, [searchParams]);
 
   useEffect(() => {
@@ -725,8 +782,30 @@ export function ReviewerWorkboard({
     router.refresh();
   }
 
+  function removeAvailableCase(caseDbId: string) {
+    if (!window.confirm(tk("reviewer_delete_case_confirm"))) return;
+    setErr(null);
+    start(async () => {
+      const res = await deleteCaseAction(caseDbId);
+      if (!res.ok) {
+        setErr(res.error === "state" ? tk("reviewer_delete_case_taken") : tk("required"));
+        return;
+      }
+      if (detailId === caseDbId) closeDetail();
+      refresh();
+    });
+  }
+
   function clearSearch() {
     setSearchInput("");
+    clearStatusFilter();
+  }
+
+  function clearStatusFilter() {
+    setStatusFilter(null);
+    replaceSearchInBrowser(pathname, searchParams.toString(), (params) => {
+      params.delete("status");
+    });
   }
 
   function toggleCaseSelection(caseId: string, checked: boolean) {
@@ -740,21 +819,28 @@ export function ReviewerWorkboard({
     setSelectedCaseIds([]);
   }
 
-  function openBatchEdit() {
-    if (selectedCaseIds.length === 0) return;
-    setBatchRedbrickProject("");
-    setBatchGuideId("");
-    setBatchTopicIds([]);
-    setBatchGuideline("");
-    setBatchVideoGuideUrls("");
-    setBatchScopeOfWork("");
-    setBatchMinMinutes("");
-    setBatchMaxMinutes("");
-    setBatchCompType(CompensationType.PER_CASE);
-    setBatchCompAmount("");
-    setBatchBonusAmount("");
+  function openBatchEditForRows(rows: SerializedReviewerCase[]) {
+    if (rows.length === 0) return;
+    setSelectedCaseIds(rows.map((row) => row.id));
+    setBatchRedbrickProject(sameValue(rows, (row) => row.redbrickProject) ?? "");
+    setBatchGuideId(sameValue(rows, (row) => row.guide?.id ?? "") ?? "");
+    setBatchTopicIds(sameTopicIds(rows));
+    setBatchGuideline(sameValue(rows, (row) => row.guideline) ?? "");
+    setBatchVideoGuideUrls(sameValue(rows, (row) => row.videoGuideUrls.join("\n")) ?? "");
+    setBatchScopeOfWork(sameValue(rows, (row) => row.scopeOfWork) ?? "");
+    setBatchMinMinutes(String(sameValue(rows, (row) => row.minMinutesPerCase) ?? ""));
+    setBatchMaxMinutes(String(sameValue(rows, (row) => row.maxMinutesPerCase) ?? ""));
+    setBatchCompType(sameValue(rows, (row) => row.compensationType) ?? CompensationType.PER_CASE);
+    setBatchCompAmount(String(sameValue(rows, (row) => row.compensationAmount) ?? ""));
+    setBatchBonusAmount(String(sameValue(rows, (row) => row.annotatorBonus) ?? ""));
     setErr(null);
     setBatchEditOpen(true);
+  }
+
+  function openBatchEdit() {
+    if (selectedCaseIds.length === 0) return;
+    const selectedRows = cases.filter((row) => selectedCaseIds.includes(row.id));
+    openBatchEditForRows(selectedRows);
   }
 
   function submitBatchEdit() {
@@ -842,6 +928,7 @@ export function ReviewerWorkboard({
   function resetAuditComposer() {
     setAuditComment("");
     setAuditQualityRating(null);
+    setAuditAnnotatorBonus("");
     setAuditRawImage(null);
     setAuditMarkedImage(null);
   }
@@ -927,6 +1014,7 @@ export function ReviewerWorkboard({
         if (res.error === "invalid_annotator") setErr(tk("reviewer_assign_invalid"));
         else if (res.error === "required") setErr(tk("required"));
         else if (res.error === "pending_review_ack") setErr(tk("annotator_review_ack_block_assign"));
+        else if (res.error === "active_case") setErr(tk("annotator_active_case_block_assign"));
         else setErr(tk("reviewer_assign_taken"));
         return;
       }
@@ -947,6 +1035,14 @@ export function ReviewerWorkboard({
       setErr(tk("audit_reject_need_comment"));
       return;
     }
+    const bonus =
+      audit.decision === "ACCEPT" && auditQualityRating === 5 && auditAnnotatorBonus.trim()
+        ? Number(auditAnnotatorBonus)
+        : undefined;
+    if (bonus != null && (!Number.isFinite(bonus) || bonus < 0)) {
+      setErr(tk("required"));
+      return;
+    }
     setErr(null);
     start(async () => {
       const res = await reviewCaseAction({
@@ -955,9 +1051,16 @@ export function ReviewerWorkboard({
         comment: text,
         screenshotData: auditMarkedImage ?? auditRawImage,
         qualityRating: auditQualityRating,
+        annotatorBonus: bonus,
       });
       if (!res.ok) {
-        setErr(res.error === "rating" ? tk("rating_required") : tk("reviewer_assign_taken"));
+        setErr(
+          res.error === "rating"
+            ? tk("rating_required")
+            : res.error === "bonus"
+              ? tk("required")
+              : tk("reviewer_assign_taken"),
+        );
         return;
       }
       setAudit(null);
@@ -1085,6 +1188,15 @@ export function ReviewerWorkboard({
                         {tk("action_assign")}
                       </button>
                     )}
+                    {c.status === CaseStatus.AVAILABLE && !c.annotator && (
+                      <button
+                        type="button"
+                        className="rounded border border-[var(--danger)]/50 bg-[var(--danger)]/15 px-1.5 py-0.5 text-[var(--danger)] hover:bg-[var(--danger)]/25"
+                        onClick={() => removeAvailableCase(c.id)}
+                      >
+                        {tk("reviewer_delete_case")}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="rounded border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-[var(--text)] hover:border-[var(--accent)]"
@@ -1150,6 +1262,7 @@ export function ReviewerWorkboard({
     return nodes.map((node) => {
       const parts = [...ancestors, node.key];
       const pathStr = makeTreePath(parts);
+      const isScopeGroup = node.key.startsWith("scope:");
       return (
         <details
           key={pathStr}
@@ -1162,6 +1275,20 @@ export function ReviewerWorkboard({
             <span>)</span>
           </summary>
           <div className="space-y-2 border-t border-[var(--border)]/60 px-1 pb-1 pt-2">
+            {isScopeGroup && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-[var(--bg)] px-2 py-1.5">
+                <span className="text-xs text-[var(--muted)]">
+                  {node.cases.length} {tk("reviewer_annotator_view_cases")}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => openBatchEditForRows(node.cases)}
+                  className="rounded-md border border-[var(--accent)]/50 bg-[var(--accent)]/10 px-2.5 py-1 text-xs font-medium text-[var(--accent)] hover:bg-[var(--accent)]/20"
+                >
+                  {tk("reviewer_batch_edit_scope")}
+                </button>
+              </div>
+            )}
             {node.children.length > 0
               ? renderGroupedNodes(node.children, parts)
               : renderCaseTable(node.cases, reviewerSearchHitIds)}
@@ -1195,6 +1322,23 @@ export function ReviewerWorkboard({
           </button>
         </div>
       </div>
+      {statusFilter && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-3 py-2 text-sm">
+          <span className="text-[var(--text)]">
+            {tk("case_status")}:{" "}
+            {statusFilter === CaseStatus.SUBMITTED
+              ? tk("reviewer_cases_submitted_pending")
+              : statusLabel(lang, statusFilter)}
+          </span>
+          <button
+            type="button"
+            onClick={clearStatusFilter}
+            className="rounded-md border border-[var(--accent)]/40 px-2 py-1 text-xs text-[var(--accent)] hover:bg-[var(--accent)]/15"
+          >
+            {tk("clear_search")}
+          </button>
+        </div>
+      )}
       <label className="inline-flex items-center gap-2 text-sm text-[var(--muted)]">
         <input
           type="checkbox"
@@ -1470,6 +1614,7 @@ export function ReviewerWorkboard({
                   guides={guides}
                   canPostDiscussion
                   mentionOptions={detailMentionOptions}
+                  referenceCases={detailReferenceCases}
                 />
               ) : (
                 <ReviewerCaseDetailPanel
@@ -1480,7 +1625,9 @@ export function ReviewerWorkboard({
                   topics={topics}
                   scopeOptions={scopeOptions}
                   mentionOptions={detailMentionOptions}
+                  referenceCases={detailReferenceCases}
                   scopeOfWorkTemplate={templateByScope.get(detailCase.scopeOfWork.trim()) ?? null}
+                  onDeleted={closeDetail}
                 />
               )}
             </div>
@@ -2005,6 +2152,15 @@ export function ReviewerWorkboard({
                                                     {tk("action_assign")}
                                                   </button>
                                                 )}
+                                                {c.status === CaseStatus.AVAILABLE && !c.annotator && (
+                                                  <button
+                                                    type="button"
+                                                    className="rounded border border-[var(--danger)]/50 bg-[var(--danger)]/15 px-1.5 py-0.5 text-[var(--danger)] hover:bg-[var(--danger)]/25"
+                                                    onClick={() => removeAvailableCase(c.id)}
+                                                  >
+                                                    {tk("reviewer_delete_case")}
+                                                  </button>
+                                                )}
                                                 {c.status === CaseStatus.SUBMITTED && (
                                                   <>
                                                     <button
@@ -2264,6 +2420,20 @@ export function ReviewerWorkboard({
               onChange={setAuditQualityRating}
               required
             />
+            {audit.decision === "ACCEPT" && auditQualityRating === 5 && (
+              <label className="mb-2 block">
+                <span className="text-sm text-[var(--muted)]">{tk("case_annotatorBonus")}</span>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("review_bonus_hint")}</p>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={auditAnnotatorBonus}
+                  onChange={(e) => setAuditAnnotatorBonus(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm"
+                />
+              </label>
+            )}
             <div className="mb-2">
               <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
               <input type="file" accept="image/*" onChange={onAuditFile} className="mt-1 block text-sm" />

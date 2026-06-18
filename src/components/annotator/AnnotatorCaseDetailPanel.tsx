@@ -1,9 +1,12 @@
 "use client";
 
+import { CaseContinuityReportSection } from "@/components/CaseContinuityReportSection";
 import { CaseDiscussion } from "@/components/CaseDiscussion";
+import { CaseDetailLink } from "@/components/CaseDetailLink";
 import { TopicDetailModal } from "@/components/TopicDetailModal";
 import { CaseVideoGuidesSection } from "@/components/CaseVideoGuides";
 import { CopyTextButton } from "@/components/CopyTextButton";
+import { LoadingProgressBar } from "@/components/LoadingProgressBar";
 import { RichTextContent } from "@/components/RichTextContent";
 import { StarRating } from "@/components/StarRating";
 import { computeCompensation } from "@/lib/compensation";
@@ -11,11 +14,12 @@ import { formatCompensationAmount, formatDate } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import type { SerializedCaseTopic } from "@/lib/reviewer-serialize";
-import type { GuideOption, MentionOption } from "@/lib/guide-topic";
+import type { GuideOptionLite, MentionOption } from "@/lib/guide-topic";
+import { useGuideHtml } from "@/lib/use-guide-html";
 import { videoGuideUrlsFromDb } from "@/lib/video-guides";
 import type { AnnotationCase, CompensationType, Review } from "@prisma/client";
 import { CaseStatus } from "@prisma/client";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 export type AnnotatorCaseRow = AnnotationCase & {
   guide: { id: string; title: string } | null;
@@ -26,6 +30,11 @@ export type AnnotatorCaseRow = AnnotationCase & {
   /** Optional template to prefill the annotator composer based on `scopeOfWork`. */
   scopeOfWorkTemplate?: string | null;
 };
+
+export type ReferenceCaseLinkRow = Pick<
+  AnnotatorCaseRow,
+  "id" | "caseId" | "redbrickProject" | "scopeOfWork"
+>;
 
 function compLabel(lang: Lang, type: CompensationType, amount: number) {
   if (type === "PER_MINUTE") return `${amount} × ${t(lang, "comp_per_minute")}`;
@@ -44,12 +53,14 @@ export function AnnotatorCaseDetailPanel({
   canPostDiscussion,
   guides = [],
   mentionOptions = [],
+  referenceCases = [],
 }: {
   lang: Lang;
   row: AnnotatorCaseRow;
   canPostDiscussion: boolean;
-  guides?: GuideOption[];
+  guides?: GuideOptionLite[];
   mentionOptions?: MentionOption[];
+  referenceCases?: ReferenceCaseLinkRow[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const last = row.reviews?.[0];
@@ -62,14 +73,8 @@ export function AnnotatorCaseDetailPanel({
     row.maxMinutesPerCase,
     row.annotatorBonus,
   );
-  const guideHtml = useMemo(() => {
-    if (!row.guide) return "";
-    return guides.find((g) => g.id === row.guide!.id)?.content ?? "";
-  }, [guides, row.guide]);
-  const guideGuideline = useMemo(
-    () => (guideHtml ? htmlToPlainText(guideHtml) : ""),
-    [guideHtml],
-  );
+  const { html: guideHtml, loading: guideLoading } = useGuideHtml(row.guide?.id);
+  const guideGuideline = guideHtml ? htmlToPlainText(guideHtml) : "";
   const showGuideline = !row.guide || row.guideline.trim() !== guideGuideline;
   const videoUrls = videoGuideUrlsFromDb(row.videoGuideUrls);
   const [topicModal, setTopicModal] = useState<SerializedCaseTopic | null>(null);
@@ -108,13 +113,25 @@ export function AnnotatorCaseDetailPanel({
                   <span className="font-medium text-[var(--text)]">{row.guide.title}</span>
                 </summary>
                 <div className="border-t border-[var(--border)] px-3 py-3">
-                  <RichTextContent html={guideHtml} />
+                  {guideLoading ? (
+                    <div className="overflow-hidden rounded-md border border-[var(--border)]">
+                      <LoadingProgressBar />
+                      <p className="px-3 py-4 text-sm text-[var(--muted)]">{tk("ui_loading")}</p>
+                    </div>
+                  ) : (
+                    <RichTextContent html={guideHtml} />
+                  )}
                 </div>
               </details>
             </dd>
           </div>
         )}
         <CaseVideoGuidesSection lang={lang} urls={videoUrls} />
+        <CaseContinuityReportSection
+          lang={lang}
+          caseDbId={row.id}
+          hasContinuityReport={row.hasContinuityReport}
+        />
         {showGuideline && row.guideline.trim() !== "" && (
           <div className="md:col-span-2">
             <dt className="sr-only">{tk("case_guideline")}</dt>
@@ -151,6 +168,29 @@ export function AnnotatorCaseDetailPanel({
           <dt className="text-[var(--muted)]">{tk("case_scope")}</dt>
           <dd>{row.scopeOfWork}</dd>
         </div>
+        {referenceCases.length > 0 && (
+          <div className="md:col-span-2">
+            <dt className="text-[var(--muted)]">{tk("case_reference_same_scope")}</dt>
+            <dd className="mt-1 flex flex-wrap gap-2">
+              {referenceCases.map((referenceCase) => (
+                <CaseDetailLink
+                  key={referenceCase.id}
+                  caseDbId={referenceCase.id}
+                  target="_blank"
+                  className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1 text-sm text-[var(--accent)] underline-offset-2 hover:bg-[var(--surface)] hover:underline"
+                >
+                  <span className="font-mono font-medium">{referenceCase.caseId}</span>
+                  <span className="max-w-[12rem] truncate text-xs text-[var(--muted)]">
+                    {referenceCase.redbrickProject}
+                  </span>
+                  <span className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
+                    {tk("case_reference_new_tab")}
+                  </span>
+                </CaseDetailLink>
+              ))}
+            </dd>
+          </div>
+        )}
         <div>
           <dt className="text-[var(--muted)]">{tk("case_minMinutes_recommended")}</dt>
           <dd>{row.minMinutesPerCase}</dd>

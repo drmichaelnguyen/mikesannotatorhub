@@ -2,12 +2,15 @@
 
 import { memo, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { unassignCaseAction } from "@/app/actions/cases";
+import { deleteCaseAction, unassignCaseAction } from "@/app/actions/cases";
+import { CaseContinuityReportSection } from "@/components/CaseContinuityReportSection";
 import { CaseDiscussion } from "@/components/CaseDiscussion";
+import { CaseDetailLink } from "@/components/CaseDetailLink";
 import { CaseVideoGuidesSection } from "@/components/CaseVideoGuides";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ReviewCasePanel } from "@/components/ReviewCasePanel";
 import { RichTextContent } from "@/components/RichTextContent";
+import { LoadingProgressBar } from "@/components/LoadingProgressBar";
 import { ReviewerAssignCase } from "@/components/ReviewerAssignCase";
 import { ReviewerCaseEditor } from "@/components/reviewer/ReviewerCaseEditor";
 import { StarRating } from "@/components/StarRating";
@@ -17,9 +20,11 @@ import type { SerializedCaseTopic, SerializedReviewerCase } from "@/lib/reviewer
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import type { MentionOption } from "@/lib/guide-topic";
-import type { GuideOption, TopicOption } from "@/lib/guide-topic";
+import type { GuideOptionLite, TopicOptionLite } from "@/lib/guide-topic";
 import { CaseStatus, type CompensationType } from "@prisma/client";
 import { TopicDetailModal } from "@/components/TopicDetailModal";
+import type { ReferenceCaseLinkRow } from "@/components/annotator/AnnotatorCaseDetailPanel";
+import { useGuideHtml } from "@/lib/use-guide-html";
 
 function compLabel(lang: Lang, type: CompensationType, amount: number) {
   if (type === "PER_MINUTE") return `${amount} × ${t(lang, "comp_per_minute")}`;
@@ -30,6 +35,51 @@ function htmlToPlainText(html: string) {
   if (!html) return "";
   const doc = new DOMParser().parseFromString(html, "text/html");
   return (doc.body.textContent ?? "").replace(/\s+\n/g, "\n").trim();
+}
+
+function ReviewerDeleteCase({
+  lang,
+  caseDbId,
+  onDeleted,
+}: {
+  lang: Lang;
+  caseDbId: string;
+  onDeleted?: () => void;
+}) {
+  const tk = (k: DictKey) => t(lang, k);
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [err, setErr] = useState<string | null>(null);
+
+  return (
+    <div className="mt-3 rounded-md border border-[var(--danger)]/40 bg-[var(--danger)]/5 p-3">
+      <p className="mb-2 text-sm font-medium text-[var(--danger)]">{tk("reviewer_delete_case")}</p>
+      <p className="mb-2 text-xs text-[var(--muted)]">{tk("reviewer_delete_case_help")}</p>
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => {
+          if (!window.confirm(tk("reviewer_delete_case_confirm"))) return;
+          start(async () => {
+            setErr(null);
+            const res = await deleteCaseAction(caseDbId);
+            if (!res.ok) {
+              setErr(
+                res.error === "state" ? tk("reviewer_delete_case_taken") : tk("required"),
+              );
+              return;
+            }
+            onDeleted?.();
+            router.refresh();
+          });
+        }}
+        className="rounded-md border border-[var(--danger)] bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)] hover:bg-[var(--danger)]/20 disabled:opacity-50"
+      >
+        {tk("reviewer_delete_case")}
+      </button>
+      {err && <p className="mt-2 text-sm text-[var(--danger)]">{err}</p>}
+    </div>
+  );
 }
 
 function ReviewerUnassignCase({
@@ -79,17 +129,21 @@ function ReviewerCaseDetailPanelImpl({
   scopeOptions = [],
   mentionOptions = [],
   topics = [],
+  referenceCases = [],
   /** Scope-of-work checklist text; used to label template-row notes in discussion export only. */
   scopeOfWorkTemplate = null,
+  onDeleted,
 }: {
   lang: Lang;
   c: SerializedReviewerCase;
   annotators: { id: string; name: string; email: string }[];
-  guides?: GuideOption[];
+  guides?: GuideOptionLite[];
   scopeOptions?: string[];
   mentionOptions?: MentionOption[];
-  topics?: TopicOption[];
+  topics?: TopicOptionLite[];
+  referenceCases?: ReferenceCaseLinkRow[];
   scopeOfWorkTemplate?: string | null;
+  onDeleted?: () => void;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const [topicModal, setTopicModal] = useState<SerializedCaseTopic | null>(null);
@@ -102,11 +156,8 @@ function ReviewerCaseDetailPanelImpl({
     c.maxMinutesPerCase,
     c.annotatorBonus,
   );
-  /** Guide body is loaded once via `guides`; case payloads omit HTML to keep lists fast. */
-  const guideHtml = useMemo(() => {
-    if (!c.guide) return "";
-    return guides.find((g) => g.id === c.guide!.id)?.content ?? "";
-  }, [c.guide, guides]);
+  /** Guide body is fetched on demand so case lists stay lightweight. */
+  const { html: guideHtml, loading: guideLoading } = useGuideHtml(c.guide?.id);
   const guideGuideline = useMemo(
     () => (guideHtml ? htmlToPlainText(guideHtml) : ""),
     [guideHtml],
@@ -143,13 +194,25 @@ function ReviewerCaseDetailPanelImpl({
                   <span className="font-medium text-[var(--text)]">{c.guide.title}</span>
                 </summary>
                 <div className="border-t border-[var(--border)] px-3 py-3">
-                  <RichTextContent html={guideHtml} />
+                  {guideLoading ? (
+                    <div className="overflow-hidden rounded-md border border-[var(--border)]">
+                      <LoadingProgressBar />
+                      <p className="px-3 py-4 text-sm text-[var(--muted)]">{tk("ui_loading")}</p>
+                    </div>
+                  ) : (
+                    <RichTextContent html={guideHtml} />
+                  )}
                 </div>
               </details>
             </dd>
           </div>
         )}
         <CaseVideoGuidesSection lang={lang} urls={c.videoGuideUrls} />
+        <CaseContinuityReportSection
+          lang={lang}
+          caseDbId={c.id}
+          hasContinuityReport={c.hasContinuityReport}
+        />
         {showGuideline && c.guideline.trim() !== "" && (
           <div className="md:col-span-2">
             <dt className="sr-only">{tk("case_guideline")}</dt>
@@ -186,6 +249,29 @@ function ReviewerCaseDetailPanelImpl({
           <dt className="text-[var(--muted)]">{tk("case_scope")}</dt>
           <dd>{c.scopeOfWork}</dd>
         </div>
+        {referenceCases.length > 0 && (
+          <div className="md:col-span-2">
+            <dt className="text-[var(--muted)]">{tk("case_reference_same_scope")}</dt>
+            <dd className="mt-1 flex flex-wrap gap-2">
+              {referenceCases.map((referenceCase) => (
+                <CaseDetailLink
+                  key={referenceCase.id}
+                  caseDbId={referenceCase.id}
+                  target="_blank"
+                  className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1 text-sm text-[var(--accent)] underline-offset-2 hover:bg-[var(--surface)] hover:underline"
+                >
+                  <span className="font-mono font-medium">{referenceCase.caseId}</span>
+                  <span className="max-w-[12rem] truncate text-xs text-[var(--muted)]">
+                    {referenceCase.redbrickProject}
+                  </span>
+                  <span className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
+                    {tk("case_reference_new_tab")}
+                  </span>
+                </CaseDetailLink>
+              ))}
+            </dd>
+          </div>
+        )}
         <div>
           <dt className="text-[var(--muted)]">{tk("case_minMinutes_recommended")}</dt>
           <dd>{c.minMinutesPerCase}</dd>
@@ -275,8 +361,11 @@ function ReviewerCaseDetailPanelImpl({
           {tk("last_review")}: {c.reviews[0].comment}
         </p>
       )}
-      {c.status === CaseStatus.AVAILABLE && (
-        <ReviewerAssignCase lang={lang} caseDbId={c.id} annotators={annotators} />
+      {c.status === CaseStatus.AVAILABLE && !c.annotator && (
+        <>
+          <ReviewerAssignCase lang={lang} caseDbId={c.id} annotators={annotators} />
+          <ReviewerDeleteCase lang={lang} caseDbId={c.id} onDeleted={onDeleted} />
+        </>
       )}
       {c.annotator && c.status !== CaseStatus.AUDITED && c.status !== CaseStatus.ACCEPTED && (
         <ReviewerUnassignCase lang={lang} caseDbId={c.id} />

@@ -1,28 +1,19 @@
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { getLangFromCookies } from "@/app/actions/lang";
-import {
-  getAnnotatorCapacityRows,
-  listAnnotatorsForAssignment,
-  listCasesForReviewer,
-  listGuidesAndTopics,
-  listScopeOfWorkTemplatesAction,
-} from "@/app/actions/cases";
-import { CollapsibleSection } from "@/components/CollapsibleSection";
-import { CreateAnnotatorForm } from "@/components/CreateAnnotatorForm";
-import { CreateCaseForm } from "@/components/CreateCaseForm";
-import { GuideTopicManager } from "@/components/reviewer/GuideTopicManager";
-import { ScopeOfWorkTemplateManager } from "@/components/reviewer/ScopeOfWorkTemplateManager";
+import { getReviewerDashboardStats, listReviewerCaseFilterOptions } from "@/app/actions/cases";
 import { NavBar } from "@/components/NavBar";
-import { ReviewerWorkboard } from "@/components/reviewer/ReviewerWorkboard";
 import { ReviewerDashboardStatsPanel } from "@/components/reviewer/ReviewerDashboardStatsPanel";
+import { ReviewerAdminSections } from "@/components/reviewer/ReviewerAdminSections";
 import { NotificationBell } from "@/components/NotificationBell";
 import { getCurrentUser } from "@/lib/auth";
 import type { DictKey } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
-import { serializeReviewerCase } from "@/lib/reviewer-serialize";
-import type { ReviewerCaseRow } from "@/lib/reviewer-types";
 import { getNotifications } from "@/app/actions/notifications";
-import { CaseStatus } from "@prisma/client";
+import {
+  ReviewerWorkboardSection,
+  ReviewerWorkboardSectionFallback,
+} from "@/app/reviewer/ReviewerWorkboardSection";
 
 export default async function ReviewerPage() {
   const user = await getCurrentUser();
@@ -31,52 +22,18 @@ export default async function ReviewerPage() {
   const lang = await getLangFromCookies();
   const tk = (k: DictKey) => t(lang, k);
 
-  let cases: ReviewerCaseRow[];
-  let annotators: Awaited<ReturnType<typeof listAnnotatorsForAssignment>>;
-  let capacityRows: Awaited<ReturnType<typeof getAnnotatorCapacityRows>>;
-  let guidesAndTopics: Awaited<ReturnType<typeof listGuidesAndTopics>>;
+  let stats;
+  let filterOptions;
   let notifGroups;
-  let templates;
   try {
-    [cases, annotators, capacityRows, guidesAndTopics, notifGroups, templates] = await Promise.all([
-      listCasesForReviewer() as Promise<ReviewerCaseRow[]>,
-      listAnnotatorsForAssignment(),
-      getAnnotatorCapacityRows(),
-      listGuidesAndTopics(),
+    [stats, filterOptions, notifGroups] = await Promise.all([
+      getReviewerDashboardStats(),
+      listReviewerCaseFilterOptions(),
       getNotifications(),
-      listScopeOfWorkTemplatesAction(),
     ]);
   } catch {
     redirect("/login");
   }
-
-  const serialized = cases.map(serializeReviewerCase);
-  const scopeOptions = Array.from(
-    new Set(
-      cases
-        .map((c) => c.scopeOfWork.trim())
-        .filter(Boolean),
-    ),
-  ).sort((a, b) => a.localeCompare(b));
-  const rbProjectOptions = Array.from(
-    new Set(
-      cases
-        .map((c) => c.redbrickProject.trim())
-        .filter(Boolean),
-    ),
-  ).sort((a, b) => a.localeCompare(b));
-  const caseDone = cases.filter((c) => c.completedAt != null).length;
-  const caseSubmittedPendingReview = cases.filter((c) => c.status === CaseStatus.SUBMITTED).length;
-  const caseApproved = cases.filter(
-    (c) => c.status === CaseStatus.AUDITED || c.status === CaseStatus.ACCEPTED,
-  ).length;
-  const difficultyRatings = cases.filter((c) => c.difficultyRating != null);
-  const qualityRatings = cases.filter((c) => c.qualityRating != null);
-  const avg = (list: { difficultyRating?: number | null; qualityRating?: number | null }[], key: "difficultyRating" | "qualityRating") => {
-    const vals = list.map((item) => item[key]).filter((v): v is number => typeof v === "number");
-    if (vals.length === 0) return null;
-    return Math.round((vals.reduce((sum, v) => sum + v, 0) / vals.length) * 10) / 10;
-  };
 
   return (
     <div className="min-h-screen">
@@ -95,63 +52,15 @@ export default async function ReviewerPage() {
           <h1 className="text-2xl font-semibold">{tk("reviewer_title")}</h1>
           <p className="text-sm text-[var(--muted)]">{tk("appName")}</p>
         </div>
-        <ReviewerDashboardStatsPanel
+        <ReviewerDashboardStatsPanel lang={lang} {...stats} />
+        <Suspense fallback={<ReviewerWorkboardSectionFallback lang={lang} />}>
+          <ReviewerWorkboardSection lang={lang} />
+        </Suspense>
+        <ReviewerAdminSections
           lang={lang}
-          totalAnnotators={annotators.length}
-          caseDone={caseDone}
-          caseSubmittedPendingReview={caseSubmittedPendingReview}
-          caseApproved={caseApproved}
-          averageDifficulty={avg(cases, "difficultyRating")}
-          difficultyCount={difficultyRatings.length}
-          averageQuality={avg(cases, "qualityRating")}
-          qualityCount={qualityRatings.length}
+          scopeOptions={filterOptions.scopeOptions}
+          rbProjectOptions={filterOptions.rbProjectOptions}
         />
-        <section>
-          <CollapsibleSection title={tk("reviewer_guide_section")}>
-            <GuideTopicManager
-              lang={lang}
-              guides={guidesAndTopics.guides}
-              topics={guidesAndTopics.topics}
-              scopeOptions={scopeOptions}
-              rbProjectOptions={rbProjectOptions}
-            />
-          </CollapsibleSection>
-        </section>
-        <section>
-          <CollapsibleSection title={tk("reviewer_create_annotator")}>
-            <CreateAnnotatorForm lang={lang} />
-          </CollapsibleSection>
-        </section>
-        <section>
-          <CollapsibleSection title={tk("reviewer_create")}>
-            <CreateCaseForm
-              lang={lang}
-              annotators={annotators}
-              guides={guidesAndTopics.guides}
-              topics={guidesAndTopics.topics}
-              scopeOptions={scopeOptions}
-            />
-          </CollapsibleSection>
-        </section>
-        <section>
-          <CollapsibleSection title={tk("reviewer_scope_template_section")}>
-            <ScopeOfWorkTemplateManager lang={lang} templates={templates} scopeOptions={scopeOptions} />
-          </CollapsibleSection>
-        </section>
-        <section>
-          <ReviewerWorkboard
-            lang={lang}
-            cases={serialized}
-            annotators={annotators}
-            capacityRows={capacityRows}
-            guides={guidesAndTopics.guides}
-            topics={guidesAndTopics.topics}
-            scopeTemplates={templates.map((item) => ({
-              scopeOfWork: item.scopeOfWork,
-              template: item.template,
-            }))}
-          />
-        </section>
       </main>
     </div>
   );

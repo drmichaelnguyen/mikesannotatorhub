@@ -1,21 +1,23 @@
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { getLangFromCookies } from "@/app/actions/lang";
 import {
-  getAnnotatorBoard,
   getAnnotatorAvailabilitySummary,
   getAnnotatorCompensationSummary,
-  getAnnotatorPendingReviewAcknowledgments,
-  listGuidesAndTopics,
 } from "@/app/actions/cases";
 import { AnnotatorAvailabilityPanel } from "@/components/AnnotatorAvailabilityPanel";
 import { getNotifications } from "@/app/actions/notifications";
 import { AnnotatorStatsPanel } from "@/components/AnnotatorStatsPanel";
-import { AnnotatorWorkboard } from "@/components/annotator/AnnotatorWorkboard";
+import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { NavBar } from "@/components/NavBar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { getCurrentUser } from "@/lib/auth";
 import type { DictKey } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
+import {
+  AnnotatorWorkboardSection,
+  AnnotatorWorkboardSectionFallback,
+} from "@/app/annotator/AnnotatorWorkboardSection";
 
 export default async function AnnotatorPage() {
   const user = await getCurrentUser();
@@ -24,20 +26,14 @@ export default async function AnnotatorPage() {
   const lang = await getLangFromCookies();
   const tk = (k: DictKey) => t(lang, k);
 
-  let board;
   let summary;
   let availability;
-  let guidesAndTopics;
   let notifGroups;
-  let pendingReviewAcks;
   try {
-    [board, summary, availability, guidesAndTopics, notifGroups, pendingReviewAcks] = await Promise.all([
-      getAnnotatorBoard(),
+    [summary, availability, notifGroups] = await Promise.all([
       getAnnotatorCompensationSummary(),
       getAnnotatorAvailabilitySummary(),
-      listGuidesAndTopics(),
       getNotifications(),
-      getAnnotatorPendingReviewAcknowledgments(),
     ]);
   } catch {
     redirect("/login");
@@ -60,36 +56,19 @@ export default async function AnnotatorPage() {
         notificationSlot={<NotificationBell lang={lang} initialGroups={notifGroups} />}
       />
       <main className="mx-auto max-w-6xl space-y-8 px-4 py-8">
-        <details className="rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-          <summary className="cursor-pointer select-none px-4 py-3 hover:bg-[var(--bg)]">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h1 className="text-2xl font-semibold">{tk("annotator_title")}</h1>
-                <p className="text-sm text-[var(--muted)]">{user.email}</p>
-              </div>
-              <span className="rounded-full border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1 text-xs font-medium text-[var(--muted)]">
-                Expand
-              </span>
-            </div>
-          </summary>
-          <div className="space-y-8 border-t border-[var(--border)] p-4">
+        <div>
+          <h1 className="text-2xl font-semibold">{tk("annotator_title")}</h1>
+          <p className="text-sm text-[var(--muted)]">{user.email}</p>
+        </div>
+        <CollapsibleSection title={`${tk("dash_compensation")} · ${tk("availability_title")}`}>
+          <div className="space-y-8">
             <AnnotatorStatsPanel lang={lang} summary={summary} />
             <AnnotatorAvailabilityPanel lang={lang} summary={availability} />
           </div>
-        </details>
-        <section>
-          <h2 className="mb-3 text-lg font-medium">{tk("dash_cases_heading")}</h2>
-          <AnnotatorWorkboard
-            lang={lang}
-            available={board.available}
-            mine={board.mine}
-            rejected={board.rejected}
-            reference={board.reference}
-            guides={guidesAndTopics.guides}
-            topics={guidesAndTopics.topics}
-            pendingReviewAcks={pendingReviewAcks}
-          />
-        </section>
+        </CollapsibleSection>
+        <Suspense fallback={<AnnotatorWorkboardSectionFallback lang={lang} />}>
+          <AnnotatorWorkboardSection lang={lang} />
+        </Suspense>
       </main>
     </div>
   );

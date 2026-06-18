@@ -9,6 +9,8 @@ export type CaseDetailLinkProps = {
   children: React.ReactNode;
   className?: string;
   onClick?: React.MouseEventHandler<HTMLAnchorElement>;
+  target?: React.HTMLAttributeAnchorTarget;
+  rel?: string;
   /** Adjust query before `case` is set (e.g. `p.delete("annotators")` on reviewer). */
   amendSearch?: (params: URLSearchParams) => void;
 };
@@ -32,11 +34,20 @@ const defaultClassName = "text-[var(--accent)] underline-offset-2 hover:underlin
  * Deep-link to a case via `?case=`. Href is applied after mount so SSR markup
  * (no search params in static shell) matches the client's first paint.
  */
-export function CaseDetailLink({ caseDbId, children, className, onClick, amendSearch }: CaseDetailLinkProps) {
+export function CaseDetailLink({
+  caseDbId,
+  children,
+  className,
+  onClick,
+  target,
+  rel,
+  amendSearch,
+}: CaseDetailLinkProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [href, setHref] = useState<string | null>(null);
   const cn = className ?? defaultClassName;
+  const linkRel = rel ?? (target === "_blank" ? "noopener noreferrer" : undefined);
 
   useEffect(() => {
     setHref(buildCaseDetailHref(pathname, searchParams.toString(), caseDbId, amendSearch));
@@ -51,6 +62,8 @@ export function CaseDetailLink({ caseDbId, children, className, onClick, amendSe
       href={href}
       scroll={false}
       className={cn}
+      target={target}
+      rel={linkRel}
       onClick={(e) => {
         if (onClick) {
           e.preventDefault();

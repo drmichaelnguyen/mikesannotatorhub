@@ -3,7 +3,8 @@ import type { AnnotationCase, Guide, Review, Topic, TopicProject, TopicScope, Us
 export type ReviewerCaseRow = AnnotationCase & {
   guide: Pick<Guide, "id" | "title"> | null;
   caseTopics: {
-    topic: Pick<Topic, "id" | "name" | "description"> & {
+    topic: Pick<Topic, "id" | "name"> & {
+      description?: Topic["description"];
       projects: Pick<TopicProject, "id" | "redbrickProject">[];
       scopes: Pick<TopicScope, "id" | "scopeOfWork">[];
     };

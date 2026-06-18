@@ -84,6 +84,7 @@ model AnnotationCase {
   /** Latest `Review.id` the annotator has confirmed they read (comment + quality); must match newest review to take another case from the pool. */
   annotatorAcknowledgedReviewId String?
   isReference        Boolean            @default(false)
+  hasContinuityReport Boolean           @default(false)
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 

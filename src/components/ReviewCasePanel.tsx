@@ -21,6 +21,7 @@ export function ReviewCasePanel({
   const [rawImage, setRawImage] = useState<string | null>(null);
   const [markedImage, setMarkedImage] = useState<string | null>(null);
   const [qualityRating, setQualityRating] = useState<number | null>(null);
+  const [annotatorBonus, setAnnotatorBonus] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const router = useRouter();
@@ -50,6 +51,14 @@ export function ReviewCasePanel({
       setMsg(tk("rating_required"));
       return;
     }
+    const bonus =
+      decision === "ACCEPT" && qualityRating === 5 && annotatorBonus.trim()
+        ? Number(annotatorBonus)
+        : undefined;
+    if (bonus != null && (!Number.isFinite(bonus) || bonus < 0)) {
+      setMsg(tk("required"));
+      return;
+    }
     setMsg(null);
     start(async () => {
       const res = await reviewCaseAction({
@@ -58,8 +67,17 @@ export function ReviewCasePanel({
         comment,
         screenshotData: markedImage ?? rawImage,
         qualityRating,
+        annotatorBonus: bonus,
       });
-      if (!res.ok) setMsg(res.error === "rating" ? tk("rating_required") : tk("required"));
+      if (!res.ok) {
+        setMsg(
+          res.error === "rating"
+            ? tk("rating_required")
+            : res.error === "bonus"
+              ? tk("required")
+              : tk("required"),
+        );
+      }
       else {
         setMsg(
           `${decision === "ACCEPT" ? tk("accept") : tk("reject")} — ${tk("compensation_preview")}: ${res.payout}`,
@@ -88,6 +106,20 @@ export function ReviewCasePanel({
         onChange={setQualityRating}
         required
       />
+      {qualityRating === 5 && (
+        <label className="block">
+          <span className="text-sm text-[var(--muted)]">{tk("case_annotatorBonus")}</span>
+          <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("review_bonus_hint")}</p>
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            value={annotatorBonus}
+            onChange={(e) => setAnnotatorBonus(e.target.value)}
+            className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
+          />
+        </label>
+      )}
       <div>
         <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
         <input type="file" accept="image/*" onChange={onFile} className="mt-1 block text-sm" />
