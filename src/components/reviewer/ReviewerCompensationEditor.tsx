@@ -42,12 +42,7 @@ export function ReviewerCompensationEditor({
     setMsg(null);
     const compensationAmount = Number(amountStr);
     const annotatorBonus = Number(bonusStr);
-    if (
-      !Number.isFinite(compensationAmount) ||
-      compensationAmount < 0 ||
-      !Number.isFinite(annotatorBonus) ||
-      annotatorBonus < 0
-    ) {
+    if (!Number.isFinite(compensationAmount) || compensationAmount < 0 || !Number.isFinite(annotatorBonus)) {
       setErr(tk("required"));
       return;
     }
@@ -95,10 +90,9 @@ export function ReviewerCompensationEditor({
           />
         </label>
         <label className="min-w-[140px] flex-1 text-sm">
-          <span className="text-[var(--muted)]">{tk("case_annotatorBonus")}</span>
+          <span className="text-[var(--muted)]">{tk("case_quality_adjustment")}</span>
           <input
             type="number"
-            min={0}
             step="0.01"
             value={bonusStr}
             onChange={(e) => setBonusStr(e.target.value)}

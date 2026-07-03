@@ -9,12 +9,14 @@ import {
   type PendingReviewAckCase,
 } from "@/app/actions/cases";
 import { MentionTextarea } from "@/components/CaseDiscussion";
+import { AnnotatorTakeCaseButton } from "@/components/annotator/AnnotatorTakeCaseButton";
 import {
   AnnotatorCaseDetailPanel,
   type AnnotatorCaseRow,
 } from "@/components/annotator/AnnotatorCaseDetailPanel";
 import { AnnotatorReviewAckModal } from "@/components/annotator/AnnotatorReviewAckModal";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
+import { resolveTakeCaseBlockReason } from "@/lib/annotator-take-case";
 import { replaceCaseQueryInBrowser } from "@/lib/case-detail-url";
 import {
   useCaseDetailSync,
@@ -27,8 +29,9 @@ import { createCaseNote, fetchCaseNotes } from "@/lib/case-note-api";
 import { buildTemplateRowNote } from "@/lib/template-row-comment";
 import { StarRating } from "@/components/StarRating";
 import { getClipboardImageFiles, readFilesAsDataUrls } from "@/lib/client-image-data";
-import { computeCompensation } from "@/lib/compensation";
-import { formatCompensationAmount } from "@/lib/format";
+import { AnnotatorPayExplainer } from "@/components/annotator/AnnotatorPayExplainer";
+import { CaseCompensationAmountButton } from "@/components/CaseCompensationBreakdown";
+import { caseWasResubmitted, computeCompensation, resubmitPenaltyApplies } from "@/lib/compensation";
 import { buildMentionOptionsForCase, type GuideOptionLite, type TopicOptionLite } from "@/lib/guide-topic";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -160,71 +163,6 @@ function CommentActionLabel({
         </span>
       )}
     </span>
-  );
-}
-
-type AssignCaseResult =
-  | { ok: true }
-  | { ok: false; error: "pending_review_ack" | "state" | "auth" | string };
-
-async function assignCase(caseDbId: string): Promise<AssignCaseResult> {
-  const res = await fetch(`/api/cases/${encodeURIComponent(caseDbId)}/assign`, {
-    method: "POST",
-    cache: "no-store",
-  });
-  const data = (await res.json().catch(() => null)) as AssignCaseResult | null;
-  if (!res.ok || !data?.ok) {
-    return {
-      ok: false,
-      error: data && "error" in data && typeof data.error === "string" ? data.error : "state",
-    };
-  }
-  return data;
-}
-
-function AnnotatorAssignForm({
-  lang,
-  caseDbId,
-  takeDisabled = false,
-}: {
-  lang: Lang;
-  caseDbId: string;
-  takeDisabled?: boolean;
-}) {
-  const tk = (k: DictKey) => t(lang, k);
-  const router = useRouter();
-  const [pending, start] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <div className="flex flex-col items-start gap-1">
-      <button
-        type="button"
-        disabled={pending || takeDisabled}
-        className="rounded border border-[var(--accent)] bg-[var(--accent)]/15 px-2 py-0.5 text-[var(--accent)] hover:bg-[var(--accent)]/25 disabled:opacity-50"
-        onClick={() =>
-          start(async () => {
-            setError(null);
-            const result = await assignCase(caseDbId);
-            if (!result.ok) {
-              setError(result.error);
-              return;
-            }
-            router.refresh();
-          })
-        }
-      >
-        {tk("assign")}
-      </button>
-      {error && (
-        <span className="max-w-[14rem] text-[var(--danger)]">
-          {error === "pending_review_ack"
-            ? tk("annotator_review_ack_block_take")
-            : error === "active_case"
-              ? tk("annotator_active_case_block_take")
-              : tk("reviewer_assign_taken")}
-        </span>
-      )}
-    </div>
   );
 }
 
@@ -361,6 +299,8 @@ export function AnnotatorWorkboard({
   guides,
   topics,
   pendingReviewAcks = [],
+  currentUserId = null,
+  redbrickFlags = [],
 }: {
   lang: Lang;
   available: AnnotatorCaseRow[];
@@ -370,6 +310,8 @@ export function AnnotatorWorkboard({
   guides: GuideOptionLite[];
   topics: TopicOptionLite[];
   pendingReviewAcks?: PendingReviewAckCase[];
+  currentUserId?: string | null;
+  redbrickFlags?: { caseDbId: string; flagId: string }[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
@@ -397,6 +339,22 @@ export function AnnotatorWorkboard({
   const hasUnsubmittedCase = useMemo(
     () => mine.some((c) => !c.isReference && c.status === CaseStatus.ASSIGNED),
     [mine],
+  );
+  const activeAssignedCase = useMemo(
+    () => mine.find((c) => !c.isReference && c.status === CaseStatus.ASSIGNED) ?? null,
+    [mine],
+  );
+  const takeBlockReason = useMemo(
+    () =>
+      resolveTakeCaseBlockReason({
+        pendingReviewAckCount: pendingReviewAcks.length,
+        hasUnsubmittedCase,
+      }),
+    [pendingReviewAcks.length, hasUnsubmittedCase],
+  );
+  const redbrickFlagByCaseId = useMemo(
+    () => new Set(redbrickFlags.map((f) => f.caseDbId)),
+    [redbrickFlags],
   );
 
   const matchesSearchNeedle = useCallback(
@@ -830,26 +788,42 @@ export function AnnotatorWorkboard({
                   </td>
                 )}
                 {mode === "done" && (
-                  <td className="py-1.5 pr-2 tabular-nums text-[var(--success)]">
-                    {formatCompensationAmount(
-                      lang,
-                      computeCompensation(
+                  <td className="py-1.5 pr-2" onClick={(e) => e.stopPropagation()}>
+                    <CaseCompensationAmountButton
+                      lang={lang}
+                      amount={computeCompensation(
                         c.compensationType,
                         c.compensationAmount,
                         c.annotationMinutes,
                         c.maxMinutesPerCase,
+                        c.minMinutesPerCase,
                         c.annotatorBonus,
-                      ),
-                    )}
+                      )}
+                      inputs={{
+                        compensationType: c.compensationType,
+                        compensationAmount: c.compensationAmount,
+                        annotationMinutes: c.annotationMinutes,
+                        minMinutesPerCase: c.minMinutesPerCase,
+                        maxMinutesPerCase: c.maxMinutesPerCase,
+                        annotatorBonus: c.annotatorBonus,
+                        wasResubmitted: resubmitPenaltyApplies(
+                          (c._count?.reviews ?? 0) > 0 || caseWasResubmitted(c.reviews),
+                          c.auditedAt,
+                        ),
+                      }}
+                      title={c.caseId}
+                      className="font-medium text-[var(--success)]"
+                    />
                   </td>
                 )}
                 <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
                   <div className="flex flex-wrap gap-1">
                     {mode === "pool" && (
-                      <AnnotatorAssignForm
+                      <AnnotatorTakeCaseButton
                         lang={lang}
                         caseDbId={c.id}
-                        takeDisabled={pendingReviewAcks.length > 0 || hasUnsubmittedCase}
+                        blockReason={takeBlockReason}
+                        activeCaseId={activeAssignedCase?.caseId ?? null}
                       />
                     )}
                     {mode === "active" &&
@@ -1030,6 +1004,19 @@ export function AnnotatorWorkboard({
           </button>
         </div>
       )}
+      {takeBlockReason === "active_case" && activeAssignedCase && (
+        <div
+          className="rounded-lg border border-[var(--warn)]/40 bg-[var(--warn)]/10 px-4 py-3"
+          role="status"
+        >
+          <p className="text-sm text-[var(--text)]">
+            {tk("annotator_active_case_block_banner").replace(
+              "{caseId}",
+              activeAssignedCase.caseId,
+            )}
+          </p>
+        </div>
+      )}
       {pendingReviewAcks.length > 0 && showReviewAckModal && (
         <AnnotatorReviewAckModal
           lang={lang}
@@ -1041,6 +1028,8 @@ export function AnnotatorWorkboard({
         <h2 className="text-lg font-medium">{tk("annotator_board_title")}</h2>
         <p className="mt-1 text-sm text-[var(--muted)]">{tk("annotator_board_hint")}</p>
       </div>
+
+      <AnnotatorPayExplainer lang={lang} />
 
       <div className="flex flex-col gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 sm:flex-row sm:items-end">
         <label className="flex-1">
@@ -1260,6 +1249,14 @@ export function AnnotatorWorkboard({
                 canPostDiscussion={canPostInDetail(detailRow)}
                 mentionOptions={detailMentionOptions}
                 referenceCases={detailReferenceCases}
+                takeBlockReason={
+                  detailRow.status === CaseStatus.AVAILABLE && !detailRow.isReference
+                    ? takeBlockReason
+                    : null
+                }
+                activeCaseId={activeAssignedCase?.caseId ?? null}
+                currentUserId={currentUserId}
+                redbrickFlagged={redbrickFlagByCaseId.has(detailRow.id)}
               />
             </div>
           </div>

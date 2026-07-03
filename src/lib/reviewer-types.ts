@@ -12,5 +12,6 @@ export type ReviewerCaseRow = AnnotationCase & {
   annotator: Pick<User, "id" | "name" | "email"> | null;
   auditedBy: Pick<User, "id" | "name" | "email"> | null;
   reviews: Pick<Review, "id" | "decision" | "comment" | "createdAt">[];
-  _count: { caseNotes: number };
+  /** `reviews` count is filtered to REJECT decisions (prior rejection / resubmit). */
+  _count: { caseNotes: number; reviews: number };
 };

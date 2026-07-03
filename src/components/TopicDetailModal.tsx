@@ -70,7 +70,7 @@ export function TopicDetailModal({
       onClick={onClose}
     >
       <div
-        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl"
+        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl"
         role="dialog"
         aria-modal
         aria-labelledby="topic-detail-title"
@@ -99,7 +99,7 @@ export function TopicDetailModal({
                 <p className="px-3 py-4 text-sm text-[var(--muted)]">{tk("ui_loading")}</p>
               </div>
             ) : display.description?.trim() ? (
-              <RichTextContent html={display.description} className="mt-1" />
+              <RichTextContent lang={lang} html={display.description} className="mt-1" />
             ) : (
               <p className="mt-1 text-[var(--muted)]">—</p>
             )}

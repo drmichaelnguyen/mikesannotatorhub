@@ -26,3 +26,11 @@ export function formatMinutes(lang: Lang, value: number | null) {
     maximumFractionDigits: 1,
   }).format(value)} min`;
 }
+
+export function formatHours(lang: Lang, value: number | null) {
+  if (value == null) return "—";
+  return `${new Intl.NumberFormat(lang === "vi" ? "vi-VN" : "en-US", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(value)} h`;
+}

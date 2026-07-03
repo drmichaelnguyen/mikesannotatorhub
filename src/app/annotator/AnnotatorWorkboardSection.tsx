@@ -4,6 +4,9 @@ import {
   getAnnotatorPendingReviewAcknowledgments,
   listGuidesAndTopicsLite,
 } from "@/app/actions/cases";
+import { getAnnotatorRedbrickFlags } from "@/app/actions/redbrick-flags";
+import { resolveAnnotatorWorkspaceUserId } from "@/lib/annotator-workspace";
+import { getCurrentUser } from "@/lib/auth";
 import { SectionLoadingPlaceholder } from "@/components/LoadingProgressBar";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -16,10 +19,13 @@ const AnnotatorWorkboard = dynamic(
 );
 
 export async function AnnotatorWorkboardSection({ lang }: { lang: Lang }) {
-  const [board, guidesAndTopics, pendingReviewAcks] = await Promise.all([
+  const user = await getCurrentUser();
+  const workspaceUserId = user ? await resolveAnnotatorWorkspaceUserId(user) : null;
+  const [board, guidesAndTopics, pendingReviewAcks, redbrickFlags] = await Promise.all([
     getAnnotatorBoard(),
     listGuidesAndTopicsLite(),
     getAnnotatorPendingReviewAcknowledgments(),
+    getAnnotatorRedbrickFlags(),
   ]);
 
   return (
@@ -34,6 +40,8 @@ export async function AnnotatorWorkboardSection({ lang }: { lang: Lang }) {
         guides={guidesAndTopics.guides}
         topics={guidesAndTopics.topics}
         pendingReviewAcks={pendingReviewAcks}
+        currentUserId={workspaceUserId}
+        redbrickFlags={redbrickFlags}
       />
     </section>
   );

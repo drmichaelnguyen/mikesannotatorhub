@@ -3,7 +3,14 @@
 import { CaseStatus, CompensationType } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { compensationMonthKeyUtc, computeCompensation } from "@/lib/compensation";
+import {
+  compensationMonthKeyUtc,
+  computeCaseBasePay,
+  computeCompensation,
+  computeTimeCompensation,
+  resubmitPenaltyApplies,
+  suggestedQualityAdjustment,
+} from "@/lib/compensation";
 import { getCurrentUser, requireRole } from "@/lib/auth";
 import { requireAnnotatorWorkspace, resolveAnnotatorWorkspaceUserId } from "@/lib/annotator-workspace";
 import { getReviewerNotificationRecipients, pushNotification } from "@/app/actions/notifications";
@@ -922,7 +929,7 @@ export async function updateCaseCompensationAction(input: {
   if (!Number.isFinite(input.compensationAmount) || input.compensationAmount < 0) {
     return { ok: false as const, error: "required" as const };
   }
-  if (!Number.isFinite(input.annotatorBonus) || input.annotatorBonus < 0) {
+  if (!Number.isFinite(input.annotatorBonus)) {
     return { ok: false as const, error: "required" as const };
   }
   const row = await prisma.annotationCase.findUnique({
@@ -1362,12 +1369,29 @@ export async function reviewCaseAction(input: {
   }
 
   const accept = input.decision === "ACCEPT";
-  let approvedBonus = row.annotatorBonus;
-  if (accept && input.qualityRating === 5 && input.annotatorBonus != null) {
-    if (!Number.isFinite(input.annotatorBonus) || input.annotatorBonus < 0) {
-      return { ok: false as const, error: "bonus" as const };
+  let approvedBonus = 0;
+  if (accept) {
+    if (input.annotatorBonus != null) {
+      if (!Number.isFinite(input.annotatorBonus)) {
+        return { ok: false as const, error: "bonus" as const };
+      }
+      approvedBonus = input.annotatorBonus;
+    } else {
+      const caseBase = computeCaseBasePay(
+        row.compensationType,
+        row.compensationAmount,
+        row.minMinutesPerCase,
+        row.maxMinutesPerCase,
+      );
+      const priorReject = await prisma.review.findFirst({
+        where: { annotationCaseId: row.id, decision: "REJECT" },
+        select: { id: true },
+      });
+      approvedBonus = suggestedQualityAdjustment(input.qualityRating, caseBase, {
+        wasResubmitted: priorReject != null,
+        at: new Date(),
+      });
     }
-    approvedBonus = input.annotatorBonus;
   }
 
   await prisma.$transaction([
@@ -1395,6 +1419,7 @@ export async function reviewCaseAction(input: {
             auditedAt: null,
             auditedById: null,
             qualityRating: input.qualityRating,
+            annotatorBonus: 0,
           },
     }),
   ]);
@@ -1407,13 +1432,16 @@ export async function reviewCaseAction(input: {
   revalidatePath("/annotator");
   return {
     ok: true as const,
-    payout: computeCompensation(
-      row.compensationType,
-      row.compensationAmount,
-      row.annotationMinutes,
-      row.maxMinutesPerCase,
-      approvedBonus,
-    ),
+    payout: accept
+      ? computeCompensation(
+          row.compensationType,
+          row.compensationAmount,
+          row.annotationMinutes,
+          row.maxMinutesPerCase,
+          row.minMinutesPerCase,
+          approvedBonus,
+        )
+      : 0,
   };
 }
 
@@ -1547,7 +1575,12 @@ export async function listCasesForReviewer() {
         take: 1,
         select: { id: true, decision: true, comment: true, createdAt: true },
       },
-      _count: { select: { caseNotes: true } },
+      _count: {
+        select: {
+          caseNotes: true,
+          reviews: { where: { decision: "REJECT" } },
+        },
+      },
     },
   });
 }
@@ -1570,6 +1603,12 @@ export type AnnotatorCompensationCaseRow = {
   caseId: string;
   project: string;
   submittedAt: string | null;
+  compensationType: "PER_MINUTE" | "PER_CASE";
+  compensationAmount: number;
+  annotationMinutes: number | null;
+  minMinutesPerCase: number;
+  maxMinutesPerCase: number;
+  wasResubmitted: boolean;
   baseCompensation: number;
   bonusCompensation: number;
   totalCompensation: number;
@@ -1581,6 +1620,10 @@ export type AnnotatorCompensationMonthRow = {
   bonusCompensation: number;
   totalCompensation: number;
   auditedCount: number;
+  /** Sum of submitted annotation minutes for audited cases in the month. */
+  totalMinutes: number;
+  /** Total compensation ÷ hours worked; null when no time was recorded. */
+  averagePayPerHour: number | null;
   cases: AnnotatorCompensationCaseRow[];
 };
 
@@ -1704,6 +1747,9 @@ export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompen
         orderBy: { createdAt: "desc" },
         take: 1,
       },
+      _count: {
+        select: { reviews: { where: { decision: "REJECT" } } },
+      },
     },
   });
 
@@ -1730,6 +1776,7 @@ export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompen
       bonusCompensation: number;
       totalCompensation: number;
       auditedCount: number;
+      totalMinutes: number;
       cases: AnnotatorCompensationCaseRow[];
     }
   >();
@@ -1749,15 +1796,16 @@ export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompen
       continue;
     }
 
-    const baseAmount = computeCompensation(
+    const baseAmount = computeTimeCompensation(
       c.compensationType,
       c.compensationAmount,
       c.annotationMinutes,
       c.maxMinutesPerCase,
-      0,
+      c.minMinutesPerCase,
     );
     const bonusAmount = c.annotatorBonus;
-    const amount = baseAmount + bonusAmount;
+    const amount = Math.max(0, Math.round((baseAmount + bonusAmount) * 100) / 100);
+    const minutes = c.annotationMinutes ?? 0;
     baseAllTime += baseAmount;
     bonusAllTime += bonusAmount;
     auditedCount += 1;
@@ -1774,17 +1822,25 @@ export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompen
       bonusCompensation: 0,
       totalCompensation: 0,
       auditedCount: 0,
+      totalMinutes: 0,
       cases: [],
     };
     monthPrev.baseCompensation += baseAmount;
     monthPrev.bonusCompensation += bonusAmount;
     monthPrev.totalCompensation += amount;
     monthPrev.auditedCount += 1;
+    monthPrev.totalMinutes += minutes;
     monthPrev.cases.push({
       caseDbId: c.id,
       caseId: c.caseId,
       project: c.redbrickProject.trim() || "—",
       submittedAt: c.completedAt?.toISOString() ?? null,
+      compensationType: c.compensationType,
+      compensationAmount: c.compensationAmount,
+      annotationMinutes: c.annotationMinutes,
+      minMinutesPerCase: c.minMinutesPerCase,
+      maxMinutesPerCase: c.maxMinutesPerCase,
+      wasResubmitted: resubmitPenaltyApplies(c._count.reviews > 0, acceptedAt),
       baseCompensation: round2(baseAmount),
       bonusCompensation: round2(bonusAmount),
       totalCompensation: round2(amount),
@@ -1807,14 +1863,21 @@ export async function getAnnotatorCompensationSummary(): Promise<AnnotatorCompen
 
   const history = [...monthly.entries()]
     .sort(([a], [b]) => b.localeCompare(a))
-    .map(([monthKey, value]) => ({
-      monthKey,
-      baseCompensation: round2(value.baseCompensation),
-      bonusCompensation: round2(value.bonusCompensation),
-      totalCompensation: round2(value.totalCompensation),
-      auditedCount: value.auditedCount,
-      cases: [...value.cases].sort((a, b) => a.caseId.localeCompare(b.caseId)),
-    }));
+    .map(([monthKey, value]) => {
+      const totalMinutes = round2(value.totalMinutes);
+      const totalCompensation = round2(value.totalCompensation);
+      return {
+        monthKey,
+        baseCompensation: round2(value.baseCompensation),
+        bonusCompensation: round2(value.bonusCompensation),
+        totalCompensation,
+        auditedCount: value.auditedCount,
+        totalMinutes,
+        averagePayPerHour:
+          totalMinutes > 0 ? round2((totalCompensation * 60) / totalMinutes) : null,
+        cases: [...value.cases].sort((a, b) => a.caseId.localeCompare(b.caseId)),
+      };
+    });
   const projects = Array.from(byProject.entries())
     .map(([name, v]) => ({
       name,
@@ -1978,6 +2041,15 @@ const annotatorCaseListBase = {
   ...caseTopicIncludeLite,
 } as const;
 
+const annotatorCaseCountInclude = {
+  _count: {
+    select: {
+      caseNotes: true,
+      reviews: { where: { decision: "REJECT" as const } },
+    },
+  },
+} as const;
+
 const annotatorReviewInclude = {
   reviews: {
     orderBy: { createdAt: "desc" as const },
@@ -1994,7 +2066,7 @@ export async function listCasesForAnnotator(userId: string) {
       orderBy: { createdAt: "desc" },
       include: {
         ...annotatorCaseListBase,
-        _count: { select: { caseNotes: true } },
+        ...annotatorCaseCountInclude,
       },
     }),
     prisma.annotationCase.findMany({
@@ -2009,7 +2081,7 @@ export async function listCasesForAnnotator(userId: string) {
       include: {
         ...annotatorCaseListBase,
         ...annotatorReviewInclude,
-        _count: { select: { caseNotes: true } },
+        ...annotatorCaseCountInclude,
       },
     }),
     prisma.annotationCase.findMany({
@@ -2018,7 +2090,7 @@ export async function listCasesForAnnotator(userId: string) {
       include: {
         ...annotatorCaseListBase,
         ...annotatorReviewInclude,
-        _count: { select: { caseNotes: true } },
+        ...annotatorCaseCountInclude,
       },
     }),
     prisma.annotationCase.findMany({
@@ -2027,7 +2099,7 @@ export async function listCasesForAnnotator(userId: string) {
       include: {
         ...annotatorCaseListBase,
         ...annotatorReviewInclude,
-        _count: { select: { caseNotes: true } },
+        ...annotatorCaseCountInclude,
       },
     }),
   ]);

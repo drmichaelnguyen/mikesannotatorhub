@@ -4,6 +4,7 @@ export const NOTIF = {
   NEW_COMMENT: "NEW_COMMENT",
   CASE_REJECTED: "CASE_REJECTED",
   CASE_SUBMITTED: "CASE_SUBMITTED",
+  REDBRICK_FLAG: "REDBRICK_FLAG",
 } as const;
 
 export type NotifType = (typeof NOTIF)[keyof typeof NOTIF];

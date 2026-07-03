@@ -1,24 +1,27 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { compressImageForEmbed, getClipboardImageFiles } from "@/lib/client-image-data";
 
 function exec(command: string, value?: string) {
   document.execCommand(command, false, value);
 }
 
-export function RichTextEditor({
-  id,
-  value,
-  onChange,
-  placeholder,
-}: {
-  /** Use with a separate <label htmlFor={id}> — do not wrap this component in <label> (toolbar buttons would steal focus). */
-  id?: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-}) {
+export type RichTextEditorHandle = {
+  getHtml: () => string;
+  isImageBusy: () => boolean;
+};
+
+export const RichTextEditor = forwardRef<
+  RichTextEditorHandle,
+  {
+    /** Use with a separate <label htmlFor={id}> — do not wrap this component in <label> (toolbar buttons would steal focus). */
+    id?: string;
+    value: string;
+    onChange: (value: string) => void;
+    placeholder?: string;
+  }
+>(function RichTextEditor({ id, value, onChange, placeholder }, forwardedRef) {
   const ref = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [imageBusy, setImageBusy] = useState(false);
@@ -52,6 +55,15 @@ export function RichTextEditor({
     onChange(html);
   }
 
+  useImperativeHandle(
+    forwardedRef,
+    () => ({
+      getHtml: () => ref.current?.innerHTML ?? value,
+      isImageBusy: () => imageBusy,
+    }),
+    [value, imageBusy],
+  );
+
   function runCommand(command: string, commandValue?: string) {
     ref.current?.focus();
     exec(command, commandValue);
@@ -75,11 +87,25 @@ export function RichTextEditor({
   }
 
   async function onPaste(e: React.ClipboardEvent<HTMLDivElement>) {
-    const files = getClipboardImageFiles(e.clipboardData);
-    if (files.length === 0) return;
-    e.preventDefault();
-    for (const file of files) {
-      await insertImageFromFile(file);
+    const dt = e.clipboardData;
+    const files = getClipboardImageFiles(dt);
+    if (files.length > 0) {
+      e.preventDefault();
+      for (const file of files) {
+        await insertImageFromFile(file);
+      }
+      return;
+    }
+
+    const html = dt.getData("text/html");
+    if (html && /src=["']blob:/i.test(html)) {
+      e.preventDefault();
+      for (let i = 0; i < dt.items.length; i++) {
+        const item = dt.items[i];
+        if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+        const file = item.getAsFile();
+        if (file) await insertImageFromFile(file);
+      }
     }
   }
 
@@ -117,7 +143,7 @@ export function RichTextEditor({
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0];
-            if (file) insertImageFromFile(file);
+            if (file) void insertImageFromFile(file);
             e.target.value = "";
           }}
         />
@@ -149,5 +175,4 @@ export function RichTextEditor({
       `}</style>
     </div>
   );
-}
-
+});

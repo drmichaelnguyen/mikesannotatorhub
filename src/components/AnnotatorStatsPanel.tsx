@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import type { AnnotatorCompensationSummary } from "@/app/actions/cases";
+import { CaseCompensationAmountButton } from "@/components/CaseCompensationBreakdown";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
-import { formatCompensationAmount, formatDate } from "@/lib/format";
+import { formatCompensationAmount, formatDate, formatHours } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 
@@ -78,11 +79,13 @@ export function AnnotatorStatsPanel({
               <p className="text-sm text-[var(--muted)]">{tk("dash_no_projects")}</p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[480px] text-left text-xs">
+                <table className="w-full min-w-[640px] text-left text-xs">
                   <thead>
                     <tr className="border-b border-[var(--border)] text-[var(--muted)]">
                       <th className="py-1.5 pr-2 font-medium">{tk("dash_month")}</th>
                       <th className="py-1.5 pr-2 font-medium">{tk("dash_audited_cases")}</th>
+                      <th className="py-1.5 pr-2 font-medium">{tk("dash_total_time")}</th>
+                      <th className="py-1.5 pr-2 font-medium">{tk("dash_avg_pay_per_hour")}</th>
                       <th className="py-1.5 pr-2 font-medium">{tk("dash_base_compensation")}</th>
                       <th className="py-1.5 pr-2 font-medium">{tk("dash_bonus_compensation")}</th>
                       <th className="py-1.5 font-medium">{tk("dash_project_total")}</th>
@@ -109,6 +112,12 @@ export function AnnotatorStatsPanel({
                           <td className="py-1.5 pr-2 tabular-nums text-[var(--muted)]">
                             {row.auditedCount}
                           </td>
+                          <td className="py-1.5 pr-2 tabular-nums text-[var(--muted)]">
+                            {formatHours(lang, row.totalMinutes > 0 ? row.totalMinutes / 60 : null)}
+                          </td>
+                          <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
+                            {row.averagePayPerHour == null ? "—" : fmt(row.averagePayPerHour)}
+                          </td>
                           <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
                             {fmt(row.baseCompensation)}
                           </td>
@@ -121,7 +130,7 @@ export function AnnotatorStatsPanel({
                         </tr>
                         {isExpanded && (
                           <tr>
-                            <td colSpan={5} className="bg-[var(--bg)] px-2 pb-3 pt-1">
+                            <td colSpan={7} className="bg-[var(--bg)] px-2 pb-3 pt-1">
                               <table className="w-full min-w-[560px] text-left text-xs">
                                 <thead>
                                   <tr className="border-b border-[var(--border)] text-[var(--muted)]">
@@ -134,23 +143,55 @@ export function AnnotatorStatsPanel({
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {row.cases.map((c) => (
-                                    <tr
-                                      key={c.caseDbId}
-                                      className="border-b border-[var(--border)]/40 last:border-0"
-                                    >
-                                      <td className="py-1 pr-2 text-[var(--text)]">{c.project}</td>
-                                      <td className="py-1 pr-2" onClick={(e) => e.stopPropagation()}>
-                                        <CaseDetailLink caseDbId={c.caseDbId}>{c.caseId}</CaseDetailLink>
-                                      </td>
-                                      <td className="py-1 pr-2 whitespace-nowrap text-[var(--muted)]">
-                                        {formatDate(lang, c.submittedAt)}
-                                      </td>
-                                      <td className="py-1 pr-2 tabular-nums">{fmt(c.baseCompensation)}</td>
-                                      <td className="py-1 pr-2 tabular-nums">{fmt(c.bonusCompensation)}</td>
-                                      <td className="py-1 tabular-nums">{fmt(c.totalCompensation)}</td>
-                                    </tr>
-                                  ))}
+                                  {row.cases.map((c) => {
+                                    const payInputs = {
+                                      compensationType: c.compensationType,
+                                      compensationAmount: c.compensationAmount,
+                                      annotationMinutes: c.annotationMinutes,
+                                      minMinutesPerCase: c.minMinutesPerCase,
+                                      maxMinutesPerCase: c.maxMinutesPerCase,
+                                      annotatorBonus: c.bonusCompensation,
+                                      wasResubmitted: c.wasResubmitted,
+                                    };
+                                    return (
+                                      <tr
+                                        key={c.caseDbId}
+                                        className="border-b border-[var(--border)]/40 last:border-0"
+                                      >
+                                        <td className="py-1 pr-2 text-[var(--text)]">{c.project}</td>
+                                        <td className="py-1 pr-2" onClick={(e) => e.stopPropagation()}>
+                                          <CaseDetailLink caseDbId={c.caseDbId}>{c.caseId}</CaseDetailLink>
+                                        </td>
+                                        <td className="py-1 pr-2 whitespace-nowrap text-[var(--muted)]">
+                                          {formatDate(lang, c.submittedAt)}
+                                        </td>
+                                        <td className="py-1 pr-2" onClick={(e) => e.stopPropagation()}>
+                                          <CaseCompensationAmountButton
+                                            lang={lang}
+                                            amount={c.baseCompensation}
+                                            inputs={payInputs}
+                                            title={c.caseId}
+                                          />
+                                        </td>
+                                        <td className="py-1 pr-2" onClick={(e) => e.stopPropagation()}>
+                                          <CaseCompensationAmountButton
+                                            lang={lang}
+                                            amount={c.bonusCompensation}
+                                            inputs={payInputs}
+                                            title={c.caseId}
+                                          />
+                                        </td>
+                                        <td className="py-1" onClick={(e) => e.stopPropagation()}>
+                                          <CaseCompensationAmountButton
+                                            lang={lang}
+                                            amount={c.totalCompensation}
+                                            inputs={payInputs}
+                                            title={c.caseId}
+                                          />
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
                                 </tbody>
                               </table>
                             </td>

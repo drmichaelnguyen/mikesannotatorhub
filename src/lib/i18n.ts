@@ -47,6 +47,43 @@ export const dict = {
     case_compType: "Compensation type",
     case_compAmount: "Compensation amount",
     case_annotatorBonus: "Annotator bonus",
+    case_quality_adjustment: "Quality adjustment",
+    case_optimal_minutes: "Optimal time (minutes)",
+    case_minimum_pay: "Minimum case pay (if accepted)",
+    pay_explainer_title: "How you are paid",
+    pay_explainer_subtitle: "Finish good work and take the next case — padding time barely pays.",
+    pay_explainer_dismiss: "Got it",
+    pay_explainer_show: "How payment works",
+    pay_explainer_base:
+      "Each accepted case pays at least optimal time × rate. Optimal time is the midpoint of the recommended min and max minutes.",
+    pay_explainer_early:
+      "If you finish at or under optimal time, you still receive the full minimum case pay.",
+    pay_explainer_overtime:
+      "Time past optimal still pays a little, but less and less per minute, and nothing past the max.",
+    pay_explainer_quality:
+      "Quality on accept: 5★ adds a bonus (+15% of minimum case pay), 4★ is neutral, below 4★ reduces pay.",
+    pay_explainer_resubmit:
+      "From July 2026: if a case was rejected and then accepted on resubmit, pay is 10% lower (even at 4★).",
+    pay_explainer_reject: "Rejected work pays nothing.",
+    pay_explainer_tip:
+      "Best earnings come from accepted cases at good quality — not from sitting on one case until the max time.",
+    pay_calc_title: "How this amount is calculated",
+    pay_calc_click_hint: "Click to see how this amount is calculated",
+    pay_calc_minutes_unit: "min",
+    pay_calc_recommended_range: "Recommended time",
+    pay_calc_overtime_minutes: "Time past optimal",
+    pay_calc_overtime_pay: "Overtime pay",
+    pay_calc_overtime_note:
+      "Past optimal, each extra minute pays less than the full rate, down to nothing at the max.",
+    pay_calc_at_or_under_optimal:
+      "Finished at or under optimal time, so base pay equals the full minimum case pay.",
+    pay_calc_no_time_yet: "No annotation time submitted yet — showing minimum case pay.",
+    pay_calc_capped_at_max: "Time above the max is not paid; billable time is capped at",
+    pay_calc_flat_case: "Flat per-case amount (time does not change base pay).",
+    pay_calc_resubmit_note:
+      "This case was rejected before resubmit. From July 2026, suggested pay is 10% lower than a first-pass accept (even at 4★).",
+    review_quality_adjustment_hint:
+      "Suggested from quality stars vs minimum case pay: +15% at 5★, 0 at 4★, −10%/−25%/−40% at 3★/2★/1★. From July 2026, resubmits after a reject also subtract 10% of minimum case pay (including at 4★). Positive adds pay; negative reduces it (payout cannot go below 0). Edit as needed.",
     case_annotator: "Annotator",
     case_annotator_id: "Annotator ID",
     case_assignedAt: "Assigned date",
@@ -131,10 +168,29 @@ export const dict = {
       "Read and mark as read on each case’s feedback before taking a new one from the pool.",
     annotator_active_case_block_take:
       "Submit your current case before taking another from the pool.",
+    annotator_active_case_block_take_named:
+      "Submit case {caseId} before taking another from the pool.",
+    annotator_active_case_block_banner:
+      "Finish and submit case {caseId} before taking another from the pool.",
     annotator_review_ack_block_assign:
       "This annotator must read and acknowledge reviewer feedback on their existing cases before receiving another assignment.",
     annotator_active_case_block_assign:
       "This annotator must submit their current case before receiving another assignment.",
+    redbrick_flag: "Flag Redbrick issue",
+    redbrick_flag_help:
+      "Report that this case is not assigned to you on RedbrickAI (or another Redbrick problem). Reviewers will be notified.",
+    redbrick_flag_comment: "Comment (optional)",
+    redbrick_flag_comment_ph: "What is wrong on Redbrick?",
+    redbrick_flag_submit: "Send flag",
+    redbrick_flag_sent: "Redbrick issue reported",
+    redbrick_flag_failed: "Could not send flag. Try again.",
+    redbrick_flag_forbidden: "You cannot flag this case.",
+    redbrick_flag_section: "Redbrick assignment",
+    redbrick_flags_section: "Redbrick flags",
+    redbrick_flags_empty: "No open Redbrick flags.",
+    redbrick_flag_reported_by: "Reported by",
+    redbrick_flag_reported_at: "Reported at",
+    redbrick_flag_mark_checked: "Mark checked",
     annotator_section_pool: "Open pool",
     annotator_section_reference: "Reference cases",
     annotator_section_active: "My open cases",
@@ -292,9 +348,11 @@ export const dict = {
     dash_project_col: "RedbrickAI project",
     dash_accepted_cases: "Accepted cases",
     dash_audited_cases: "Audited cases",
+    dash_total_time: "Total time",
+    dash_avg_pay_per_hour: "Avg pay / hour",
     dash_project_total: "Total compensation",
     dash_base_compensation: "Base compensation",
-    dash_bonus_compensation: "Bonus compensation",
+    dash_bonus_compensation: "Quality adjustment",
     dash_cases_done: "Cases done",
     dash_no_projects: "No audited cases yet — totals appear after an audit approval.",
     dash_cases_heading: "Cases",
@@ -357,6 +415,14 @@ export const dict = {
     action_annotate: "Annotator view",
     drawer_close: "Close",
     ui_loading: "Loading…",
+    rich_text_image_broken:
+      "Image unavailable — re-upload using Paste or the Image button.",
+    rich_text_image_still_embedding:
+      "Wait for images to finish uploading before saving.",
+    rich_text_blob_images_save_blocked:
+      "Some images are still temporary and cannot be saved. Re-upload them with Paste or the Image button.",
+    rich_text_blob_images_edit_hint:
+      "This text still has temporary images. Re-upload them with Paste or the Image button before saving.",
     ui_load_failed: "Could not load this section.",
     discussion_loading: "Loading discussion…",
     audit_reject_need_comment: "Add a comment when rejecting.",
@@ -378,6 +444,7 @@ export const dict = {
     notif_new_comment: "New comment from reviewer",
     notif_case_rejected: "Case rejected — needs revision",
     notif_case_submitted: "New case submission",
+    notif_redbrick_flag: "Redbrick assignment flag",
   },
   vi: {
     appName: "Trung tâm gán nhãn",
@@ -425,6 +492,44 @@ export const dict = {
     case_compType: "Cách tính thù lao",
     case_compAmount: "Mức thù lao",
     case_annotatorBonus: "Thưởng thêm cho người gán nhãn",
+    case_quality_adjustment: "Điều chỉnh theo chất lượng",
+    case_optimal_minutes: "Thời gian tối ưu (phút)",
+    case_minimum_pay: "Thù lao tối thiểu / ca (nếu được duyệt)",
+    pay_explainer_title: "Cách tính thù lao",
+    pay_explainer_subtitle:
+      "Làm tốt và nhận ca tiếp theo — kéo dài thời gian gần như không tăng tiền.",
+    pay_explainer_dismiss: "Đã hiểu",
+    pay_explainer_show: "Cách tính thù lao",
+    pay_explainer_base:
+      "Mỗi ca được duyệt trả ít nhất thời gian tối ưu × đơn giá. Thời gian tối ưu là trung điểm giữa phút tối thiểu và tối đa khuyến nghị.",
+    pay_explainer_early:
+      "Nếu bạn hoàn thành bằng hoặc dưới thời gian tối ưu, bạn vẫn nhận đủ thù lao tối thiểu của ca.",
+    pay_explainer_overtime:
+      "Thời gian vượt tối ưu vẫn được trả thêm một ít, nhưng càng lâu thì mỗi phút càng ít, và không trả thêm sau mức tối đa.",
+    pay_explainer_quality:
+      "Chất lượng khi duyệt: 5★ có thưởng (+15% thù lao tối thiểu), 4★ không đổi, dưới 4★ bị trừ.",
+    pay_explainer_resubmit:
+      "Từ tháng 7/2026: nếu ca bị từ chối rồi được duyệt khi nộp lại, thù lao thấp hơn 10% (kể cả khi 4★).",
+    pay_explainer_reject: "Ca bị từ chối không được trả.",
+    pay_explainer_tip:
+      "Kiếm nhiều nhất bằng cách hoàn thành nhiều ca được duyệt với chất lượng tốt — không phải ngồi một ca đến hết thời gian tối đa.",
+    pay_calc_title: "Cách tính số tiền này",
+    pay_calc_click_hint: "Nhấn để xem cách tính số tiền này",
+    pay_calc_minutes_unit: "phút",
+    pay_calc_recommended_range: "Thời gian khuyến nghị",
+    pay_calc_overtime_minutes: "Thời gian vượt tối ưu",
+    pay_calc_overtime_pay: "Thù lao ngoài giờ",
+    pay_calc_overtime_note:
+      "Sau thời gian tối ưu, mỗi phút thêm được trả ít hơn đơn giá đầy đủ, và bằng 0 ở mức tối đa.",
+    pay_calc_at_or_under_optimal:
+      "Hoàn thành bằng hoặc dưới thời gian tối ưu, nên thù lao chính bằng đủ thù lao tối thiểu của ca.",
+    pay_calc_no_time_yet: "Chưa có thời gian gán nhãn — đang hiện thù lao tối thiểu của ca.",
+    pay_calc_capped_at_max: "Thời gian vượt mức tối đa không được trả; thời gian tính tiền bị giới hạn ở",
+    pay_calc_flat_case: "Mức cố định theo ca (thời gian không đổi thù lao chính).",
+    pay_calc_resubmit_note:
+      "Ca này đã bị từ chối trước khi nộp lại. Từ tháng 7/2026, thù lao gợi ý thấp hơn 10% so với duyệt lần đầu (kể cả khi 4★).",
+    review_quality_adjustment_hint:
+      "Gợi ý theo số sao so với thù lao tối thiểu: +15% ở 5★, 0 ở 4★, −10%/−25%/−40% ở 3★/2★/1★. Từ tháng 7/2026, nộp lại sau từ chối còn trừ thêm 10% thù lao tối thiểu (kể cả khi 4★). Dương là thưởng; âm là trừ (thù lao không dưới 0). Có thể sửa.",
     case_annotator: "Người gán nhãn",
     case_annotator_id: "ID người gán nhãn",
     case_assignedAt: "Ngày giao",
@@ -509,10 +614,29 @@ export const dict = {
       "Hãy đọc và xác nhận đã đọc phản hồi trên từng ca trước khi nhận ca mới từ kho chung.",
     annotator_active_case_block_take:
       "Hãy nộp ca hiện tại trước khi nhận ca khác từ kho chung.",
+    annotator_active_case_block_take_named:
+      "Hãy nộp ca {caseId} trước khi nhận ca khác từ kho chung.",
+    annotator_active_case_block_banner:
+      "Hãy hoàn tất và nộp ca {caseId} trước khi nhận ca khác từ kho chung.",
     annotator_review_ack_block_assign:
       "Người gán nhãn này cần đọc và xác nhận phản hồi duyệt trên các ca hiện có trước khi được giao ca mới.",
     annotator_active_case_block_assign:
       "Người gán nhãn này cần nộp ca hiện tại trước khi được giao ca mới.",
+    redbrick_flag: "Báo lỗi Redbrick",
+    redbrick_flag_help:
+      "Báo rằng ca này không được giao cho bạn trên RedbrickAI (hoặc vấn đề Redbrick khác). Người duyệt sẽ được thông báo.",
+    redbrick_flag_comment: "Ghi chú (tuỳ chọn)",
+    redbrick_flag_comment_ph: "Vấn đề trên Redbrick là gì?",
+    redbrick_flag_submit: "Gửi báo cáo",
+    redbrick_flag_sent: "Đã báo cáo vấn đề Redbrick",
+    redbrick_flag_failed: "Không gửi được báo cáo. Thử lại.",
+    redbrick_flag_forbidden: "Bạn không thể báo cáo ca này.",
+    redbrick_flag_section: "Phân công Redbrick",
+    redbrick_flags_section: "Cờ Redbrick",
+    redbrick_flags_empty: "Không có cờ Redbrick đang mở.",
+    redbrick_flag_reported_by: "Người báo cáo",
+    redbrick_flag_reported_at: "Thời điểm báo cáo",
+    redbrick_flag_mark_checked: "Đánh dấu đã kiểm tra",
     annotator_section_pool: "Ca trống (chung)",
     annotator_section_reference: "Ca tham khảo",
     annotator_section_active: "Ca đang làm",
@@ -670,9 +794,11 @@ export const dict = {
     dash_project_col: "Dự án RedbrickAI",
     dash_accepted_cases: "Ca đã duyệt",
     dash_audited_cases: "Ca đã kiểm duyệt",
+    dash_total_time: "Tổng thời gian",
+    dash_avg_pay_per_hour: "Thù lao TB / giờ",
     dash_project_total: "Tổng thù lao",
     dash_base_compensation: "Thù lao chính",
-    dash_bonus_compensation: "Tiền thưởng",
+    dash_bonus_compensation: "Điều chỉnh chất lượng",
     dash_cases_done: "Số ca đã hoàn tất",
     dash_no_projects: "Chưa có ca kiểm duyệt — số liệu hiện sau khi duyệt xong.",
     dash_cases_heading: "Danh sách ca",
@@ -735,6 +861,14 @@ export const dict = {
     action_annotate: "Chế độ người gán nhãn",
     drawer_close: "Đóng",
     ui_loading: "Đang tải…",
+    rich_text_image_broken:
+      "Ảnh không khả dụng — hãy tải lại bằng Dán hoặc nút Ảnh.",
+    rich_text_image_still_embedding:
+      "Hãy đợi ảnh tải xong trước khi lưu.",
+    rich_text_blob_images_save_blocked:
+      "Một số ảnh vẫn ở dạng tạm và không thể lưu. Hãy tải lại bằng Dán hoặc nút Ảnh.",
+    rich_text_blob_images_edit_hint:
+      "Nội dung này vẫn còn ảnh tạm. Hãy tải lại bằng Dán hoặc nút Ảnh trước khi lưu.",
     ui_load_failed: "Không thể tải phần này.",
     discussion_loading: "Đang tải thảo luận…",
     audit_reject_need_comment: "Từ chối cần có nhận xét.",
@@ -756,6 +890,7 @@ export const dict = {
     notif_new_comment: "Có nhận xét mới từ người duyệt",
     notif_case_rejected: "Ca bị từ chối — cần chỉnh sửa",
     notif_case_submitted: "Có ca vừa được nộp",
+    notif_redbrick_flag: "Cờ phân công Redbrick",
   },
 } as const;
 

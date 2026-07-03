@@ -40,6 +40,8 @@ model User {
   caseNotes       CaseNote[]
   notifications   Notification[]
   availabilityDays AnnotatorAvailability[]
+  redbrickFlagsRaised   CaseRedbrickFlag[] @relation("RedbrickFlagsRaised")
+  redbrickFlagsResolved CaseRedbrickFlag[] @relation("RedbrickFlagsResolved")
 }
 
 model Notification {
@@ -91,8 +93,26 @@ model AnnotationCase {
   reviews    Review[]
   caseNotes  CaseNote[]
   caseTopics AnnotationCaseTopic[]
+  redbrickFlags CaseRedbrickFlag[]
 
   @@unique([caseId, scopeOfWork])
+}
+
+/** Annotator reports a case that is not assigned to them on RedbrickAI. */
+model CaseRedbrickFlag {
+  id               String         @id @default(cuid())
+  annotationCaseId String
+  annotationCase   AnnotationCase @relation(fields: [annotationCaseId], references: [id], onDelete: Cascade)
+  flaggedById      String
+  flaggedBy        User           @relation("RedbrickFlagsRaised", fields: [flaggedById], references: [id])
+  comment          String?
+  createdAt        DateTime       @default(now())
+  resolvedAt       DateTime?
+  resolvedById     String?
+  resolvedBy       User?          @relation("RedbrickFlagsResolved", fields: [resolvedById], references: [id])
+
+  @@index([annotationCaseId])
+  @@index([resolvedAt, createdAt])
 }
 
 model AnnotationCaseTopic {

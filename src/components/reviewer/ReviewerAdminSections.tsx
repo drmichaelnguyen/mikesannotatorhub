@@ -16,6 +16,8 @@ import { GuideManager, TopicManager } from "@/components/reviewer/GuideTopicMana
 import { ReviewerAdvancedDataView } from "@/components/reviewer/ReviewerAdvancedDataView";
 import { ScopeOfWorkTemplateManager } from "@/components/reviewer/ScopeOfWorkTemplateManager";
 import { listReviewerAdvancedDataAction } from "@/app/actions/advanced-data";
+import { listUnresolvedRedbrickFlagsAction } from "@/app/actions/redbrick-flags";
+import { ReviewerFlaggedCasesPanel } from "@/components/reviewer/ReviewerFlaggedCasesPanel";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 
@@ -40,9 +42,20 @@ export function ReviewerAdminSections({
   }, []);
   const loadScopeTemplates = useCallback(() => listScopeOfWorkTemplatesAction(), []);
   const loadAdvancedData = useCallback(() => listReviewerAdvancedDataAction(), []);
+  const loadRedbrickFlags = useCallback(() => listUnresolvedRedbrickFlagsAction(), []);
 
   return (
     <>
+      <section>
+        <LazyCollapsibleSection
+          title={tk("redbrick_flags_section")}
+          load={loadRedbrickFlags}
+          loadingLabel={tk("ui_loading")}
+          errorLabel={tk("ui_load_failed")}
+        >
+          {(flags) => <ReviewerFlaggedCasesPanel lang={lang} flags={flags} />}
+        </LazyCollapsibleSection>
+      </section>
       <section>
         <LazyCollapsibleSection
           title={tk("reviewer_guide_section")}

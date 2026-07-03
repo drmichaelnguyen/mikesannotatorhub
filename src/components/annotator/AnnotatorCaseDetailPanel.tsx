@@ -1,5 +1,7 @@
 "use client";
 
+import { AnnotatorTakeCaseButton } from "@/components/annotator/AnnotatorTakeCaseButton";
+import { AnnotatorRedbrickFlagButton } from "@/components/annotator/AnnotatorRedbrickFlagButton";
 import { CaseContinuityReportSection } from "@/components/CaseContinuityReportSection";
 import { CaseDiscussion } from "@/components/CaseDiscussion";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
@@ -9,7 +11,18 @@ import { CopyTextButton } from "@/components/CopyTextButton";
 import { LoadingProgressBar } from "@/components/LoadingProgressBar";
 import { RichTextContent } from "@/components/RichTextContent";
 import { StarRating } from "@/components/StarRating";
-import { computeCompensation } from "@/lib/compensation";
+import {
+  formatAnnotatorTakeBlockMessage,
+  type TakeCaseBlockReason,
+} from "@/lib/annotator-take-case";
+import { CaseCompensationAmountButton } from "@/components/CaseCompensationBreakdown";
+import {
+  caseWasResubmitted,
+  computeCaseBasePay,
+  computeCompensation,
+  optimalMinutes,
+  resubmitPenaltyApplies,
+} from "@/lib/compensation";
 import { formatCompensationAmount, formatDate } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -25,7 +38,8 @@ export type AnnotatorCaseRow = AnnotationCase & {
   guide: { id: string; title: string } | null;
   topics: SerializedCaseTopic[];
   reviews?: Pick<Review, "id" | "decision" | "comment" | "createdAt">[];
-  _count?: { caseNotes: number };
+  /** `reviews` count is filtered to REJECT decisions (prior rejection / resubmit). */
+  _count?: { caseNotes: number; reviews: number };
   auditedBy?: { id: string; name: string; email: string } | null;
   /** Optional template to prefill the annotator composer based on `scopeOfWork`. */
   scopeOfWorkTemplate?: string | null;
@@ -54,6 +68,10 @@ export function AnnotatorCaseDetailPanel({
   guides = [],
   mentionOptions = [],
   referenceCases = [],
+  takeBlockReason = null,
+  activeCaseId = null,
+  currentUserId = null,
+  redbrickFlagged = false,
 }: {
   lang: Lang;
   row: AnnotatorCaseRow;
@@ -61,6 +79,10 @@ export function AnnotatorCaseDetailPanel({
   guides?: GuideOptionLite[];
   mentionOptions?: MentionOption[];
   referenceCases?: ReferenceCaseLinkRow[];
+  takeBlockReason?: TakeCaseBlockReason | null;
+  activeCaseId?: string | null;
+  currentUserId?: string | null;
+  redbrickFlagged?: boolean;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const last = row.reviews?.[0];
@@ -71,13 +93,25 @@ export function AnnotatorCaseDetailPanel({
     row.compensationAmount,
     row.annotationMinutes,
     row.maxMinutesPerCase,
+    row.minMinutesPerCase,
     row.annotatorBonus,
   );
+  const caseBasePay = computeCaseBasePay(
+    row.compensationType,
+    row.compensationAmount,
+    row.minMinutesPerCase,
+    row.maxMinutesPerCase,
+  );
+  const optMinutes = optimalMinutes(row.minMinutesPerCase, row.maxMinutesPerCase);
   const { html: guideHtml, loading: guideLoading } = useGuideHtml(row.guide?.id);
   const guideGuideline = guideHtml ? htmlToPlainText(guideHtml) : "";
   const showGuideline = !row.guide || row.guideline.trim() !== guideGuideline;
   const videoUrls = videoGuideUrlsFromDb(row.videoGuideUrls);
   const [topicModal, setTopicModal] = useState<SerializedCaseTopic | null>(null);
+  const showRedbrickFlag =
+    !row.isReference &&
+    currentUserId != null &&
+    (row.status === CaseStatus.AVAILABLE || row.annotatorId === currentUserId);
 
   return (
     <div className="space-y-4 p-4">
@@ -102,6 +136,33 @@ export function AnnotatorCaseDetailPanel({
           {tk(`status_${row.status}` as DictKey)}
         </span>
       </div>
+      {row.isReference && (
+        <p className="rounded-md border border-yellow-500/40 bg-yellow-300/20 px-3 py-2 text-sm text-yellow-950">
+          {tk("case_reference_help")}
+        </p>
+      )}
+      {!row.isReference && row.status === CaseStatus.AVAILABLE && (
+        <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3">
+          <p className="mb-2 text-sm font-medium text-[var(--text)]">{tk("assign")}</p>
+          {takeBlockReason ? (
+            <p className="text-sm text-[var(--danger)]" role="status">
+              {formatAnnotatorTakeBlockMessage(lang, takeBlockReason, activeCaseId)}
+            </p>
+          ) : (
+            <AnnotatorTakeCaseButton lang={lang} caseDbId={row.id} />
+          )}
+        </div>
+      )}
+      {showRedbrickFlag && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
+          <p className="mb-2 text-sm font-medium text-amber-950">{tk("redbrick_flag_section")}</p>
+          <AnnotatorRedbrickFlagButton
+            lang={lang}
+            caseDbId={row.id}
+            alreadyFlagged={redbrickFlagged}
+          />
+        </div>
+      )}
       <dl className="grid gap-2 text-sm md:grid-cols-2">
         {row.guide && (
           <div className="md:col-span-2">
@@ -119,7 +180,7 @@ export function AnnotatorCaseDetailPanel({
                       <p className="px-3 py-4 text-sm text-[var(--muted)]">{tk("ui_loading")}</p>
                     </div>
                   ) : (
-                    <RichTextContent html={guideHtml} />
+                    <RichTextContent lang={lang} html={guideHtml} />
                   )}
                 </div>
               </details>
@@ -200,11 +261,19 @@ export function AnnotatorCaseDetailPanel({
           <dd>{row.maxMinutesPerCase}</dd>
         </div>
         <div>
+          <dt className="text-[var(--muted)]">{tk("case_optimal_minutes")}</dt>
+          <dd>{optMinutes}</dd>
+        </div>
+        <div>
           <dt className="text-[var(--muted)]">{tk("case_compAmount")}</dt>
           <dd>{compLabel(lang, row.compensationType, row.compensationAmount)}</dd>
         </div>
         <div>
-          <dt className="text-[var(--muted)]">{tk("case_annotatorBonus")}</dt>
+          <dt className="text-[var(--muted)]">{tk("case_minimum_pay")}</dt>
+          <dd className="tabular-nums">{formatCompensationAmount(lang, caseBasePay)}</dd>
+        </div>
+        <div>
+          <dt className="text-[var(--muted)]">{tk("case_quality_adjustment")}</dt>
           <dd>{row.annotatorBonus}</dd>
         </div>
         <div>
@@ -233,8 +302,25 @@ export function AnnotatorCaseDetailPanel({
           <>
             <div className="md:col-span-2">
               <dt className="text-[var(--muted)]">{tk("case_compensation_earned")}</dt>
-              <dd className="font-medium tabular-nums text-[var(--success)]">
-                {formatCompensationAmount(lang, earned)}
+              <dd>
+                <CaseCompensationAmountButton
+                  lang={lang}
+                  amount={earned}
+                  inputs={{
+                    compensationType: row.compensationType,
+                    compensationAmount: row.compensationAmount,
+                    annotationMinutes: row.annotationMinutes,
+                    minMinutesPerCase: row.minMinutesPerCase,
+                    maxMinutesPerCase: row.maxMinutesPerCase,
+                    annotatorBonus: row.annotatorBonus,
+                    wasResubmitted: resubmitPenaltyApplies(
+                      (row._count?.reviews ?? 0) > 0 || caseWasResubmitted(row.reviews),
+                      row.auditedAt,
+                    ),
+                  }}
+                  title={row.caseId}
+                  className="font-medium text-[var(--success)]"
+                />
               </dd>
             </div>
           </>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import {
   createGuideAction,
   createTopicAction,
@@ -8,9 +8,10 @@ import {
   updateGuideAction,
   updateTopicAction,
 } from "@/app/actions/cases";
-import { RichTextEditor } from "@/components/RichTextEditor";
+import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
 import { RichTextContent } from "@/components/RichTextContent";
 import type { GuideOption, TopicOption } from "@/lib/guide-topic";
+import { hasTemporaryBlobImages } from "@/lib/rich-text-images";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 
@@ -28,6 +29,15 @@ function toggleSelection(current: string[], value: string, checked: boolean) {
   return current.filter((item) => item !== value);
 }
 
+function topicActionErrorMessage(
+  state: { ok: false; error: string } | { ok: true } | null,
+  tk: (k: DictKey) => string,
+): string | null {
+  if (!state || state.ok) return null;
+  if (state.error === "blob_images") return tk("rich_text_blob_images_save_blocked");
+  return tk("required");
+}
+
 function submitWithRichField(
   e: React.FormEvent<HTMLFormElement>,
   fieldName: string,
@@ -38,6 +48,23 @@ function submitWithRichField(
   const fd = new FormData(e.currentTarget);
   fd.set(fieldName, html);
   action(fd);
+}
+
+function submitWithRichEditor(
+  e: React.FormEvent<HTMLFormElement>,
+  fieldName: string,
+  editorRef: React.RefObject<RichTextEditorHandle | null>,
+  fallbackHtml: string,
+  action: (fd: FormData) => void,
+  onBusy: (message: string) => void,
+  busyMessage: string,
+) {
+  e.preventDefault();
+  if (editorRef.current?.isImageBusy()) {
+    onBusy(busyMessage);
+    return;
+  }
+  submitWithRichField(e, fieldName, editorRef.current?.getHtml() ?? fallbackHtml, action);
 }
 
 export function GuideManager({ lang, guides }: { lang: Lang; guides: GuideOption[] }) {
@@ -184,7 +211,7 @@ export function GuideManager({ lang, guides }: { lang: Lang; guides: GuideOption
 
                   {!isEditing && hasContent && expandedGuideIds[guide.id] && (
                     <div className="mt-2 rounded-md border border-[var(--border)] bg-[var(--surface)] p-3">
-                      <RichTextContent html={guide.content} />
+                      <RichTextContent lang={lang} html={guide.content} />
                     </div>
                   )}
 
@@ -284,6 +311,9 @@ export function TopicManager({
   const [editingTopicProjectsInitial, setEditingTopicProjectsInitial] = useState<string[]>([]);
   const [editingTopicScopesInitial, setEditingTopicScopesInitial] = useState<string[]>([]);
   const [expandedTopicIds, setExpandedTopicIds] = useState<Record<string, boolean>>({});
+  const [topicSubmitNotice, setTopicSubmitNotice] = useState<string | null>(null);
+  const createTopicEditorRef = useRef<RichTextEditorHandle>(null);
+  const editTopicEditorRef = useRef<RichTextEditorHandle>(null);
 
   useEffect(() => {
     if (topicState?.ok || updateTopicState?.ok) {
@@ -313,7 +343,17 @@ export function TopicManager({
       <p className="text-xs text-[var(--muted)]">{tk("reviewer_topic_section_hint")}</p>
 
       <form
-        onSubmit={(e) => submitWithRichField(e, "description", topicDescription, topicAction)}
+        onSubmit={(e) =>
+          submitWithRichEditor(
+            e,
+            "description",
+            createTopicEditorRef,
+            topicDescription,
+            topicAction,
+            setTopicSubmitNotice,
+            tk("rich_text_image_still_embedding"),
+          )
+        }
         className="space-y-3 rounded-md border border-[var(--border)] bg-[var(--bg)] p-3"
       >
         <h3 className="text-sm font-medium">{tk("reviewer_topic_create")}</h3>
@@ -332,6 +372,7 @@ export function TopicManager({
             {tk("reviewer_topic_desc")}
           </label>
           <RichTextEditor
+            ref={createTopicEditorRef}
             id="topic-desc-create"
             value={topicDescription}
             onChange={setTopicDescription}
@@ -382,7 +423,10 @@ export function TopicManager({
             ))}
           </div>
         </label>
-        {topicState && !topicState.ok && <p className="text-sm text-[var(--danger)]">{tk("required")}</p>}
+        {topicSubmitNotice && <p className="text-sm text-[var(--danger)]">{topicSubmitNotice}</p>}
+        {topicActionErrorMessage(topicState, tk) && (
+          <p className="text-sm text-[var(--danger)]">{topicActionErrorMessage(topicState, tk)}</p>
+        )}
         <button
           type="submit"
           disabled={topicPending}
@@ -449,7 +493,7 @@ export function TopicManager({
 
                   {!isEditing && hasDescription && expandedTopicIds[topic.id] && (
                     <div className="mt-2 rounded-md border border-[var(--border)] bg-[var(--surface)] p-3">
-                      <RichTextContent html={topic.description!} />
+                      <RichTextContent lang={lang} html={topic.description!} />
                     </div>
                   )}
 
@@ -457,11 +501,14 @@ export function TopicManager({
                     <form
                       key={topic.id}
                       onSubmit={(e) =>
-                        submitWithRichField(
+                        submitWithRichEditor(
                           e,
                           "description",
+                          editTopicEditorRef,
                           editingTopicDescription,
                           updateTopicActionState,
+                          setTopicSubmitNotice,
+                          tk("rich_text_image_still_embedding"),
                         )
                       }
                       className="mt-3 space-y-3 rounded-md border border-[var(--border)] bg-[var(--surface)] p-3"
@@ -478,11 +525,15 @@ export function TopicManager({
                           className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
                         />
                       </label>
+                      {hasTemporaryBlobImages(editingTopicDescription) && (
+                        <p className="text-sm text-[var(--danger)]">{tk("rich_text_blob_images_edit_hint")}</p>
+                      )}
                       <div className="block text-sm">
                         <label htmlFor={`topic-desc-edit-${topic.id}`} className="text-[var(--muted)]">
                           {tk("reviewer_topic_desc")}
                         </label>
                         <RichTextEditor
+                          ref={editTopicEditorRef}
                           id={`topic-desc-edit-${topic.id}`}
                           value={editingTopicDescription}
                           onChange={setEditingTopicDescription}
@@ -533,8 +584,13 @@ export function TopicManager({
                           ))}
                         </div>
                       </label>
-                      {updateTopicState && !updateTopicState.ok && (
-                        <p className="text-sm text-[var(--danger)]">{tk("required")}</p>
+                      {topicSubmitNotice && (
+                        <p className="text-sm text-[var(--danger)]">{topicSubmitNotice}</p>
+                      )}
+                      {topicActionErrorMessage(updateTopicState, tk) && (
+                        <p className="text-sm text-[var(--danger)]">
+                          {topicActionErrorMessage(updateTopicState, tk)}
+                        </p>
                       )}
                       <div className="flex flex-wrap gap-2">
                         <button

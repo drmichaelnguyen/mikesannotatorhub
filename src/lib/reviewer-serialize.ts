@@ -1,4 +1,5 @@
 import type { CaseStatus, CompensationType } from "@prisma/client";
+import { resubmitPenaltyApplies } from "@/lib/compensation";
 import type { ReviewerCaseRow } from "@/lib/reviewer-types";
 import { videoGuideUrlsFromDb } from "@/lib/video-guides";
 
@@ -57,6 +58,7 @@ export type SerializedReviewerCase = {
   auditedBy: { id: string; name: string; email: string } | null;
   reviews: { id: string; decision: string; comment: string | null; createdAt: string }[];
   caseNoteCount: number;
+  wasResubmitted: boolean;
 };
 
 export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCase {
@@ -96,5 +98,7 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
       createdAt: r.createdAt.toISOString(),
     })),
     caseNoteCount: c._count.caseNotes,
+    // Penalty only for accepts from July 2026 UTC; pending reviews use "now".
+    wasResubmitted: resubmitPenaltyApplies(c._count.reviews > 0, c.auditedAt),
   };
 }

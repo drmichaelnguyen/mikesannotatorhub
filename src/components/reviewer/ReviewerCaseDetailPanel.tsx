@@ -14,8 +14,9 @@ import { LoadingProgressBar } from "@/components/LoadingProgressBar";
 import { ReviewerAssignCase } from "@/components/ReviewerAssignCase";
 import { ReviewerCaseEditor } from "@/components/reviewer/ReviewerCaseEditor";
 import { StarRating } from "@/components/StarRating";
-import { computeCompensation } from "@/lib/compensation";
-import { formatCompensationAmount, formatDate } from "@/lib/format";
+import { CaseCompensationAmountButton } from "@/components/CaseCompensationBreakdown";
+import { caseWasResubmitted, computeCompensation } from "@/lib/compensation";
+import { formatDate } from "@/lib/format";
 import type { SerializedCaseTopic, SerializedReviewerCase } from "@/lib/reviewer-serialize";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -154,6 +155,7 @@ function ReviewerCaseDetailPanelImpl({
     c.compensationAmount,
     c.annotationMinutes,
     c.maxMinutesPerCase,
+    c.minMinutesPerCase,
     c.annotatorBonus,
   );
   /** Guide body is fetched on demand so case lists stay lightweight. */
@@ -285,7 +287,7 @@ function ReviewerCaseDetailPanelImpl({
           <dd>{compLabel(lang, c.compensationType, c.compensationAmount)}</dd>
         </div>
         <div>
-          <dt className="text-[var(--muted)]">{tk("case_annotatorBonus")}</dt>
+          <dt className="text-[var(--muted)]">{tk("case_quality_adjustment")}</dt>
           <dd>{c.annotatorBonus}</dd>
         </div>
         <div>
@@ -337,8 +339,22 @@ function ReviewerCaseDetailPanelImpl({
             </div>
             <div className="md:col-span-2">
               <dt className="text-[var(--muted)]">{tk("case_compensation_earned")}</dt>
-              <dd className="font-medium tabular-nums text-[var(--success)]">
-                {formatCompensationAmount(lang, earned)}
+              <dd>
+                <CaseCompensationAmountButton
+                  lang={lang}
+                  amount={earned}
+                  inputs={{
+                    compensationType: c.compensationType,
+                    compensationAmount: c.compensationAmount,
+                    annotationMinutes: c.annotationMinutes,
+                    minMinutesPerCase: c.minMinutesPerCase,
+                    maxMinutesPerCase: c.maxMinutesPerCase,
+                    annotatorBonus: c.annotatorBonus,
+                    wasResubmitted: c.wasResubmitted || caseWasResubmitted(c.reviews),
+                  }}
+                  title={c.caseId}
+                  className="font-medium text-[var(--success)]"
+                />
               </dd>
             </div>
           </>
@@ -374,7 +390,16 @@ function ReviewerCaseDetailPanelImpl({
         <div className="border-t border-[var(--border)] pt-4">
           <h4 className="mb-2 font-medium">{tk("reviewer_audit_title")}</h4>
           <p className="mb-3 text-xs text-[var(--muted)]">{tk("reviewer_audit_intro")}</p>
-          <ReviewCasePanel lang={lang} caseDbId={c.id} />
+          <ReviewCasePanel
+            lang={lang}
+            caseDbId={c.id}
+            compensationType={c.compensationType}
+            compensationAmount={c.compensationAmount}
+            annotationMinutes={c.annotationMinutes}
+            minMinutesPerCase={c.minMinutesPerCase}
+            maxMinutesPerCase={c.maxMinutesPerCase}
+            wasResubmitted={c.wasResubmitted || caseWasResubmitted(c.reviews)}
+          />
         </div>
       )}
       <TopicDetailModal lang={lang} topic={topicModal} onClose={() => setTopicModal(null)} />

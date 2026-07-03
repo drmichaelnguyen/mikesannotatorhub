@@ -41,8 +41,15 @@ import { createCaseNote } from "@/lib/case-note-api";
 import { StarRating } from "@/components/StarRating";
 import { ReviewerCaseDetailPanel } from "@/components/reviewer/ReviewerCaseDetailPanel";
 import { getClipboardImageFile, getClipboardImageFiles, readFileAsDataUrl, readFilesAsDataUrls } from "@/lib/client-image-data";
-import { computeCompensation } from "@/lib/compensation";
-import { formatCompensationAmount, formatDate, formatMinutes } from "@/lib/format";
+import {
+  computeCaseBasePay,
+  computeCompensation,
+  computeTimeCompensation,
+  caseWasResubmitted,
+  suggestedQualityAdjustment,
+} from "@/lib/compensation";
+import { CaseCompensationAmountButton } from "@/components/CaseCompensationBreakdown";
+import { formatCompensationAmount, formatDate, formatHours, formatMinutes } from "@/lib/format";
 import { buildMentionOptionsForCase, type GuideOptionLite, type TopicOptionLite } from "@/lib/guide-topic";
 import { parseVideoGuideUrlsInput } from "@/lib/video-guides";
 import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
@@ -84,18 +91,34 @@ function collectReviewerExpandPaths(
   return open;
 }
 
-function formatRowCompensation(lang: Lang, c: SerializedReviewerCase): string {
+function CaseRowCompensation({ lang, c }: { lang: Lang; c: SerializedReviewerCase }) {
   if (c.compensationType === CompensationType.PER_MINUTE && c.annotationMinutes == null) {
     return "—";
   }
-  const v = computeCompensation(
+  const amount = computeCompensation(
     c.compensationType,
     c.compensationAmount,
     c.annotationMinutes,
     c.maxMinutesPerCase,
+    c.minMinutesPerCase,
     c.annotatorBonus,
   );
-  return formatCompensationAmount(lang, v);
+  return (
+    <CaseCompensationAmountButton
+      lang={lang}
+      amount={amount}
+      inputs={{
+        compensationType: c.compensationType,
+        compensationAmount: c.compensationAmount,
+        annotationMinutes: c.annotationMinutes,
+        minMinutesPerCase: c.minMinutesPerCase,
+        maxMinutesPerCase: c.maxMinutesPerCase,
+        annotatorBonus: c.annotatorBonus,
+        wasResubmitted: c.wasResubmitted || caseWasResubmitted(c.reviews),
+      }}
+      title={c.caseId}
+    />
+  );
 }
 
 function readReviewerStatusFilter(params: Pick<URLSearchParams, "get">): CaseStatus | null {
@@ -153,6 +176,22 @@ type AnnotatorPerformanceStats = {
   timeCount: number;
 };
 
+type CompensationHistoryCaseRow = {
+  caseDbId: string;
+  caseId: string;
+  project: string;
+  submittedAt: string | null;
+  compensationType: CompensationType;
+  compensationAmount: number;
+  annotationMinutes: number | null;
+  minMinutesPerCase: number;
+  maxMinutesPerCase: number;
+  wasResubmitted: boolean;
+  baseCompensation: number;
+  bonusCompensation: number;
+  totalCompensation: number;
+};
+
 type CompensationHistoryRow = {
   monthKey: string;
   label: string;
@@ -160,6 +199,9 @@ type CompensationHistoryRow = {
   bonusCompensation: number;
   totalCompensation: number;
   auditedCount: number;
+  totalMinutes: number;
+  averagePayPerHour: number | null;
+  cases: CompensationHistoryCaseRow[];
 };
 
 type AnnotatorCompensationPeriods = {
@@ -361,20 +403,28 @@ function buildCompensationPeriods(
   let auditedCount = 0;
   const monthly = new Map<
     string,
-    { baseCompensation: number; bonusCompensation: number; totalCompensation: number; auditedCount: number }
+    {
+      baseCompensation: number;
+      bonusCompensation: number;
+      totalCompensation: number;
+      auditedCount: number;
+      totalMinutes: number;
+      cases: CompensationHistoryCaseRow[];
+    }
   >();
 
   for (const c of cases) {
     if (c.status !== CaseStatus.AUDITED && c.status !== CaseStatus.ACCEPTED) continue;
-    const baseAmount = computeCompensation(
+    const baseAmount = computeTimeCompensation(
       c.compensationType,
       c.compensationAmount,
       c.annotationMinutes,
       c.maxMinutesPerCase,
-      0,
+      c.minMinutesPerCase,
     );
     const bonusAmount = c.annotatorBonus;
-    const amount = baseAmount + bonusAmount;
+    const amount = Math.max(0, Math.round((baseAmount + bonusAmount) * 100) / 100);
+    const minutes = c.annotationMinutes ?? 0;
     allTime += amount;
     baseAllTime += baseAmount;
     bonusAllTime += bonusAmount;
@@ -392,24 +442,50 @@ function buildCompensationPeriods(
       bonusCompensation: 0,
       totalCompensation: 0,
       auditedCount: 0,
+      totalMinutes: 0,
+      cases: [],
     };
     prev.baseCompensation += baseAmount;
     prev.bonusCompensation += bonusAmount;
     prev.totalCompensation += amount;
     prev.auditedCount += 1;
+    prev.totalMinutes += minutes;
+    prev.cases.push({
+      caseDbId: c.id,
+      caseId: c.caseId,
+      project: c.redbrickProject.trim() || "—",
+      submittedAt: c.completedAt,
+      compensationType: c.compensationType,
+      compensationAmount: c.compensationAmount,
+      annotationMinutes: c.annotationMinutes,
+      minMinutesPerCase: c.minMinutesPerCase,
+      maxMinutesPerCase: c.maxMinutesPerCase,
+      wasResubmitted: c.wasResubmitted,
+      baseCompensation: round2(baseAmount),
+      bonusCompensation: round2(bonusAmount),
+      totalCompensation: round2(amount),
+    });
     monthly.set(monthKey, prev);
   }
 
   const history = [...monthly.entries()]
     .sort(([a], [b]) => b.localeCompare(a))
-    .map(([monthKey, value]) => ({
-      monthKey,
-      label: formatMonthLabel(lang, monthKey),
-      baseCompensation: round2(value.baseCompensation),
-      bonusCompensation: round2(value.bonusCompensation),
-      totalCompensation: round2(value.totalCompensation),
-      auditedCount: value.auditedCount,
-    }));
+    .map(([monthKey, value]) => {
+      const totalMinutes = round2(value.totalMinutes);
+      const totalCompensation = round2(value.totalCompensation);
+      return {
+        monthKey,
+        label: formatMonthLabel(lang, monthKey),
+        baseCompensation: round2(value.baseCompensation),
+        bonusCompensation: round2(value.bonusCompensation),
+        totalCompensation,
+        auditedCount: value.auditedCount,
+        totalMinutes,
+        averagePayPerHour:
+          totalMinutes > 0 ? round2((totalCompensation * 60) / totalMinutes) : null,
+        cases: [...value.cases].sort((a, b) => a.caseId.localeCompare(b.caseId)),
+      };
+    });
 
   return {
     baseAllTime: round2(baseAllTime),
@@ -657,6 +733,7 @@ export function ReviewerWorkboard({
     () => searchParams.get("annotators") === "1",
   );
   const [selectedAnnotatorId, setSelectedAnnotatorId] = useState<string | null>(null);
+  const [expandedCompMonthKey, setExpandedCompMonthKey] = useState<string | null>(null);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -673,7 +750,10 @@ export function ReviewerWorkboard({
     if (!detailCase) return null;
     return {
       ...detailCase,
-      _count: { caseNotes: detailCase.caseNoteCount },
+      _count: {
+        caseNotes: detailCase.caseNoteCount,
+        reviews: detailCase.wasResubmitted ? 1 : 0,
+      },
       scopeOfWorkTemplate: templateByScope.get(detailCase.scopeOfWork.trim()) ?? null,
     } as unknown as AnnotatorCaseRow;
   }, [detailCase, templateByScope]);
@@ -897,6 +977,7 @@ export function ReviewerWorkboard({
   function closeAnnotatorPerformance() {
     setAnnotatorsPanelOpen(false);
     setSelectedAnnotatorId(null);
+    setExpandedCompMonthKey(null);
     setSelectedProject(null);
     replaceSearchInBrowser(pathname, searchParams.toString(), (params) => {
       params.delete("annotators");
@@ -905,6 +986,7 @@ export function ReviewerWorkboard({
 
   function openAnnotatorPerformanceDetail(annotatorId: string) {
     setSelectedAnnotatorId(annotatorId);
+    setExpandedCompMonthKey(null);
     setSelectedProject(null);
   }
 
@@ -1035,11 +1117,28 @@ export function ReviewerWorkboard({
       setErr(tk("audit_reject_need_comment"));
       return;
     }
+    const auditCase = cases.find((c) => c.id === audit.caseId);
     const bonus =
-      audit.decision === "ACCEPT" && auditQualityRating === 5 && auditAnnotatorBonus.trim()
-        ? Number(auditAnnotatorBonus)
+      audit.decision === "ACCEPT"
+        ? auditAnnotatorBonus.trim()
+          ? Number(auditAnnotatorBonus)
+          : auditCase
+            ? suggestedQualityAdjustment(
+                auditQualityRating,
+                computeCaseBasePay(
+                  auditCase.compensationType,
+                  auditCase.compensationAmount,
+                  auditCase.minMinutesPerCase,
+                  auditCase.maxMinutesPerCase,
+                ),
+                {
+                  wasResubmitted:
+                    auditCase.wasResubmitted || caseWasResubmitted(auditCase.reviews),
+                },
+              )
+            : 0
         : undefined;
-    if (bonus != null && (!Number.isFinite(bonus) || bonus < 0)) {
+    if (bonus != null && !Number.isFinite(bonus)) {
       setErr(tk("required"));
       return;
     }
@@ -1172,7 +1271,9 @@ export function ReviewerWorkboard({
                 </td>
                 <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">{formatDate(lang, c.completedAt)}</td>
                 <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">{c.annotationMinutes ?? "—"}</td>
-                <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">{formatRowCompensation(lang, c)}</td>
+                <td className="py-1.5 pr-2" onClick={(e) => e.stopPropagation()}>
+                  <CaseRowCompensation lang={lang} c={c} />
+                </td>
                 <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
                   <div className="flex flex-wrap gap-1">
                     {c.status === CaseStatus.AVAILABLE && !c.isReference && (
@@ -1953,39 +2054,169 @@ export function ReviewerWorkboard({
                         {tk("reviewer_perf_comp_history")}
                       </summary>
                       <div className="border-t border-[var(--border)] p-3">
+                        <p className="mb-2 text-xs text-[var(--muted)]">{tk("dash_comp_month_hint")}</p>
                         {selectedAnnotator.compensation.history.length === 0 ? (
                           <p className="text-sm text-[var(--muted)]">{tk("reviewer_perf_no_cases")}</p>
                         ) : (
                           <div className="overflow-x-auto">
-                            <table className="w-full min-w-[420px] text-left text-xs">
+                            <table className="w-full min-w-[560px] text-left text-xs">
                               <thead>
                                 <tr className="border-b border-[var(--border)] text-[var(--muted)]">
                                   <th className="py-1.5 pr-2 font-medium">{tk("dash_month")}</th>
                                   <th className="py-1.5 pr-2 font-medium">{tk("dash_audited_cases")}</th>
+                                  <th className="py-1.5 pr-2 font-medium">{tk("dash_total_time")}</th>
+                                  <th className="py-1.5 pr-2 font-medium">{tk("dash_avg_pay_per_hour")}</th>
                                   <th className="py-1.5 pr-2 font-medium">{tk("dash_base_compensation")}</th>
                                   <th className="py-1.5 pr-2 font-medium">{tk("dash_bonus_compensation")}</th>
                                   <th className="py-1.5 font-medium">{tk("dash_project_total")}</th>
                                 </tr>
                               </thead>
-                              <tbody>
-                                {selectedAnnotator.compensation.history.map((row) => (
-                                  <tr key={row.monthKey} className="border-b border-[var(--border)]/50 last:border-0">
-                                    <td className="py-1.5 pr-2 text-[var(--text)]">{row.label}</td>
-                                    <td className="py-1.5 pr-2 tabular-nums text-[var(--muted)]">
-                                      {row.auditedCount}
-                                    </td>
-                                    <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
-                                      {formatCompensationAmount(lang, row.baseCompensation)}
-                                    </td>
-                                    <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
-                                      {formatCompensationAmount(lang, row.bonusCompensation)}
-                                    </td>
-                                    <td className="py-1.5 tabular-nums text-[var(--text)]">
-                                      {formatCompensationAmount(lang, row.totalCompensation)}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
+                              {selectedAnnotator.compensation.history.map((row) => {
+                                const isExpanded = expandedCompMonthKey === row.monthKey;
+                                return (
+                                  <tbody key={row.monthKey}>
+                                    <tr
+                                      className={`cursor-pointer border-b border-[var(--border)]/50 last:border-0 hover:bg-[var(--bg)] ${
+                                        isExpanded ? "bg-[var(--bg)]" : ""
+                                      }`}
+                                      onClick={() =>
+                                        setExpandedCompMonthKey((current) =>
+                                          current === row.monthKey ? null : row.monthKey,
+                                        )
+                                      }
+                                    >
+                                      <td className="py-1.5 pr-2 text-[var(--text)]">
+                                        <span className="inline-flex items-center gap-1.5">
+                                          <span aria-hidden className="text-[var(--muted)]">
+                                            {isExpanded ? "▾" : "▸"}
+                                          </span>
+                                          {row.label}
+                                        </span>
+                                      </td>
+                                      <td className="py-1.5 pr-2 tabular-nums text-[var(--muted)]">
+                                        {row.auditedCount}
+                                      </td>
+                                      <td className="py-1.5 pr-2 tabular-nums text-[var(--muted)]">
+                                        {formatHours(
+                                          lang,
+                                          row.totalMinutes > 0 ? row.totalMinutes / 60 : null,
+                                        )}
+                                      </td>
+                                      <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
+                                        {row.averagePayPerHour == null
+                                          ? "—"
+                                          : formatCompensationAmount(lang, row.averagePayPerHour)}
+                                      </td>
+                                      <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
+                                        {formatCompensationAmount(lang, row.baseCompensation)}
+                                      </td>
+                                      <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
+                                        {formatCompensationAmount(lang, row.bonusCompensation)}
+                                      </td>
+                                      <td className="py-1.5 tabular-nums text-[var(--text)]">
+                                        {formatCompensationAmount(lang, row.totalCompensation)}
+                                      </td>
+                                    </tr>
+                                    {isExpanded && (
+                                      <tr>
+                                        <td colSpan={7} className="bg-[var(--bg)] px-2 pb-3 pt-1">
+                                          <table className="w-full min-w-[560px] text-left text-xs">
+                                            <thead>
+                                              <tr className="border-b border-[var(--border)] text-[var(--muted)]">
+                                                <th className="py-1 pr-2 font-medium">
+                                                  {tk("dash_project_col")}
+                                                </th>
+                                                <th className="py-1 pr-2 font-medium">
+                                                  {tk("col_case_id")}
+                                                </th>
+                                                <th className="py-1 pr-2 font-medium">
+                                                  {tk("col_submittedAt")}
+                                                </th>
+                                                <th className="py-1 pr-2 font-medium">
+                                                  {tk("dash_base_compensation")}
+                                                </th>
+                                                <th className="py-1 pr-2 font-medium">
+                                                  {tk("dash_bonus_compensation")}
+                                                </th>
+                                                <th className="py-1 font-medium">
+                                                  {tk("dash_project_total")}
+                                                </th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {row.cases.map((c) => {
+                                                const payInputs = {
+                                                  compensationType: c.compensationType,
+                                                  compensationAmount: c.compensationAmount,
+                                                  annotationMinutes: c.annotationMinutes,
+                                                  minMinutesPerCase: c.minMinutesPerCase,
+                                                  maxMinutesPerCase: c.maxMinutesPerCase,
+                                                  annotatorBonus: c.bonusCompensation,
+                                                  wasResubmitted: c.wasResubmitted,
+                                                };
+                                                return (
+                                                  <tr
+                                                    key={c.caseDbId}
+                                                    className="border-b border-[var(--border)]/40 last:border-0"
+                                                  >
+                                                    <td className="py-1 pr-2 text-[var(--text)]">
+                                                      {c.project}
+                                                    </td>
+                                                    <td
+                                                      className="py-1 pr-2"
+                                                      onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                      <CaseDetailLink caseDbId={c.caseDbId}>
+                                                        {c.caseId}
+                                                      </CaseDetailLink>
+                                                    </td>
+                                                    <td className="py-1 pr-2 whitespace-nowrap text-[var(--muted)]">
+                                                      {formatDate(lang, c.submittedAt)}
+                                                    </td>
+                                                    <td
+                                                      className="py-1 pr-2"
+                                                      onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                      <CaseCompensationAmountButton
+                                                        lang={lang}
+                                                        amount={c.baseCompensation}
+                                                        inputs={payInputs}
+                                                        title={c.caseId}
+                                                      />
+                                                    </td>
+                                                    <td
+                                                      className="py-1 pr-2"
+                                                      onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                      <CaseCompensationAmountButton
+                                                        lang={lang}
+                                                        amount={c.bonusCompensation}
+                                                        inputs={payInputs}
+                                                        title={c.caseId}
+                                                      />
+                                                    </td>
+                                                    <td
+                                                      className="py-1"
+                                                      onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                      <CaseCompensationAmountButton
+                                                        lang={lang}
+                                                        amount={c.totalCompensation}
+                                                        inputs={payInputs}
+                                                        title={c.caseId}
+                                                      />
+                                                    </td>
+                                                  </tr>
+                                                );
+                                              })}
+                                            </tbody>
+                                          </table>
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </tbody>
+                                );
+                              })}
                             </table>
                           </div>
                         )}
@@ -2116,8 +2347,8 @@ export function ReviewerWorkboard({
                                             <td className="py-1.5 pr-2">
                                               {tk(`status_${c.status}` as DictKey)}
                                             </td>
-                                            <td className="py-1.5 pr-2 tabular-nums text-[var(--text)]">
-                                              {formatRowCompensation(lang, c)}
+                                            <td className="py-1.5 pr-2" onClick={(e) => e.stopPropagation()}>
+                                              <CaseRowCompensation lang={lang} c={c} />
                                             </td>
                                             <td className="py-1.5" onClick={(e) => e.stopPropagation()}>
                                               <div className="flex flex-wrap gap-1">
@@ -2403,6 +2634,18 @@ export function ReviewerWorkboard({
             <p className="mb-2 text-xs text-[var(--muted)]">
               {cases.find((x) => x.id === audit.caseId)?.caseId}
             </p>
+            {audit.decision === "ACCEPT" &&
+              (() => {
+                const auditCase = cases.find((x) => x.id === audit.caseId);
+                return (
+                  auditCase != null &&
+                  (auditCase.wasResubmitted || caseWasResubmitted(auditCase.reviews))
+                );
+              })() && (
+                <p className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-[var(--text)]">
+                  {tk("pay_calc_resubmit_note")}
+                </p>
+              )}
             <textarea
               value={auditComment}
               onChange={(e) => setAuditComment(e.target.value)}
@@ -2417,16 +2660,43 @@ export function ReviewerWorkboard({
             <StarRating
               label={tk("reviewer_quality_rating")}
               value={auditQualityRating}
-              onChange={setAuditQualityRating}
+              onChange={(rating) => {
+                setAuditQualityRating(rating);
+                if (audit.decision !== "ACCEPT") {
+                  setAuditAnnotatorBonus("");
+                  return;
+                }
+                const auditCase = cases.find((c) => c.id === audit.caseId);
+                if (!auditCase) {
+                  setAuditAnnotatorBonus("0");
+                  return;
+                }
+                setAuditAnnotatorBonus(
+                  String(
+                    suggestedQualityAdjustment(
+                      rating,
+                      computeCaseBasePay(
+                        auditCase.compensationType,
+                        auditCase.compensationAmount,
+                        auditCase.minMinutesPerCase,
+                        auditCase.maxMinutesPerCase,
+                      ),
+                      {
+                        wasResubmitted:
+                          auditCase.wasResubmitted || caseWasResubmitted(auditCase.reviews),
+                      },
+                    ),
+                  ),
+                );
+              }}
               required
             />
-            {audit.decision === "ACCEPT" && auditQualityRating === 5 && (
+            {audit.decision === "ACCEPT" && auditQualityRating != null && (
               <label className="mb-2 block">
-                <span className="text-sm text-[var(--muted)]">{tk("case_annotatorBonus")}</span>
-                <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("review_bonus_hint")}</p>
+                <span className="text-sm text-[var(--muted)]">{tk("case_quality_adjustment")}</span>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("review_quality_adjustment_hint")}</p>
                 <input
                   type="number"
-                  min={0}
                   step="0.01"
                   value={auditAnnotatorBonus}
                   onChange={(e) => setAuditAnnotatorBonus(e.target.value)}

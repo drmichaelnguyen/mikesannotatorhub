@@ -21,6 +21,7 @@ function typeLabel(lang: Lang, type: string): string {
     [NOTIF.NEW_COMMENT]: "notif_new_comment",
     [NOTIF.CASE_REJECTED]: "notif_case_rejected",
     [NOTIF.CASE_SUBMITTED]: "notif_case_submitted",
+    [NOTIF.REDBRICK_FLAG]: "notif_redbrick_flag",
   };
   return t(lang, (map[type] ?? "notif_new_case") as DictKey);
 }
@@ -30,6 +31,7 @@ function typeDot(type: string) {
   if (type === NOTIF.NEW_COMMENT) return "bg-blue-400";
   if (type === NOTIF.CASE_SUBMITTED) return "bg-violet-400";
   if (type === NOTIF.CASE_ASSIGNED) return "bg-[var(--accent)]";
+  if (type === NOTIF.REDBRICK_FLAG) return "bg-amber-500";
   return "bg-[var(--success)]";
 }
 
