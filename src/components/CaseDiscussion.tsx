@@ -5,7 +5,15 @@ import {
   translateDiscussionForExportAction,
 } from "@/app/actions/export";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
+import { CommentChoiceInput } from "@/components/CommentChoiceInput";
+import { MentionTextarea } from "@/components/MentionTextarea";
 import { createCaseNote, deleteCaseNote, fetchCaseNotes, updateCaseNote } from "@/lib/case-note-api";
+import type { CommentChoiceMode } from "@/lib/comment-choices";
+import {
+  expandFieldCommentConfigs,
+  fieldRequiresImage,
+  resolveCommentChoiceForField,
+} from "@/lib/comment-choices";
 import {
   buildTemplateRowNote,
   composerAnswerDraftForTemplateRow,
@@ -421,136 +429,7 @@ function buildDiscussionTree(notes: CaseDiscussionNote[]): DiscussionNode[] {
   return roots;
 }
 
-export function MentionTextarea({
-  lang,
-  value,
-  onChange,
-  onPaste,
-  rows,
-  placeholder,
-  mentionOptions,
-  autoFocus = false,
-}: {
-  lang: Lang;
-  value: string;
-  onChange: (value: string) => void;
-  onPaste: React.ClipboardEventHandler<HTMLTextAreaElement>;
-  rows: number;
-  placeholder?: string;
-  mentionOptions: MentionOption[];
-  autoFocus?: boolean;
-}) {
-  const tk = (k: DictKey) => t(lang, k);
-  const [queryState, setQueryState] = useState<{ open: boolean; start: number; query: string }>({
-    open: false,
-    start: -1,
-    query: "",
-  });
-  const [activeIndex, setActiveIndex] = useState(0);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const matches = queryState.open
-    ? mentionOptions.filter((opt) => opt.label.toLowerCase().includes(queryState.query.toLowerCase()))
-    : [];
-
-  function updateQuery(nextValue: string, cursor = textareaRef.current?.selectionStart ?? nextValue.length) {
-    const before = nextValue.slice(0, cursor);
-    const match = before.match(/(^|\s)@([^\s@]*)$/);
-    if (!match) {
-      setQueryState({ open: false, start: -1, query: "" });
-      setActiveIndex(0);
-      return;
-    }
-    const query = match[2] ?? "";
-    setQueryState({ open: true, start: cursor - query.length - 1, query });
-    setActiveIndex(0);
-  }
-
-  function insertMention(opt: MentionOption) {
-    if (!queryState.open) return;
-    const current = value;
-    const cursor = textareaRef.current?.selectionStart ?? current.length;
-    const start = queryState.start >= 0 ? queryState.start : cursor;
-    const next = `${current.slice(0, start)}@${opt.label} ${current.slice(cursor)}`;
-    onChange(next);
-    setQueryState({ open: false, start: -1, query: "" });
-    setActiveIndex(0);
-    requestAnimationFrame(() => {
-      const el = textareaRef.current;
-      if (!el) return;
-      const nextPos = start + opt.label.length + 2;
-      el.focus();
-      el.setSelectionRange(nextPos, nextPos);
-    });
-  }
-
-  return (
-    <div className="relative">
-      <textarea
-        ref={textareaRef}
-        autoFocus={autoFocus}
-        value={value}
-        onChange={(e) => {
-          onChange(e.target.value);
-          updateQuery(e.target.value, e.target.selectionStart ?? e.target.value.length);
-        }}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDownCapture={(e) => e.stopPropagation()}
-        onKeyUpCapture={(e) => e.stopPropagation()}
-        onKeyUp={(e) => updateQuery((e.target as HTMLTextAreaElement).value, e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
-        onKeyDown={(e) => {
-          if (!queryState.open || matches.length === 0) return;
-          if (e.key === "ArrowDown") {
-            e.preventDefault();
-            setActiveIndex((prev) => (prev + 1) % matches.length);
-          } else if (e.key === "ArrowUp") {
-            e.preventDefault();
-            setActiveIndex((prev) => (prev - 1 + matches.length) % matches.length);
-          } else if (e.key === "Enter" || e.key === "Tab") {
-            e.preventDefault();
-            insertMention(matches[activeIndex]);
-          } else if (e.key === "Escape") {
-            setQueryState({ open: false, start: -1, query: "" });
-          }
-        }}
-        onPaste={onPaste}
-        rows={rows}
-        placeholder={placeholder}
-        className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
-      />
-      {queryState.open && (
-        <div className="absolute left-0 right-0 z-20 mt-1 rounded-md border border-[var(--border)] bg-[var(--surface)] shadow-lg">
-          {matches.length === 0 ? (
-            <div className="px-3 py-2 text-xs text-[var(--muted)]">{tk("reviewer_mention_no_results")}</div>
-          ) : (
-            <ul role="listbox" className="max-h-56 overflow-auto py-1 text-sm">
-              {matches.map((opt, index) => (
-                <li key={opt.id}>
-                  <button
-                    type="button"
-                    className={`flex w-full items-start justify-between gap-3 px-3 py-2 text-left ${
-                      index === activeIndex ? "bg-[var(--bg)]" : "hover:bg-[var(--bg)]/70"
-                    }`}
-                    onMouseEnter={() => setActiveIndex(index)}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      insertMention(opt);
-                    }}
-                  >
-                    <span>{opt.label}</span>
-                    <span className="text-xs text-[var(--muted)]">{opt.hint}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="border-t border-[var(--border)] px-3 py-1 text-[10px] text-[var(--muted)]">
-            {tk("reviewer_mention_hint")}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+export { MentionTextarea } from "@/components/MentionTextarea";
 
 type ComposerState = {
   value: string;
@@ -559,6 +438,8 @@ type ComposerState = {
   err: string | null;
   pending: boolean;
   mentionOptions: MentionOption[];
+  commentChoiceMode: CommentChoiceMode;
+  commentChoices: string[];
   onChange: (value: string) => void;
   onPaste: React.ClipboardEventHandler<HTMLTextAreaElement>;
   onFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -748,9 +629,13 @@ function Composer({
               )}
             <label className="block">
               <span className="text-sm text-[var(--muted)]">{tk("review_comment")}</span>
-              <MentionTextarea
-                key={templateComposer?.selectedIndex == null ? "tpl-none" : `tpl-${templateComposer.selectedIndex}`}
+              <CommentChoiceInput
+                textareaKey={
+                  templateComposer?.selectedIndex == null ? "tpl-none" : `tpl-${templateComposer.selectedIndex}`
+                }
                 lang={lang}
+                mode={state.commentChoiceMode}
+                choices={state.commentChoices}
                 value={state.value}
                 onChange={state.onChange}
                 onPaste={state.onPaste}
@@ -827,8 +712,11 @@ function Composer({
       ) : (
         <label className="block">
           <span className="text-sm text-[var(--muted)]">{tk("review_comment")}</span>
-          <MentionTextarea
+          <CommentChoiceInput
+            textareaKey={parentNoteId ? `reply-${parentNoteId}` : "root"}
             lang={lang}
+            mode={state.commentChoiceMode}
+            choices={state.commentChoices}
             value={state.value}
             onChange={state.onChange}
             onPaste={state.onPaste}
@@ -1227,6 +1115,10 @@ export function CaseDiscussion({
   mentionOptions = [],
   composerTemplate = null,
   requireComposerTemplate = false,
+  requireTemplateImages = false,
+  commentChoiceMode = "FREE",
+  commentChoices = [],
+  commentFieldConfigs = "[]",
 }: {
   lang: Lang;
   caseDbId: string;
@@ -1241,6 +1133,12 @@ export function CaseDiscussion({
    * and posting is blocked unless the content differs from the template.
    */
   requireComposerTemplate?: boolean;
+  /** When true, posting a template-row note requires ≥1 attached image. */
+  requireTemplateImages?: boolean;
+  commentChoiceMode?: CommentChoiceMode;
+  commentChoices?: string[];
+  /** JSON array of per-row comment configs aligned with template lines. */
+  commentFieldConfigs?: string | null;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const [content, setContent] = useState("");
@@ -1273,6 +1171,36 @@ export function CaseDiscussion({
         .filter(Boolean),
     [composerTemplate],
   );
+
+  const fieldCommentConfigs = useMemo(
+    () =>
+      expandFieldCommentConfigs(
+        composerTemplate,
+        commentFieldConfigs,
+        commentChoiceMode,
+        commentChoices.join("\n"),
+        requireTemplateImages,
+      ),
+    [commentChoiceMode, commentChoices, commentFieldConfigs, composerTemplate, requireTemplateImages],
+  );
+
+  const activeCommentChoice = useMemo(() => {
+    if (replyToId) return { mode: "FREE" as const, choices: [] as string[] };
+    if (templateRows.length > 0) {
+      return resolveCommentChoiceForField(selectedTemplateRowIndex, fieldCommentConfigs);
+    }
+    return {
+      mode: commentChoiceMode,
+      choices: commentChoices,
+    };
+  }, [
+    commentChoiceMode,
+    commentChoices,
+    fieldCommentConfigs,
+    replyToId,
+    selectedTemplateRowIndex,
+    templateRows.length,
+  ]);
 
   const thread = useMemo(() => buildDiscussionTree(notes), [notes]);
   const exportRows = useMemo(() => buildExportRows(thread, templateRows), [thread, templateRows]);
@@ -1355,10 +1283,13 @@ export function CaseDiscussion({
       if (!parsed) continue;
       if (parsed.rowIndex < 0 || parsed.rowIndex >= templateRows.length) continue;
       if (!parsed.value) continue;
+      if (fieldRequiresImage(fieldCommentConfigs[parsed.rowIndex]) && note.images.length === 0) {
+        continue;
+      }
       completed.add(parsed.rowIndex);
     }
     return [...completed].sort((a, b) => a - b);
-  }, [notes, templateRows]);
+  }, [fieldCommentConfigs, notes, templateRows]);
 
   /** Template field picker + row-tagged posts whenever we know the scope checklist (annotator or reviewer). */
   const scopeWorkTemplateUI =
@@ -1444,6 +1375,13 @@ export function CaseDiscussion({
             setErr(t(lang, "discussion_template_need_fill"));
             return;
           }
+          if (
+            fieldRequiresImage(fieldCommentConfigs[selectedTemplateRowIndex]) &&
+            currentImages.length === 0
+          ) {
+            setErr(t(lang, "discussion_template_screenshot_required"));
+            return;
+          }
           finalContent = buildTemplateRowNote(selectedTemplateRowIndex, row, currentContent);
         } else if (!currentContent.trim() && currentImages.length === 0) {
           setErr(t(lang, "discussion_need_body"));
@@ -1484,6 +1422,7 @@ export function CaseDiscussion({
     [
       caseDbId,
       composerTemplate,
+      fieldCommentConfigs,
       isQuestion,
       lang,
       loadNotes,
@@ -1524,6 +1463,8 @@ export function CaseDiscussion({
       err,
       pending,
       mentionOptions,
+      commentChoiceMode: activeCommentChoice.mode,
+      commentChoices: activeCommentChoice.choices,
       onChange: setContent,
       onPaste: onPasteComposer,
       onFile,
@@ -1533,7 +1474,22 @@ export function CaseDiscussion({
       onPost: post,
       onCancelReply: cancelReply,
     }),
-    [content, images, isQuestion, err, pending, mentionOptions, onPasteComposer, onFile, removeImage, updateImage, post, cancelReply],
+    [
+      content,
+      images,
+      isQuestion,
+      err,
+      pending,
+      mentionOptions,
+      activeCommentChoice.mode,
+      activeCommentChoice.choices,
+      onPasteComposer,
+      onFile,
+      removeImage,
+      updateImage,
+      post,
+      cancelReply,
+    ],
   );
 
   const templateComposerState = useMemo<TemplateComposerState | null>(

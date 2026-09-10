@@ -1,3 +1,4 @@
+import { ActionTracker } from "@/components/ActionTracker";
 import type { Metadata } from "next";
 import "./globals.css";
 import { getLangFromCookies } from "@/app/actions/lang";
@@ -18,7 +19,7 @@ export default async function RootLayout({
   const lang = await getLangFromCookies();
   return (
     <html lang={lang}>
-      <body className="min-h-screen antialiased">{children}</body>
+      <body className="min-h-screen antialiased"><ActionTracker />{children}</body>
     </html>
   );
 }

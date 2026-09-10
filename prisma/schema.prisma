@@ -24,6 +24,9 @@ enum CaseStatus {
   ACCEPTED
   AUDITED
   REJECTED
+  EXPIRED
+  /** Closed by a reviewer so the case leaves the grab pool without a normal audit/payout. */
+  ADMIN_COMPLETED
 }
 
 model User {
@@ -37,9 +40,9 @@ model User {
   assignedCases AnnotationCase[] @relation("AnnotatorCases")
   auditedCases  AnnotationCase[] @relation("CaseAuditor")
   reviews         Review[]
+  reviewedAsAnnotator Review[] @relation("ReviewedAnnotator")
   caseNotes       CaseNote[]
   notifications   Notification[]
-  availabilityDays AnnotatorAvailability[]
   redbrickFlagsRaised   CaseRedbrickFlag[] @relation("RedbrickFlagsRaised")
   redbrickFlagsResolved CaseRedbrickFlag[] @relation("RedbrickFlagsResolved")
 }
@@ -60,10 +63,14 @@ model Notification {
 model AnnotationCase {
   id                 String             @id @default(cuid())
   caseId             String
+  /** Short campaign/folder name (e.g. BC2, BC3). Used for workboard grouping. */
+  project            String             @default("BC2")
   redbrickProject    String
   guideId            String?
   guide              Guide?             @relation(fields: [guideId], references: [id], onDelete: SetNull)
   guideline          String
+  /** Radiologist finding text for this study (may include multiple findings, one per line). */
+  radiologistFinding String             @default("")
   /** JSON array of URL strings; use String (not Json) so SQLite never fails on legacy empty cells. */
   videoGuideUrls     String             @default("[]")
   scopeOfWork        String
@@ -71,6 +78,8 @@ model AnnotationCase {
   maxMinutesPerCase  Int
   compensationType   CompensationType
   compensationAmount Float
+  /** Five-star percentage fixed at creation; null keeps legacy project-default behavior. */
+  fiveStarBonusPercent Float?
   annotatorBonus     Float              @default(0)
   annotatorId        String?
   annotator          User?              @relation("AnnotatorCases", fields: [annotatorId], references: [id])
@@ -87,6 +96,10 @@ model AnnotationCase {
   annotatorAcknowledgedReviewId String?
   isReference        Boolean            @default(false)
   hasContinuityReport Boolean           @default(false)
+  /** When the case is due; rush bonus uses hours from createdAt (issue time) to this. */
+  deadline           DateTime?
+  /** Hard cutoff. Active work becomes EXPIRED at this time and can no longer be claimed or submitted. */
+  expiresAt          DateTime?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
@@ -95,7 +108,8 @@ model AnnotationCase {
   caseTopics AnnotationCaseTopic[]
   redbrickFlags CaseRedbrickFlag[]
 
-  @@unique([caseId, scopeOfWork])
+  @@unique([caseId, scopeOfWork, redbrickProject])
+  @@index([status, expiresAt])
 }
 
 /** Annotator reports a case that is not assigned to them on RedbrickAI. */
@@ -133,19 +147,6 @@ model Guide {
   updatedAt       DateTime        @updatedAt
 
   cases           AnnotationCase[]
-}
-
-model AnnotatorAvailability {
-  id             String   @id @default(cuid())
-  userId         String
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  day            String
-  availableHours Float    @default(0)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  @@unique([userId, day])
-  @@index([userId, day])
 }
 
 model Topic {
@@ -204,18 +205,43 @@ model Review {
   annotationCase     AnnotationCase @relation(fields: [annotationCaseId], references: [id], onDelete: Cascade)
   reviewerId      String
   reviewer        User           @relation(fields: [reviewerId], references: [id])
+  /** Annotator whose submission was reviewed (used for same-annotator resubmit pay rules). */
+  annotatorId     String?
+  annotator       User?          @relation("ReviewedAnnotator", fields: [annotatorId], references: [id], onDelete: SetNull)
   decision        String
   comment         String?
   screenshotData  String?
   createdAt       DateTime       @default(now())
 
   @@index([annotationCaseId])
+  @@index([annotatorId])
 }
 
 model ScopeOfWorkTemplate {
-  id          String   @id @default(cuid())
-  scopeOfWork String   @unique
-  template    String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                   String   @id @default(cuid())
+  scopeOfWork          String   @unique
+  template             String
+  /** When true, at least one template field requires an image (kept in sync with commentFieldConfigs). */
+  requireImagePerEntry Boolean  @default(false)
+  /**
+   * Legacy template-wide comment mode (kept for older rows / fallback):
+   * FREE = type freely; DROPDOWN = pick one choice; MULTI = pick multiple choices.
+   */
+  commentChoiceMode    String   @default("FREE")
+  /** Legacy template-wide choices (one per line). Prefer commentFieldConfigs. */
+  commentChoices       String   @default("")
+  /**
+   * Per template-row comment entry config (JSON array aligned with template lines):
+   * [{ "mode": "FREE"|"DROPDOWN"|"MULTI", "choices": string[], "mandatory": boolean, "requireImage": boolean }, ...]
+   */
+  commentFieldConfigs  String   @default("[]")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+/** Key-value app configuration (e.g. default per-minute compensation rate). */
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }

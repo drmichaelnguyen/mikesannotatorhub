@@ -1,6 +1,5 @@
 import dynamic from "next/dynamic";
 import {
-  getAnnotatorCapacityRows,
   listAnnotatorsForAssignment,
   listCasesForReviewer,
   listGuidesAndTopicsLite,
@@ -20,10 +19,9 @@ const ReviewerWorkboard = dynamic(
 );
 
 export async function ReviewerWorkboardSection({ lang }: { lang: Lang }) {
-  const [cases, annotators, capacityRows, guidesAndTopics, templates] = await Promise.all([
+  const [cases, annotators, guidesAndTopics, templates] = await Promise.all([
     listCasesForReviewer() as Promise<ReviewerCaseRow[]>,
     listAnnotatorsForAssignment(),
-    getAnnotatorCapacityRows(),
     listGuidesAndTopicsLite(),
     listScopeOfWorkTemplatesAction(),
   ]);
@@ -36,12 +34,15 @@ export async function ReviewerWorkboardSection({ lang }: { lang: Lang }) {
         lang={lang}
         cases={serialized}
         annotators={annotators}
-        capacityRows={capacityRows}
         guides={guidesAndTopics.guides}
         topics={guidesAndTopics.topics}
         scopeTemplates={templates.map((item) => ({
           scopeOfWork: item.scopeOfWork,
           template: item.template,
+          requireImagePerEntry: item.requireImagePerEntry,
+          commentChoiceMode: item.commentChoiceMode,
+          commentChoices: item.commentChoices,
+          commentFieldConfigs: item.commentFieldConfigs,
         }))}
       />
     </section>

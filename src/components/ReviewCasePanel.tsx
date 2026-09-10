@@ -25,6 +25,8 @@ export function ReviewCasePanel({
   minMinutesPerCase,
   maxMinutesPerCase,
   wasResubmitted = false,
+  rushPercent = 0,
+  fiveStarBonusPercent = 15,
 }: {
   lang: Lang;
   caseDbId: string;
@@ -35,12 +37,15 @@ export function ReviewCasePanel({
   maxMinutesPerCase: number;
   /** Prior REJECT review exists (case was rejected then resubmitted). */
   wasResubmitted?: boolean;
+  rushPercent?: number;
+  fiveStarBonusPercent?: number;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const [comment, setComment] = useState("");
   const [rawImage, setRawImage] = useState<string | null>(null);
   const [markedImage, setMarkedImage] = useState<string | null>(null);
   const [qualityRating, setQualityRating] = useState<number | null>(null);
+  const [bonusOverridden, setBonusOverridden] = useState(false);
   const [annotatorBonus, setAnnotatorBonus] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -51,17 +56,19 @@ export function ReviewCasePanel({
     compensationAmount,
     minMinutesPerCase,
     maxMinutesPerCase,
+    rushPercent,
   );
 
   useEffect(() => {
+    setBonusOverridden(false);
     if (qualityRating == null) {
       setAnnotatorBonus("");
       return;
     }
     setAnnotatorBonus(
-      String(suggestedQualityAdjustment(qualityRating, caseBase, { wasResubmitted })),
+      String(suggestedQualityAdjustment(qualityRating, caseBase, { wasResubmitted, fiveStarBonusPercent })),
     );
-  }, [qualityRating, caseBase, wasResubmitted]);
+  }, [qualityRating, caseBase, wasResubmitted, fiveStarBonusPercent]);
 
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -92,7 +99,7 @@ export function ReviewCasePanel({
       decision === "ACCEPT"
         ? annotatorBonus.trim()
           ? Number(annotatorBonus)
-          : suggestedQualityAdjustment(qualityRating, caseBase, { wasResubmitted })
+          : suggestedQualityAdjustment(qualityRating, caseBase, { wasResubmitted, fiveStarBonusPercent })
         : undefined;
     if (bonus != null && !Number.isFinite(bonus)) {
       setMsg(tk("required"));
@@ -106,7 +113,7 @@ export function ReviewCasePanel({
         comment,
         screenshotData: markedImage ?? rawImage,
         qualityRating,
-        annotatorBonus: bonus,
+        annotatorBonus: bonusOverridden ? bonus : undefined,
       });
       if (!res.ok) {
         setMsg(
@@ -134,6 +141,7 @@ export function ReviewCasePanel({
           maxMinutesPerCase,
           minMinutesPerCase,
           Number(annotatorBonus),
+          rushPercent,
         )
       : null;
 
@@ -164,12 +172,12 @@ export function ReviewCasePanel({
       {qualityRating != null && (
         <label className="block">
           <span className="text-sm text-[var(--muted)]">{tk("case_quality_adjustment")}</span>
-          <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("review_quality_adjustment_hint")}</p>
+          <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("review_quality_adjustment_hint")} {lang === "vi" ? "Thưởng 5★ của ca" : "Case 5★ bonus"}: {fiveStarBonusPercent}%.</p>
           <input
             type="number"
             step="0.01"
             value={annotatorBonus}
-            onChange={(e) => setAnnotatorBonus(e.target.value)}
+            onChange={(e) => { setAnnotatorBonus(e.target.value); setBonusOverridden(e.target.value.trim() !== ""); }}
             className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
           />
           {adjustmentPreview != null && (

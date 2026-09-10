@@ -1,11 +1,7 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { getLangFromCookies } from "@/app/actions/lang";
-import {
-  getAnnotatorAvailabilitySummary,
-  getAnnotatorCompensationSummary,
-} from "@/app/actions/cases";
-import { AnnotatorAvailabilityPanel } from "@/components/AnnotatorAvailabilityPanel";
+import { getAnnotatorCompensationSummary } from "@/app/actions/cases";
 import { getNotifications } from "@/app/actions/notifications";
 import { AnnotatorStatsPanel } from "@/components/AnnotatorStatsPanel";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
@@ -27,12 +23,10 @@ export default async function AnnotatorPage() {
   const tk = (k: DictKey) => t(lang, k);
 
   let summary;
-  let availability;
   let notifGroups;
   try {
-    [summary, availability, notifGroups] = await Promise.all([
+    [summary, notifGroups] = await Promise.all([
       getAnnotatorCompensationSummary(),
-      getAnnotatorAvailabilitySummary(),
       getNotifications(),
     ]);
   } catch {
@@ -60,11 +54,8 @@ export default async function AnnotatorPage() {
           <h1 className="text-2xl font-semibold">{tk("annotator_title")}</h1>
           <p className="text-sm text-[var(--muted)]">{user.email}</p>
         </div>
-        <CollapsibleSection title={`${tk("dash_compensation")} · ${tk("availability_title")}`}>
-          <div className="space-y-8">
-            <AnnotatorStatsPanel lang={lang} summary={summary} />
-            <AnnotatorAvailabilityPanel lang={lang} summary={availability} />
-          </div>
+        <CollapsibleSection title={tk("dash_compensation")}>
+          <AnnotatorStatsPanel lang={lang} summary={summary} />
         </CollapsibleSection>
         <Suspense fallback={<AnnotatorWorkboardSectionFallback lang={lang} />}>
           <AnnotatorWorkboardSection lang={lang} />

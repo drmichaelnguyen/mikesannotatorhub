@@ -1,5 +1,10 @@
 "use client";
 
+import { CaseQualityBonusField } from "@/components/CaseQualityBonusField";
+import { CaseTimingFields } from "@/components/CaseTimingFields";
+import { createCaseErrorMessage } from "@/lib/create-case-errors";
+import { isValidFiveStarBonusPercent } from "@/lib/project-quality-bonus";
+import { rushPercentFromHours } from "@/lib/compensation";
 import { useRouter } from "next/navigation";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
@@ -11,15 +16,22 @@ import {
   useState,
   useTransition,
   type ReactElement,
+  type InputHTMLAttributes,
 } from "react";
 import {
+  adminCompleteCaseAction,
+  batchDeleteCasesAction,
   batchUpdateCasesAction,
   deleteCaseAction,
   reviewCaseAction,
   reviewerAssignCaseAction,
 } from "@/app/actions/cases";
-import { MentionTextarea } from "@/components/CaseDiscussion";
+import { MentionTextarea } from "@/components/MentionTextarea";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
+import {
+  CaseDetailsFields,
+  type CaseDetailsFieldsValue,
+} from "@/components/CaseDetailsFields";
 import {
   readAnnotatorsPanelFromBrowser,
   replaceCaseQueryInBrowser,
@@ -38,22 +50,33 @@ import {
   type ReferenceCaseLinkRow,
 } from "@/components/annotator/AnnotatorCaseDetailPanel";
 import { createCaseNote } from "@/lib/case-note-api";
+import { matchContinuityReportFileToCaseId } from "@/lib/continuity-report-filename";
+import {
+  looksLikeRadiologistFindingsTable,
+  matchFindingsToCaseIds,
+  parseRadiologistFindingsTable,
+} from "@/lib/radiologist-findings";
 import { StarRating } from "@/components/StarRating";
 import { ReviewerCaseDetailPanel } from "@/components/reviewer/ReviewerCaseDetailPanel";
 import { getClipboardImageFile, getClipboardImageFiles, readFileAsDataUrl, readFilesAsDataUrls } from "@/lib/client-image-data";
 import {
+  caseRushForfeitReason,
+  caseRushPercent,
   computeCaseBasePay,
   computeCompensation,
   computeTimeCompensation,
-  caseWasResubmitted,
   suggestedQualityAdjustment,
 } from "@/lib/compensation";
 import { CaseCompensationAmountButton } from "@/components/CaseCompensationBreakdown";
-import { formatCompensationAmount, formatDate, formatHours, formatMinutes } from "@/lib/format";
+import {
+  formatCompensationAmount,
+  formatDate,
+  formatHours,
+  formatMinutes,
+} from "@/lib/format";
 import { buildMentionOptionsForCase, type GuideOptionLite, type TopicOptionLite } from "@/lib/guide-topic";
 import { parseVideoGuideUrlsInput } from "@/lib/video-guides";
 import type { SerializedReviewerCase } from "@/lib/reviewer-serialize";
-import type { AnnotatorCapacityRow } from "@/app/actions/cases";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import { CaseStatus, CompensationType } from "@prisma/client";
@@ -95,6 +118,7 @@ function CaseRowCompensation({ lang, c }: { lang: Lang; c: SerializedReviewerCas
   if (c.compensationType === CompensationType.PER_MINUTE && c.annotationMinutes == null) {
     return "—";
   }
+  const rushPercent = caseRushPercent(c);
   const amount = computeCompensation(
     c.compensationType,
     c.compensationAmount,
@@ -102,6 +126,7 @@ function CaseRowCompensation({ lang, c }: { lang: Lang; c: SerializedReviewerCas
     c.maxMinutesPerCase,
     c.minMinutesPerCase,
     c.annotatorBonus,
+    rushPercent,
   );
   return (
     <CaseCompensationAmountButton
@@ -114,7 +139,9 @@ function CaseRowCompensation({ lang, c }: { lang: Lang; c: SerializedReviewerCas
         minMinutesPerCase: c.minMinutesPerCase,
         maxMinutesPerCase: c.maxMinutesPerCase,
         annotatorBonus: c.annotatorBonus,
-        wasResubmitted: c.wasResubmitted || caseWasResubmitted(c.reviews),
+        wasResubmitted: c.wasResubmitted,
+        rushPercent,
+        rushForfeitReason: caseRushForfeitReason(c),
       }}
       title={c.caseId}
     />
@@ -141,6 +168,58 @@ function sameTopicIds(rows: SerializedReviewerCase[]): string[] {
 }
 
 type GroupDimension = "project" | "scope" | "rbProject" | "annotator";
+
+type BatchApplyGroupKey = "available" | "unsubmitted" | "rejected" | "submitted" | "completed";
+
+const BATCH_APPLY_GROUPS: {
+  key: BatchApplyGroupKey;
+  statuses: CaseStatus[];
+  labelKey: DictKey;
+}[] = [
+  { key: "available", statuses: [CaseStatus.AVAILABLE], labelKey: "status_AVAILABLE" },
+  {
+    key: "unsubmitted",
+    statuses: [CaseStatus.ASSIGNED],
+    labelKey: "reviewer_batch_apply_unsubmitted",
+  },
+  { key: "rejected", statuses: [CaseStatus.REJECTED], labelKey: "status_REJECTED" },
+  { key: "submitted", statuses: [CaseStatus.SUBMITTED], labelKey: "status_SUBMITTED" },
+  {
+    key: "completed",
+    statuses: [
+      CaseStatus.ACCEPTED,
+      CaseStatus.AUDITED,
+      CaseStatus.ADMIN_COMPLETED,
+      CaseStatus.EXPIRED,
+    ],
+    labelKey: "reviewer_batch_apply_completed",
+  },
+];
+
+function defaultBatchApplyFilters(): Record<BatchApplyGroupKey, boolean> {
+  return {
+    available: true,
+    unsubmitted: true,
+    rejected: true,
+    submitted: true,
+    completed: true,
+  };
+}
+
+function batchApplyGroupForStatus(status: CaseStatus): BatchApplyGroupKey | null {
+  for (const group of BATCH_APPLY_GROUPS) {
+    if (group.statuses.includes(status)) return group.key;
+  }
+  return null;
+}
+
+function rowMatchesBatchApplyFilters(
+  row: SerializedReviewerCase,
+  filters: Record<BatchApplyGroupKey, boolean>,
+): boolean {
+  const key = batchApplyGroupForStatus(row.status);
+  return key != null && filters[key];
+}
 
 type GroupNode = {
   key: string;
@@ -186,6 +265,8 @@ type CompensationHistoryCaseRow = {
   annotationMinutes: number | null;
   minMinutesPerCase: number;
   maxMinutesPerCase: number;
+  rushPercent: number;
+  rushForfeitReason: "rejected" | "late" | null;
   wasResubmitted: boolean;
   baseCompensation: number;
   bonusCompensation: number;
@@ -226,13 +307,11 @@ type AnnotatorPerformanceSummary = {
   email: string;
   stats: AnnotatorPerformanceStats;
   compensation: AnnotatorCompensationPeriods;
-  capacityWindows: AnnotatorCapacityRow["windows"];
   projects: AnnotatorPerformanceProject[];
 };
 
-function getProjectName(c: Pick<SerializedReviewerCase, "caseId">): string {
-  void c;
-  return "BC2";
+function getProjectName(c: Pick<SerializedReviewerCase, "project">): string {
+  return (c.project || "").trim() || "—";
 }
 
 function getGroupInfo(c: SerializedReviewerCase, dimension: GroupDimension): { key: string; label: string } {
@@ -297,6 +376,8 @@ function buildAnnotatorFocus(
     CaseStatus.AUDITED,
     CaseStatus.ACCEPTED,
     CaseStatus.REJECTED,
+    CaseStatus.EXPIRED,
+    CaseStatus.ADMIN_COMPLETED,
     CaseStatus.AVAILABLE,
   ];
   const groups = [...byProject.entries()]
@@ -415,12 +496,14 @@ function buildCompensationPeriods(
 
   for (const c of cases) {
     if (c.status !== CaseStatus.AUDITED && c.status !== CaseStatus.ACCEPTED) continue;
+    const rushPercent = caseRushPercent(c);
     const baseAmount = computeTimeCompensation(
       c.compensationType,
       c.compensationAmount,
       c.annotationMinutes,
       c.maxMinutesPerCase,
       c.minMinutesPerCase,
+      rushPercent,
     );
     const bonusAmount = c.annotatorBonus;
     const amount = Math.max(0, Math.round((baseAmount + bonusAmount) * 100) / 100);
@@ -460,6 +543,8 @@ function buildCompensationPeriods(
       annotationMinutes: c.annotationMinutes,
       minMinutesPerCase: c.minMinutesPerCase,
       maxMinutesPerCase: c.maxMinutesPerCase,
+      rushPercent,
+      rushForfeitReason: caseRushForfeitReason(c),
       wasResubmitted: c.wasResubmitted,
       baseCompensation: round2(baseAmount),
       bonusCompensation: round2(bonusAmount),
@@ -502,9 +587,7 @@ function buildAnnotatorPerformance(
   lang: Lang,
   annotators: { id: string; name: string; email: string }[],
   cases: SerializedReviewerCase[],
-  capacityRows: AnnotatorCapacityRow[],
 ): AnnotatorPerformanceSummary[] {
-  const capacityById = new Map(capacityRows.map((row) => [row.id, row] as const));
   return annotators
     .map((annotator) => {
       const mine = cases.filter((c) => c.annotator?.id === annotator.id);
@@ -521,29 +604,14 @@ function buildAnnotatorPerformance(
           stats: buildPerformanceStats(list),
           cases: [...list].sort((a, b) => a.caseId.localeCompare(b.caseId)),
         }));
-      const capacity = capacityById.get(annotator.id);
       return {
         ...annotator,
         stats: buildPerformanceStats(mine),
         compensation: buildCompensationPeriods(lang, mine),
-        capacityWindows: capacity?.windows ?? [],
         projects,
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function getCapacityWindow(
-  annotator: AnnotatorPerformanceSummary,
-  key: "24h" | "72h" | "7d",
-) {
-  return annotator.capacityWindows.find((window) => window.key === key) ?? {
-    key,
-    days: key === "24h" ? 1 : key === "72h" ? 3 : 7,
-    availableHours: 0,
-    assignedEstimateHours: 0,
-    remainingHours: 0,
-  };
 }
 
 function ReviewerStatusCounts({ cases }: { cases: SerializedReviewerCase[] }) {
@@ -594,7 +662,6 @@ export function ReviewerWorkboard({
   lang,
   cases,
   annotators,
-  capacityRows,
   guides,
   topics,
   scopeTemplates,
@@ -602,10 +669,16 @@ export function ReviewerWorkboard({
   lang: Lang;
   cases: SerializedReviewerCase[];
   annotators: { id: string; name: string; email: string }[];
-  capacityRows: AnnotatorCapacityRow[];
   guides: GuideOptionLite[];
   topics: TopicOptionLite[];
-  scopeTemplates: { scopeOfWork: string; template: string }[];
+  scopeTemplates: {
+    scopeOfWork: string;
+    template: string;
+    requireImagePerEntry: boolean;
+    commentChoiceMode: string;
+    commentChoices: string;
+    commentFieldConfigs: string;
+  }[];
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const router = useRouter();
@@ -624,6 +697,26 @@ export function ReviewerWorkboard({
     "rbProject",
     "annotator",
   ]);
+  useEffect(() => {
+    const now = Date.now();
+    const nextExpiry = cases
+      .filter(
+        (c) =>
+          c.expiresAt &&
+          (c.status === CaseStatus.AVAILABLE ||
+            c.status === CaseStatus.ASSIGNED ||
+            c.status === CaseStatus.REJECTED),
+      )
+      .map((c) => new Date(c.expiresAt!).getTime())
+      .filter((time) => Number.isFinite(time) && time > now)
+      .sort((a, b) => a - b)[0];
+    if (nextExpiry == null) return;
+    const timer = window.setTimeout(
+      () => router.refresh(),
+      Math.min(nextExpiry - now + 250, 2_147_483_647),
+    );
+    return () => window.clearTimeout(timer);
+  }, [cases, router]);
   const searchedCases = useMemo(() => {
     const needle = searchNeedle.toLowerCase();
     if (!needle) return cases;
@@ -631,6 +724,7 @@ export function ReviewerWorkboard({
       (c) =>
         c.id.toLowerCase().includes(needle) ||
         c.caseId.toLowerCase().includes(needle) ||
+        (c.project || "").trim().toLowerCase().includes(needle) ||
         (c.redbrickProject || "").trim().toLowerCase().includes(needle) ||
         c.scopeOfWork.toLowerCase().includes(needle),
     );
@@ -647,7 +741,10 @@ export function ReviewerWorkboard({
       map.set(
         project,
         current ||
-          (row.status !== CaseStatus.AUDITED && row.status !== CaseStatus.ACCEPTED),
+          (row.status !== CaseStatus.AUDITED &&
+            row.status !== CaseStatus.ACCEPTED &&
+            row.status !== CaseStatus.EXPIRED &&
+            row.status !== CaseStatus.ADMIN_COMPLETED),
       );
     }
     return map;
@@ -695,6 +792,30 @@ export function ReviewerWorkboard({
     [cases],
   );
 
+  const projectOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          cases
+            .map((c) => c.project.trim())
+            .filter(Boolean),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [cases],
+  );
+
+  const rbProjectOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          cases
+            .map((c) => c.redbrickProject.trim())
+            .filter(Boolean),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [cases],
+  );
+
   const [detailId, setDetailId] = useState<string | null>(null);
   const {
     isClosing: detailClosing,
@@ -710,6 +831,7 @@ export function ReviewerWorkboard({
   );
   const [auditComment, setAuditComment] = useState("");
   const [auditQualityRating, setAuditQualityRating] = useState<number | null>(null);
+  const [auditBonusOverridden, setAuditBonusOverridden] = useState(false);
   const [auditAnnotatorBonus, setAuditAnnotatorBonus] = useState("");
   const [auditRawImage, setAuditRawImage] = useState<string | null>(null);
   const [auditMarkedImage, setAuditMarkedImage] = useState<string | null>(null);
@@ -717,17 +839,34 @@ export function ReviewerWorkboard({
   const [assignAnnotatorId, setAssignAnnotatorId] = useState("");
   const [selectedCaseIds, setSelectedCaseIds] = useState<string[]>([]);
   const [batchEditOpen, setBatchEditOpen] = useState(false);
-  const [batchGuideId, setBatchGuideId] = useState("");
-  const [batchTopicIds, setBatchTopicIds] = useState<string[]>([]);
-  const [batchGuideline, setBatchGuideline] = useState("");
-  const [batchVideoGuideUrls, setBatchVideoGuideUrls] = useState("");
-  const [batchRedbrickProject, setBatchRedbrickProject] = useState("");
-  const [batchScopeOfWork, setBatchScopeOfWork] = useState("");
-  const [batchMinMinutes, setBatchMinMinutes] = useState("");
-  const [batchMaxMinutes, setBatchMaxMinutes] = useState("");
-  const [batchCompType, setBatchCompType] = useState<CompensationType>(CompensationType.PER_CASE);
-  const [batchCompAmount, setBatchCompAmount] = useState("");
+  const [batchEditPool, setBatchEditPool] = useState<SerializedReviewerCase[]>([]);
+  const [batchApplyFilters, setBatchApplyFilters] = useState(defaultBatchApplyFilters);
+  const [batchDetails, setBatchDetails] = useState<CaseDetailsFieldsValue>({
+    project: "",
+    redbrickProject: "",
+    guideId: "",
+    topicIds: [],
+    guideline: "",
+    radiologistFinding: "",
+    videoGuideUrls: "",
+    scopeOfWork: "",
+    minMinutesPerCase: "",
+    maxMinutesPerCase: "",
+    compensationType: "PER_MINUTE",
+    compensationAmount: "",
+  });
+  const [batchFindingsPaste, setBatchFindingsPaste] = useState("");
   const [batchBonusAmount, setBatchBonusAmount] = useState("");
+  const [batchQualityBonus, setBatchQualityBonus] = useState("");
+  const [batchQualityChanged, setBatchQualityChanged] = useState(false);
+  const [batchUpdateTiming, setBatchUpdateTiming] = useState(false);
+  const [batchDeadlineHours, setBatchDeadlineHours] = useState(72);
+  const [batchGraceHours, setBatchGraceHours] = useState(8);
+  const [batchTimingStart, setBatchTimingStart] = useState(0);
+  const batchErrorRef = useRef<HTMLDivElement>(null);
+  const [batchSuccess, setBatchSuccess] = useState<string | null>(null);
+  const [batchAssignment, setBatchAssignment] = useState("KEEP");
+  const [batchContinuityFiles, setBatchContinuityFiles] = useState<File[]>([]);
   const [annotatorFocusId, setAnnotatorFocusId] = useState<string | null>(null);
   const [annotatorsPanelOpen, setAnnotatorsPanelOpen] = useState(
     () => searchParams.get("annotators") === "1",
@@ -740,21 +879,80 @@ export function ReviewerWorkboard({
   const templateByScope = useMemo(
     () =>
       new Map(
-        scopeTemplates.map((item) => [item.scopeOfWork.trim(), item.template] as const),
+        scopeTemplates.map((item) => [
+          item.scopeOfWork.trim(),
+          {
+            template: item.template,
+            requireImagePerEntry: item.requireImagePerEntry,
+            commentChoiceMode: item.commentChoiceMode,
+            commentChoices: item.commentChoices,
+            commentFieldConfigs: item.commentFieldConfigs,
+          },
+        ] as const),
       ),
     [scopeTemplates],
   );
 
   const detailCase = detailId ? cases.find((c) => c.id === detailId) ?? null : null;
-  const detailAnnotatorRow = useMemo<AnnotatorCaseRow | null>(() => {
+  useEffect(() => {
+    if (batchEditOpen && err && !pending) batchErrorRef.current?.focus();
+  }, [batchEditOpen, err, pending]);
+
+  const batchTargetRows = useMemo(
+    () => batchEditPool.filter((row) => rowMatchesBatchApplyFilters(row, batchApplyFilters)),
+    [batchEditPool, batchApplyFilters],
+  );
+  const batchApplyCounts = useMemo(() => {
+    const counts = Object.fromEntries(
+      BATCH_APPLY_GROUPS.map((group) => [group.key, 0]),
+    ) as Record<BatchApplyGroupKey, number>;
+    for (const row of batchEditPool) {
+      const key = batchApplyGroupForStatus(row.status);
+      if (key) counts[key] += 1;
+    }
+    return counts;
+  }, [batchEditPool]);
+  const batchApplyAllChecked = BATCH_APPLY_GROUPS.every((group) => batchApplyFilters[group.key]);
+  const batchApplyIndeterminate =
+    !batchApplyAllChecked && BATCH_APPLY_GROUPS.some((group) => batchApplyFilters[group.key]);
+  const batchContinuityPreview = useMemo(() => {
+    const caseIds = batchTargetRows.map((row) => row.caseId);
+    const matched: { caseId: string; filename: string }[] = [];
+    const unmatched: string[] = [];
+    const usedCaseIds = new Set<string>();
+    for (const file of batchContinuityFiles) {
+      const caseId = matchContinuityReportFileToCaseId(file.name, caseIds);
+      if (!caseId || usedCaseIds.has(caseId)) {
+        unmatched.push(file.name);
+        continue;
+      }
+      usedCaseIds.add(caseId);
+      matched.push({ caseId, filename: file.name });
+    }
+    return { matched, unmatched };
+  }, [batchContinuityFiles, batchTargetRows]);
+  const batchFindingsPreview = useMemo(() => {
+    const parsed = parseRadiologistFindingsTable(batchFindingsPaste);
+    return matchFindingsToCaseIds(
+      parsed,
+      batchTargetRows.map((row) => row.caseId),
+    );
+  }, [batchFindingsPaste, batchTargetRows]);
+
+  const detailAnnotatorRow = useMemo(() => {
     if (!detailCase) return null;
+    const tmpl = templateByScope.get(detailCase.scopeOfWork.trim());
     return {
       ...detailCase,
       _count: {
         caseNotes: detailCase.caseNoteCount,
         reviews: detailCase.wasResubmitted ? 1 : 0,
       },
-      scopeOfWorkTemplate: templateByScope.get(detailCase.scopeOfWork.trim()) ?? null,
+      scopeOfWorkTemplate: tmpl?.template ?? null,
+      scopeOfWorkTemplateRequiresImages: tmpl?.requireImagePerEntry ?? false,
+      commentChoiceMode: tmpl?.commentChoiceMode ?? "FREE",
+      commentChoices: tmpl?.commentChoices ?? "",
+      commentFieldConfigs: tmpl?.commentFieldConfigs ?? "[]",
     } as unknown as AnnotatorCaseRow;
   }, [detailCase, templateByScope]);
   const detailReferenceCases = useMemo<ReferenceCaseLinkRow[]>(() => {
@@ -778,8 +976,8 @@ export function ReviewerWorkboard({
     [annotatorFocusId, cases],
   );
   const annotatorPerformance = useMemo(
-    () => buildAnnotatorPerformance(lang, annotators, cases, capacityRows),
-    [lang, annotators, cases, capacityRows],
+    () => buildAnnotatorPerformance(lang, annotators, cases),
+    [lang, annotators, cases],
   );
   const selectedAnnotator = selectedAnnotatorId
     ? annotatorPerformance.find((annotator) => annotator.id === selectedAnnotatorId) ?? null
@@ -876,6 +1074,19 @@ export function ReviewerWorkboard({
     });
   }
 
+  function adminCompleteCase(caseDbId: string) {
+    if (!window.confirm(tk("reviewer_admin_complete_confirm"))) return;
+    setErr(null);
+    start(async () => {
+      const res = await adminCompleteCaseAction(caseDbId);
+      if (!res.ok) {
+        setErr(res.error === "state" ? tk("reviewer_admin_complete_taken") : tk("required"));
+        return;
+      }
+      refresh();
+    });
+  }
+
   function clearSearch() {
     setSearchInput("");
     clearStatusFilter();
@@ -895,24 +1106,60 @@ export function ReviewerWorkboard({
     });
   }
 
+  function toggleSelectAllInTable(rows: SerializedReviewerCase[], checked: boolean) {
+    const rowIds = rows.map((row) => row.id);
+    setSelectedCaseIds((prev) => {
+      if (!checked) return prev.filter((id) => !rowIds.includes(id));
+      const next = new Set(prev);
+      for (const id of rowIds) next.add(id);
+      return [...next];
+    });
+  }
+
+  function tableSelectionState(rows: SerializedReviewerCase[]) {
+    const rowIds = rows.map((row) => row.id);
+    const selectedCount = rowIds.filter((id) => selectedCaseIds.includes(id)).length;
+    if (selectedCount === 0) return { all: false, indeterminate: false };
+    if (selectedCount === rowIds.length) return { all: true, indeterminate: false };
+    return { all: false, indeterminate: true };
+  }
+
   function clearSelection() {
     setSelectedCaseIds([]);
   }
 
   function openBatchEditForRows(rows: SerializedReviewerCase[]) {
     if (rows.length === 0) return;
+    setBatchEditPool(rows);
+    setBatchApplyFilters(defaultBatchApplyFilters());
     setSelectedCaseIds(rows.map((row) => row.id));
-    setBatchRedbrickProject(sameValue(rows, (row) => row.redbrickProject) ?? "");
-    setBatchGuideId(sameValue(rows, (row) => row.guide?.id ?? "") ?? "");
-    setBatchTopicIds(sameTopicIds(rows));
-    setBatchGuideline(sameValue(rows, (row) => row.guideline) ?? "");
-    setBatchVideoGuideUrls(sameValue(rows, (row) => row.videoGuideUrls.join("\n")) ?? "");
-    setBatchScopeOfWork(sameValue(rows, (row) => row.scopeOfWork) ?? "");
-    setBatchMinMinutes(String(sameValue(rows, (row) => row.minMinutesPerCase) ?? ""));
-    setBatchMaxMinutes(String(sameValue(rows, (row) => row.maxMinutesPerCase) ?? ""));
-    setBatchCompType(sameValue(rows, (row) => row.compensationType) ?? CompensationType.PER_CASE);
-    setBatchCompAmount(String(sameValue(rows, (row) => row.compensationAmount) ?? ""));
-    setBatchBonusAmount(String(sameValue(rows, (row) => row.annotatorBonus) ?? ""));
+    const sharedFinding = sameValue(rows, (row) => row.radiologistFinding) ?? "";
+    const sharedIsTable = looksLikeRadiologistFindingsTable(sharedFinding);
+    setBatchDetails({
+      project: sameValue(rows, (row) => row.project) ?? "",
+      redbrickProject: sameValue(rows, (row) => row.redbrickProject) ?? "",
+      guideId: sameValue(rows, (row) => row.guide?.id ?? "") ?? "",
+      topicIds: sameTopicIds(rows),
+      guideline: sameValue(rows, (row) => row.guideline) ?? "",
+      radiologistFinding: sharedIsTable ? "" : sharedFinding,
+      videoGuideUrls: sameValue(rows, (row) => row.videoGuideUrls.join("\n")) ?? "",
+      scopeOfWork: sameValue(rows, (row) => row.scopeOfWork) ?? "",
+      minMinutesPerCase: String(sameValue(rows, (row) => row.minMinutesPerCase) ?? ""),
+      maxMinutesPerCase: String(sameValue(rows, (row) => row.maxMinutesPerCase) ?? ""),
+      compensationType: sameValue(rows, (row) => row.compensationType) ?? "PER_MINUTE",
+      compensationAmount: String(sameValue(rows, (row) => row.compensationAmount) ?? ""),
+    });
+    setBatchBonusAmount("");
+    setBatchQualityBonus(String(sameValue(rows, row => row.fiveStarBonusPercent ?? 15) ?? ""));
+    setBatchQualityChanged(false);
+    setBatchUpdateTiming(false);
+    setBatchDeadlineHours(72);
+    setBatchGraceHours(8);
+    setBatchTimingStart(Date.now());
+    setBatchSuccess(null);
+    setBatchAssignment("KEEP");
+    setBatchContinuityFiles([]);
+    setBatchFindingsPaste(sharedIsTable ? sharedFinding : "");
     setErr(null);
     setBatchEditOpen(true);
   }
@@ -923,45 +1170,142 @@ export function ReviewerWorkboard({
     openBatchEditForRows(selectedRows);
   }
 
+  function removeSelectedCases() {
+    if (selectedCaseIds.length === 0) return;
+    const removableRows = cases.filter(
+      (row) =>
+        selectedCaseIds.includes(row.id) &&
+        row.status === CaseStatus.AVAILABLE &&
+        !row.annotator &&
+        !row.isReference,
+    );
+    if (removableRows.length === 0) {
+      setErr(tk("reviewer_batch_remove_none"));
+      return;
+    }
+    const confirmMessage = tk("reviewer_batch_remove_confirm").replace(
+      "{count}",
+      String(removableRows.length),
+    );
+    if (!window.confirm(confirmMessage)) return;
+
+    setErr(null);
+    start(async () => {
+      const res = await batchDeleteCasesAction(selectedCaseIds);
+      if (!res.ok) {
+        setErr(res.error === "none_removable" ? tk("reviewer_batch_remove_none") : tk("required"));
+        return;
+      }
+      if (detailId && selectedCaseIds.includes(detailId)) closeDetail();
+      clearSelection();
+      refresh();
+    });
+  }
+
+  function setBatchApplyAll(checked: boolean) {
+    setBatchApplyFilters(
+      Object.fromEntries(BATCH_APPLY_GROUPS.map((group) => [group.key, checked])) as Record<
+        BatchApplyGroupKey,
+        boolean
+      >,
+    );
+  }
+
+  function toggleBatchApplyGroup(key: BatchApplyGroupKey, checked: boolean) {
+    setBatchApplyFilters((prev) => ({ ...prev, [key]: checked }));
+  }
+
   function submitBatchEdit() {
-    const minMinutesPerCase = Number(batchMinMinutes);
-    const maxMinutesPerCase = Number(batchMaxMinutes);
-    const compensationAmount = Number(batchCompAmount);
-    const annotatorBonus = Number(batchBonusAmount);
+    if (batchTargetRows.length === 0) {
+      setErr(tk("reviewer_batch_apply_none"));
+      return;
+    }
+    const minMinutesPerCase = Number(batchDetails.minMinutesPerCase);
+    const maxMinutesPerCase = Number(batchDetails.maxMinutesPerCase);
+    const compensationAmount =
+      batchDetails.compensationAmount.trim() === ""
+        ? null
+        : Number(batchDetails.compensationAmount);
+    const annotatorBonus = batchBonusAmount.trim() === "" ? null : Number(batchBonusAmount);
+    const fiveStarBonusPercent = !batchQualityChanged || batchQualityBonus.trim() === "" ? null : Number(batchQualityBonus);
+    if (fiveStarBonusPercent !== null && !isValidFiveStarBonusPercent(fiveStarBonusPercent)) {
+      setErr(createCaseErrorMessage("quality_bonus", lang));
+      return;
+    }
+    const deadline = new Date(batchTimingStart + batchDeadlineHours * 3600000);
+    const expiresAt = new Date(batchTimingStart + (batchDeadlineHours + batchGraceHours) * 3600000);
     if (
       !Number.isFinite(minMinutesPerCase) ||
       !Number.isFinite(maxMinutesPerCase) ||
-      !Number.isFinite(compensationAmount) ||
-      !Number.isFinite(annotatorBonus)
+      (compensationAmount != null && !Number.isFinite(compensationAmount)) ||
+      (annotatorBonus !== null && !Number.isFinite(annotatorBonus)) ||
+      Number.isNaN(deadline.getTime()) ||
+      Number.isNaN(expiresAt.getTime())
     ) {
-      setErr(tk("required"));
+      setErr(createCaseErrorMessage("limits", lang));
+      return;
+    }
+    if (expiresAt <= deadline) {
+      setErr(tk("case_expiry_required"));
       return;
     }
     setErr(null);
     start(async () => {
-      const res = await batchUpdateCasesAction({
-        caseDbIds: selectedCaseIds,
-        redbrickProject: batchRedbrickProject,
-        guideId: batchGuideId,
-        topicIds: batchTopicIds,
-        guideline: batchGuideline,
-        videoGuideUrls: parseVideoGuideUrlsInput(batchVideoGuideUrls),
-        scopeOfWork: batchScopeOfWork,
-        minMinutesPerCase,
-        maxMinutesPerCase,
-        compensationType: batchCompType,
-        compensationAmount,
-        annotatorBonus,
-      });
-      if (!res.ok) {
-        if (res.error === "limits") setErr(tk("case_limits_invalid"));
-        else if (res.error === "scope_words") setErr(tk("scope_word_limit"));
-        else setErr(tk("required"));
-        return;
+      try {
+        const uploadBytes = batchContinuityFiles.reduce((total, file) => total + file.size, 0) + new Blob([JSON.stringify(batchDetails), batchFindingsPaste]).size;
+        if (uploadBytes > 15 * 1024 * 1024) { setErr(createCaseErrorMessage("upload_size", lang)); return; }
+        const continuityReportFormData = new FormData();
+        for (const file of batchContinuityFiles) {
+          continuityReportFormData.append("continuityReports", file);
+        }
+        const findingsParsed = parseRadiologistFindingsTable(batchFindingsPaste);
+        const batchTargetIds = batchTargetRows.map((row) => row.id);
+        const findingsByCaseId = Object.fromEntries(
+          matchFindingsToCaseIds(
+            findingsParsed,
+            batchTargetRows.map((row) => row.caseId),
+          ).matched.map((m) => [m.caseId, m.finding]),
+        );
+        const res = await batchUpdateCasesAction(
+          {
+            caseDbIds: batchTargetIds,
+            project: batchDetails.project,
+            redbrickProject: batchDetails.redbrickProject,
+            guideId: batchDetails.guideId,
+            topicIds: batchDetails.topicIds,
+            guideline: batchDetails.guideline,
+            radiologistFinding: batchDetails.radiologistFinding,
+            findingsByCaseId,
+            videoGuideUrls: parseVideoGuideUrlsInput(batchDetails.videoGuideUrls),
+            scopeOfWork: batchDetails.scopeOfWork,
+            minMinutesPerCase,
+            maxMinutesPerCase,
+            compensationType: batchDetails.compensationType,
+            compensationAmount,
+            annotatorBonus,
+            fiveStarBonusPercent,
+            deadline: batchUpdateTiming ? deadline.toISOString() : null,
+            expiresAt: batchUpdateTiming ? expiresAt.toISOString() : null,
+            assignment: batchAssignment,
+          },
+          continuityReportFormData,
+        );
+        if (!res.ok) {
+          const message = res.error === "assignment_state" ? tk("reviewer_assign_taken")
+            : res.error === "invalid_annotator" ? tk("reviewer_assign_invalid")
+            : res.error === "no_cases" ? tk("reviewer_batch_apply_none")
+            : res.error === "server" ? (lang === "vi" ? "Máy chủ không thể hoàn tất cập nhật. Kiểm tra danh sách trước khi thử lại; một số thay đổi có thể đã lưu." : "The server could not finish updating cases. Check the case list before retrying; some changes may already be saved.")
+            : createCaseErrorMessage(res.error, lang);
+          setErr(message + ("referenceId" in res && res.referenceId ? ` (${res.referenceId})` : ""));
+          return;
+        }
+        setBatchSuccess(`${lang === "vi" ? "Đã cập nhật" : "Updated"} ${res.updated} ${lang === "vi" ? "ca" : "cases"}. ${lang === "vi" ? "Báo cáo đính kèm" : "Reports attached"}: ${res.continuityReportsAttached}.${res.continuityReportsUnmatched.length ? ` ${tk("case_continuity_report_preview_unmatched")}: ${res.continuityReportsUnmatched.join(", ")}` : ""}`);
+        setBatchEditOpen(false);
+        clearSelection();
+        refresh();
+      } catch {
+        setErr(lang === "vi" ? "Không thể hoàn tất cập nhật. Kiểm tra danh sách ca trước khi thử lại; một số thay đổi có thể đã lưu. Nội dung nhập vẫn được giữ." : "Could not finish updating cases. Check the case list before retrying; some changes may already be saved. Your entries are still here.");
       }
-      setBatchEditOpen(false);
-      clearSelection();
-      refresh();
     });
   }
 
@@ -1130,10 +1474,11 @@ export function ReviewerWorkboard({
                   auditCase.compensationAmount,
                   auditCase.minMinutesPerCase,
                   auditCase.maxMinutesPerCase,
+                  caseRushPercent(auditCase),
                 ),
                 {
-                  wasResubmitted:
-                    auditCase.wasResubmitted || caseWasResubmitted(auditCase.reviews),
+                  wasResubmitted: auditCase.wasResubmitted,
+                  fiveStarBonusPercent: auditCase.fiveStarBonusPercent,
                 },
               )
             : 0
@@ -1150,7 +1495,7 @@ export function ReviewerWorkboard({
         comment: text,
         screenshotData: auditMarkedImage ?? auditRawImage,
         qualityRating: auditQualityRating,
-        annotatorBonus: bonus,
+        annotatorBonus: auditBonusOverridden ? bonus : undefined,
       });
       if (!res.ok) {
         setErr(
@@ -1192,12 +1537,24 @@ export function ReviewerWorkboard({
   }
 
   function renderCaseTable(rows: SerializedReviewerCase[], searchHitIds: Set<string> | null) {
+    const selection = tableSelectionState(rows);
     return (
       <div className="overflow-x-auto px-1 pb-1">
         <table className="w-full min-w-[1120px] border-collapse text-left text-xs">
           <thead>
             <tr className="border-b border-[var(--border)] text-[var(--text)]">
-              <th className="py-1.5 pr-2 font-medium">{tk("reviewer_batch_select")}</th>
+              <th className="py-1.5 pr-2 font-medium">
+                <input
+                  type="checkbox"
+                  checked={selection.all}
+                  ref={(el) => {
+                    if (el) el.indeterminate = selection.indeterminate;
+                  }}
+                  onChange={(e) => toggleSelectAllInTable(rows, e.target.checked)}
+                  aria-label={tk("reviewer_batch_select_all")}
+                  title={tk("reviewer_batch_select_all")}
+                />
+              </th>
               <th className="py-1.5 pr-2 font-medium">{tk("col_case_id")}</th>
               <th className="py-1.5 pr-2 font-medium">{tk("case_scope")}</th>
               <th className="py-1.5 pr-2 font-medium">{tk("case_annotator")}</th>
@@ -1298,6 +1655,18 @@ export function ReviewerWorkboard({
                         {tk("reviewer_delete_case")}
                       </button>
                     )}
+                    {(c.status === CaseStatus.AVAILABLE ||
+                      c.status === CaseStatus.ASSIGNED ||
+                      c.status === CaseStatus.REJECTED) &&
+                      !c.isReference && (
+                      <button
+                        type="button"
+                        className="rounded border border-[var(--muted)]/50 bg-[var(--bg)] px-1.5 py-0.5 text-[var(--muted)] hover:border-[var(--text)] hover:text-[var(--text)]"
+                        onClick={() => adminCompleteCase(c.id)}
+                      >
+                        {tk("reviewer_admin_complete")}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="rounded border border-[var(--border)] bg-[var(--bg)] px-1.5 py-0.5 text-[var(--text)] hover:border-[var(--accent)]"
@@ -1316,6 +1685,7 @@ export function ReviewerWorkboard({
                           className="rounded border border-[var(--success)]/50 bg-[var(--success)]/15 px-1.5 py-0.5 text-[var(--success)] hover:bg-[var(--success)]/25"
                           onClick={() => {
                             setErr(null);
+                            setAuditBonusOverridden(false);
                             setAudit({ caseId: c.id, decision: "ACCEPT" });
                             resetAuditComposer();
                           }}
@@ -1327,6 +1697,7 @@ export function ReviewerWorkboard({
                           className="rounded border border-[var(--danger)]/50 bg-[var(--danger)]/15 px-1.5 py-0.5 text-[var(--danger)] hover:bg-[var(--danger)]/25"
                           onClick={() => {
                             setErr(null);
+                            setAuditBonusOverridden(false);
                             setAudit({ caseId: c.id, decision: "REJECT" });
                             resetAuditComposer();
                           }}
@@ -1449,8 +1820,14 @@ export function ReviewerWorkboard({
         />
         <span>{tk("annotator_show_inactive_projects")}</span>
       </label>
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm">
-        <span className="text-[var(--muted)]">
+      <div
+        className={`flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+          selectedCaseIds.length > 0
+            ? "border-[var(--accent)]/40 bg-[var(--accent)]/10"
+            : "border-[var(--border)] bg-[var(--surface)]"
+        }`}
+      >
+        <span className={selectedCaseIds.length > 0 ? "font-medium text-[var(--text)]" : "text-[var(--muted)]"}>
           {tk("reviewer_batch_selected")}: {selectedCaseIds.length}
         </span>
         <button
@@ -1459,7 +1836,15 @@ export function ReviewerWorkboard({
           onClick={openBatchEdit}
           className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-white disabled:opacity-50"
         >
-          {tk("reviewer_batch_edit")}
+          {tk("reviewer_batch_edit_details")}
+        </button>
+        <button
+          type="button"
+          disabled={selectedCaseIds.length === 0}
+          onClick={removeSelectedCases}
+          className="rounded-md border border-[var(--danger)]/50 bg-[var(--danger)]/15 px-3 py-1.5 text-[var(--danger)] disabled:opacity-50"
+        >
+          {tk("reviewer_batch_remove")}
         </button>
         <button
           type="button"
@@ -1506,174 +1891,288 @@ export function ReviewerWorkboard({
         </div>
       )}
 
+      {batchSuccess && <p role="status" className="rounded-md border border-[var(--success)] bg-[var(--surface)] p-3 text-sm">{batchSuccess}</p>}
       {batchEditOpen && (
         <div
           className="fixed inset-0 z-[62] flex items-center justify-center bg-black/50 p-4"
           role="presentation"
-          onClick={() => setBatchEditOpen(false)}
+          onClick={() => { if (!pending) setBatchEditOpen(false); }}
         >
-          <div
-            className="w-full max-w-2xl rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl"
+          <form
+            role="dialog" aria-modal="true" aria-labelledby="batch-edit-heading" aria-busy={pending}
+            onSubmit={event => { event.preventDefault(); submitBatchEdit(); }}
+            onInvalidCapture={event => { const input = event.target as HTMLInputElement; setErr(`${input.labels?.[0]?.textContent?.trim() || input.name}: ${input.validationMessage}`); }}
+            className="max-h-[calc(100vh-2rem)] w-full max-w-4xl overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="mb-1 font-medium">{tk("reviewer_batch_edit")}</h3>
+            <h3 id="batch-edit-heading" className="mb-1 text-lg font-medium">{tk("reviewer_batch_edit_details")}</h3>
             <p className="mb-3 text-xs text-[var(--muted)]">
-              {tk("reviewer_batch_selected")}: {selectedCaseIds.length}
+              {tk("reviewer_batch_apply_will_update")}: {batchTargetRows.length} / {batchEditPool.length}
             </p>
+            {err && <div ref={batchErrorRef} tabIndex={-1} role="alert" className="mb-3 rounded-md border border-[var(--danger)] bg-[var(--bg)] p-4 text-sm">
+              <p className="font-semibold text-[var(--danger)]">{lang === "vi" ? "Chưa thể cập nhật ca" : "We couldn’t update your cases"}</p>
+              <p className="mt-1">{err}</p>
+            </div>}
+            <p className="mb-3 text-xs text-[var(--muted)]">{lang === "vi" ? "Giá trị chung được điền sẵn. Các trường khác nhau có thể trống; nội dung gửi sẽ thay thế trên tất cả ca đã chọn. Tỷ lệ 5★, lịch và khoản điều chỉnh đã duyệt được giữ trừ khi bạn sửa." : "Shared values are prefilled. Fields that differ may be blank; submitted details replace them on every selected case. Existing 5★ rates, schedules, and saved review adjustments stay as they are unless you change them."}</p>
+            <fieldset disabled={pending}>
+            <div className="mb-3 rounded-md border border-[var(--border)] bg-[var(--bg)] p-3">
+              <p className="text-sm font-medium text-[var(--text)]">{tk("reviewer_batch_apply_to")}</p>
+              <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("reviewer_batch_apply_to_hint")}</p>
+              <div className="mt-2 space-y-1.5">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={batchApplyAllChecked}
+                    ref={(el) => {
+                      if (el) el.indeterminate = batchApplyIndeterminate;
+                    }}
+                    onChange={(e) => setBatchApplyAll(e.target.checked)}
+                    className="h-4 w-4 rounded border-[var(--border)] bg-[var(--surface)]"
+                  />
+                  <span>
+                    {tk("reviewer_batch_apply_all")} ({batchEditPool.length})
+                  </span>
+                </label>
+                <div className="ml-6 space-y-1.5 border-l border-[var(--border)] pl-3">
+                  {BATCH_APPLY_GROUPS.map((group) => (
+                    <label key={group.key} className="flex items-center gap-2 text-sm text-[var(--muted)]">
+                      <input
+                        type="checkbox"
+                        checked={batchApplyFilters[group.key]}
+                        disabled={batchApplyCounts[group.key] === 0}
+                        onChange={(e) => toggleBatchApplyGroup(group.key, e.target.checked)}
+                        className="h-4 w-4 rounded border-[var(--border)] bg-[var(--surface)] disabled:opacity-40"
+                      />
+                      <span>
+                        {tk(group.labelKey)} ({batchApplyCounts[group.key]})
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
             <div className="grid gap-3 md:grid-cols-2">
-              <label className="md:col-span-2 text-sm">
-                <span className="text-[var(--muted)]">{tk("case_redbrick")}</span>
+              <div className="md:col-span-2">
+                <span className="text-sm text-[var(--muted)]">{tk("case_ids_batch")}</span>
+                <div className="mt-1 max-h-24 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono text-xs">
+                  {batchTargetRows.length > 0
+                    ? batchTargetRows.map((row) => row.caseId).join(", ")
+                    : tk("reviewer_batch_apply_none")}
+                </div>
+              </div>
+              <div className="md:col-span-2">
+                <label
+                  htmlFor="batch-case-continuity-reports"
+                  className="text-sm text-[var(--muted)]"
+                >
+                  {tk("case_continuity_report_upload")}
+                </label>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">
+                  {tk("case_continuity_report_upload_hint")}
+                </p>
                 <input
-                  value={batchRedbrickProject}
-                  onChange={(e) => setBatchRedbrickProject(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
+                  id="batch-case-continuity-reports"
+                  type="file"
+                  multiple
+                  accept=".html,text/html"
+                  className="mt-2 block w-full text-sm"
+                  onChange={(e) =>
+                    setBatchContinuityFiles(Array.from(e.target.files ?? []))
+                  }
+                  {...({
+                    webkitdirectory: "",
+                    directory: "",
+                  } as InputHTMLAttributes<HTMLInputElement>)}
                 />
+                {(batchContinuityPreview.matched.length > 0 ||
+                  batchContinuityPreview.unmatched.length > 0) && (
+                  <div className="mt-2 rounded-md border border-[var(--border)] bg-[var(--bg)] p-3 text-xs">
+                    {batchContinuityPreview.matched.length > 0 && (
+                      <p>
+                        <span className="font-medium">
+                          {tk("case_continuity_report_preview_matched")}:
+                        </span>{" "}
+                        {batchContinuityPreview.matched
+                          .map((row) => `${row.caseId} ← ${row.filename}`)
+                          .join(", ")}
+                      </p>
+                    )}
+                    {batchContinuityPreview.unmatched.length > 0 && (
+                      <p className="mt-1 text-[var(--warn)]">
+                        {tk("case_continuity_report_preview_unmatched")}:{" "}
+                        {batchContinuityPreview.unmatched.join(", ")}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="md:col-span-2">
+                <label htmlFor="batch-case-rad-findings" className="text-sm text-[var(--muted)]">
+                  {tk("case_radiologist_findings_paste")}
+                </label>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">
+                  {tk("case_radiologist_findings_paste_hint")}
+                </p>
+                <textarea
+                  id="batch-case-rad-findings"
+                  rows={6}
+                  value={batchFindingsPaste}
+                  onChange={(e) => setBatchFindingsPaste(e.target.value)}
+                  placeholder={"study_id\tfinal_impressions\nasi-708cbd32-…\tThere is an indeterminate…"}
+                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono text-sm"
+                />
+                {(batchFindingsPreview.matched.length > 0 ||
+                  batchFindingsPreview.unmatchedStudyIds.length > 0 ||
+                  (batchTargetRows.length > 0 && batchFindingsPaste.trim() !== "")) && (
+                  <div className="mt-2 space-y-2 rounded-md border border-[var(--border)] bg-[var(--bg)] p-3 text-xs">
+                    {batchFindingsPreview.matched.length > 0 && (
+                      <div>
+                        <p className="font-medium text-[var(--text)]">
+                          {tk("case_radiologist_findings_preview_matched")} (
+                          {batchFindingsPreview.matched.length})
+                        </p>
+                        <ul className="mt-1 list-disc pl-4 text-[var(--muted)]">
+                          {batchFindingsPreview.matched.slice(0, 12).map((row) => (
+                            <li key={row.caseId}>
+                              <span className="font-mono text-[var(--text)]">{row.caseId}</span>
+                              <span className="text-[var(--muted)]">
+                                {" "}
+                                ←{" "}
+                                {row.finding.length > 80
+                                  ? `${row.finding.slice(0, 80)}…`
+                                  : row.finding}
+                              </span>
+                            </li>
+                          ))}
+                          {batchFindingsPreview.matched.length > 12 ? (
+                            <li>+{batchFindingsPreview.matched.length - 12} more</li>
+                          ) : null}
+                        </ul>
+                      </div>
+                    )}
+                    {batchFindingsPreview.unmatchedStudyIds.length > 0 && (
+                      <div>
+                        <p className="font-medium text-[var(--warn)]">
+                          {tk("case_radiologist_findings_preview_unmatched_ids")}
+                        </p>
+                        <p className="mt-1 text-[var(--muted)]">
+                          {batchFindingsPreview.unmatchedStudyIds.slice(0, 8).join(", ")}
+                          {batchFindingsPreview.unmatchedStudyIds.length > 8
+                            ? ` (+${batchFindingsPreview.unmatchedStudyIds.length - 8})`
+                            : ""}
+                        </p>
+                      </div>
+                    )}
+                    {batchFindingsPaste.trim() !== "" &&
+                      batchFindingsPreview.unmatchedCaseIds.length > 0 && (
+                        <div>
+                          <p className="font-medium text-[var(--muted)]">
+                            {tk("case_radiologist_findings_preview_missing_cases")}
+                          </p>
+                          <p className="mt-1 text-[var(--muted)]">
+                            {batchFindingsPreview.unmatchedCaseIds.slice(0, 8).join(", ")}
+                            {batchFindingsPreview.unmatchedCaseIds.length > 8
+                              ? ` (+${batchFindingsPreview.unmatchedCaseIds.length - 8})`
+                              : ""}
+                          </p>
+                        </div>
+                      )}
+                  </div>
+                )}
+              </div>
+              <CaseDetailsFields
+                lang={lang}
+                idPrefix="batch-case"
+                value={batchDetails}
+                onChange={(patch) => {
+                  if (
+                    typeof patch.radiologistFinding === "string" &&
+                    looksLikeRadiologistFindingsTable(patch.radiologistFinding)
+                  ) {
+                    setBatchFindingsPaste(patch.radiologistFinding);
+                    setBatchDetails((prev) => ({
+                      ...prev,
+                      ...patch,
+                      radiologistFinding: "",
+                    }));
+                    return;
+                  }
+                  setBatchDetails((prev) => ({ ...prev, ...patch }));
+                }}
+                guides={guides}
+                topics={topics}
+                scopeOptions={scopeOptions}
+                projectOptions={projectOptions}
+                rbProjectOptions={rbProjectOptions}
+                required
+                showBaseRatePlaceholder
+                baseRateHint={tk("case_base_rate_hint")}
+              />
+              <CaseQualityBonusField
+                lang={lang} idPrefix="batch-case" value={batchQualityBonus} required={false}
+                placeholder={lang === "vi" ? "Giữ từng ca" : "Keep each case"}
+                onChange={value => { setBatchQualityBonus(value); setBatchQualityChanged(true); }}
+                hint={lang === "vi" ? "Tỷ lệ 5★ tính trên thù lao tối thiểu (gồm khẩn cấp, không gồm thêm giờ). Nhập tỷ lệ để áp dụng cho các ca đã chọn; 0% tắt thưởng. Để trống hoặc không sửa để giữ tỷ lệ riêng của từng ca. Không thay đổi khoản tiền đã duyệt." : "5★ percentage of minimum case pay (including urgency, excluding extra time). Enter a percentage to apply to selected cases; 0% disables the bonus. Leave blank or unchanged to preserve each case’s percentage. Already approved amounts are unaffected."}
+              />
+              <label className="md:col-span-2 flex items-start gap-2 text-sm">
+                <input type="checkbox" checked={batchUpdateTiming} onChange={event => { setBatchUpdateTiming(event.target.checked); setBatchTimingStart(Date.now()); }} />
+                <span>{lang === "vi" ? "Đặt lại hạn chót và thời gian hết hạn" : "Set new deadlines and expiry times"}<span className="mt-1 block text-xs text-[var(--muted)]">{lang === "vi" ? "Bỏ chọn để giữ lịch hiện tại của từng ca." : "Leave unchecked to keep each case’s current schedule."}</span></span>
               </label>
-              <label className="text-sm">
-                <span className="text-[var(--muted)]">{tk("case_guide")}</span>
+              {batchUpdateTiming && <CaseTimingFields
+                lang={lang} deadlineHours={batchDeadlineHours} expiryGraceHours={batchGraceHours}
+                setDeadlineHours={value => { setBatchDeadlineHours(value); setBatchTimingStart(Date.now()); }}
+                setExpiryGraceHours={value => { setBatchGraceHours(value); setBatchTimingStart(Date.now()); }}
+                baseRate={batchDetails.compensationAmount} previewStart={batchTimingStart}
+                urgencyHint={(() => {
+                  const rates = batchTargetRows.map(row => rushPercentFromHours((batchTimingStart + batchDeadlineHours * 3600000 - new Date(row.createdAt).getTime()) / 3600000));
+                  const low = rates.length ? Math.min(...rates) : 0;
+                  const high = rates.length ? Math.max(...rates) : 0;
+                  return `${lang === "vi" ? "Khẩn cấp theo ngày tạo gốc" : "Urgency from original issue date"}: ${low === high ? low : `${low}–${high}`}% (${lang === "vi" ? "nếu đủ điều kiện" : "if eligible"})`;
+                })()}
+              />}
+              <details className="md:col-span-2 rounded-md border border-[var(--border)] p-3">
+                <summary className="cursor-pointer text-sm">{lang === "vi" ? "Nâng cao: thay khoản điều chỉnh đã lưu" : "Advanced: replace saved review adjustment"}</summary>
+                <label className="mt-2 block text-sm">
+                  <span>{tk("case_annotatorBonus")}</span>
+                  <input name="annotatorBonus" type="number" step="0.01" value={batchBonusAmount} onChange={event => setBatchBonusAmount(event.target.value)} placeholder={lang === "vi" ? "Giữ nguyên" : "Keep existing"} className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2" />
+                  <span className="mt-1 block text-xs text-[var(--muted)]">{lang === "vi" ? "Đây là số tiền, không phải tỷ lệ 5★. Nhập giá trị sẽ thay khoản thưởng/trừ đã lưu, kể cả ca đã duyệt. Để trống để giữ nguyên." : "This is a monetary amount, not the 5★ percentage. Entering a value replaces saved bonuses or deductions, including approved payouts. Leave blank to keep them."}</span>
+                </label>
+              </details>
+              <label className="md:col-span-2">
+                <span className="text-sm text-[var(--muted)]">{tk("assign_email")}</span>
                 <select
-                  value={batchGuideId}
-                  onChange={(e) => setBatchGuideId(e.target.value)}
+                  value={batchAssignment}
+                  onChange={(e) => setBatchAssignment(e.target.value)}
                   className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
                 >
-                  <option value="">—</option>
-                  {guides.map((guide) => (
-                    <option key={guide.id} value={guide.id}>
-                      {guide.title}
+                  <option value="KEEP">{tk("reviewer_batch_keep_assignment")}</option>
+                  <option value="UNASSIGN">— {tk("unassigned")} —</option>
+                  {annotators.map((annotator) => (
+                    <option key={annotator.id} value={annotator.id}>
+                      {annotator.name} ({annotator.email})
                     </option>
                   ))}
                 </select>
               </label>
-              <label className="md:col-span-2 text-sm">
-                <span className="text-[var(--muted)]">{tk("case_topic")}</span>
-                <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("case_topic_multi_hint")}</p>
-                <div className="mt-2 max-h-40 space-y-2 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--bg)] p-2">
-                  {topics.map((topic) => (
-                    <label key={topic.id} className="flex cursor-pointer items-start gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        className="mt-1"
-                        checked={batchTopicIds.includes(topic.id)}
-                        onChange={() =>
-                          setBatchTopicIds((prev) =>
-                            prev.includes(topic.id)
-                              ? prev.filter((id) => id !== topic.id)
-                              : [...prev, topic.id],
-                          )
-                        }
-                      />
-                      <span>{topic.name}</span>
-                    </label>
-                  ))}
-                </div>
-              </label>
-              <label className="md:col-span-2 text-sm">
-                <span className="text-[var(--muted)]">{tk("case_guideline")}</span>
-                <textarea
-                  rows={3}
-                  value={batchGuideline}
-                  onChange={(e) => setBatchGuideline(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
-                />
-              </label>
-              <label className="md:col-span-2 text-sm">
-                <span className="text-[var(--muted)]">{tk("case_videos")}</span>
-                <textarea
-                  rows={3}
-                  value={batchVideoGuideUrls}
-                  onChange={(e) => setBatchVideoGuideUrls(e.target.value)}
-                  placeholder="https://..."
-                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono text-sm"
-                />
-                <p className="mt-1 text-xs text-[var(--muted)]">{tk("case_video_guides_hint")}</p>
-              </label>
-              <label className="md:col-span-2 text-sm">
-                <span className="text-[var(--muted)]">{tk("case_scope")}</span>
-                <input
-                  list="scope-options-batch"
-                  value={batchScopeOfWork}
-                  onChange={(e) => setBatchScopeOfWork(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
-                />
-                <datalist id="scope-options-batch">
-                  {scopeOptions.map((scope) => (
-                    <option key={scope} value={scope} />
-                  ))}
-                </datalist>
-              </label>
-              <label className="text-sm">
-                <span className="text-[var(--muted)]">{tk("case_minMinutes_recommended")}</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={batchMinMinutes}
-                  onChange={(e) => setBatchMinMinutes(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
-                />
-              </label>
-              <label className="text-sm">
-                <span className="text-[var(--muted)]">{tk("case_maxMinutes")}</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={batchMaxMinutes}
-                  onChange={(e) => setBatchMaxMinutes(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
-                />
-              </label>
-              <label className="text-sm">
-                <span className="text-[var(--muted)]">{tk("case_compType")}</span>
-                <select
-                  value={batchCompType}
-                  onChange={(e) => setBatchCompType(e.target.value as CompensationType)}
-                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
-                >
-                  <option value={CompensationType.PER_CASE}>{tk("comp_per_case")}</option>
-                  <option value={CompensationType.PER_MINUTE}>{tk("comp_per_minute")}</option>
-                </select>
-              </label>
-              <label className="text-sm">
-                <span className="text-[var(--muted)]">{tk("case_compAmount")}</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={batchCompAmount}
-                  onChange={(e) => setBatchCompAmount(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
-                />
-              </label>
-              <label className="text-sm">
-                <span className="text-[var(--muted)]">{tk("case_annotatorBonus")}</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={batchBonusAmount}
-                  onChange={(e) => setBatchBonusAmount(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
-                />
-              </label>
             </div>
-            {err && <p className="mt-2 text-sm text-[var(--danger)]">{err}</p>}
+            </fieldset>
             <div className="mt-3 flex justify-end gap-2">
               <button
                 type="button"
                 className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm"
-                onClick={() => setBatchEditOpen(false)}
+                onClick={() => { if (!pending) setBatchEditOpen(false); }}
               >
                 {tk("drawer_close")}
               </button>
               <button
-                type="button"
-                disabled={pending}
+                type="submit"
+                disabled={pending || batchTargetRows.length === 0}
                 className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50"
-                onClick={submitBatchEdit}
               >
-                {tk("reviewer_batch_apply")}
+                {pending ? (lang === "vi" ? "Đang cập nhật…" : "Updating cases…") : `${tk("reviewer_batch_apply")} (${batchTargetRows.length})`}
               </button>
             </div>
-          </div>
+          </form>
         </div>
       )}
 
@@ -1725,9 +2224,20 @@ export function ReviewerWorkboard({
                   guides={guides}
                   topics={topics}
                   scopeOptions={scopeOptions}
+                  projectOptions={projectOptions}
+                  rbProjectOptions={rbProjectOptions}
                   mentionOptions={detailMentionOptions}
                   referenceCases={detailReferenceCases}
-                  scopeOfWorkTemplate={templateByScope.get(detailCase.scopeOfWork.trim()) ?? null}
+                  scopeOfWorkTemplate={templateByScope.get(detailCase.scopeOfWork.trim())?.template ?? null}
+                  commentChoiceMode={
+                    templateByScope.get(detailCase.scopeOfWork.trim())?.commentChoiceMode ?? "FREE"
+                  }
+                  commentChoicesText={
+                    templateByScope.get(detailCase.scopeOfWork.trim())?.commentChoices ?? ""
+                  }
+                  commentFieldConfigs={
+                    templateByScope.get(detailCase.scopeOfWork.trim())?.commentFieldConfigs ?? "[]"
+                  }
                   onDeleted={closeDetail}
                 />
               )}
@@ -1864,15 +2374,12 @@ export function ReviewerWorkboard({
                     <p className="text-sm text-[var(--muted)]">{tk("reviewer_perf_no_cases")}</p>
                   ) : (
                     <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
-                      <table className="w-full min-w-[1040px] text-left text-sm">
+                      <table className="w-full min-w-[880px] text-left text-sm">
                         <thead className="border-b border-[var(--border)] bg-[var(--bg)] text-[var(--muted)]">
                           <tr>
                             <th className="px-3 py-2 font-medium">{tk("reviewer_perf_annotator")}</th>
                             <th className="px-3 py-2 font-medium">{tk("reviewer_perf_projects")}</th>
                             <th className="px-3 py-2 font-medium">{tk("reviewer_perf_total")}</th>
-                            <th className="px-3 py-2 font-medium">{tk("availability_24h")}</th>
-                            <th className="px-3 py-2 font-medium">{tk("availability_72h")}</th>
-                            <th className="px-3 py-2 font-medium">{tk("availability_7d")}</th>
                             <th className="px-3 py-2 font-medium">{tk("reviewer_perf_avg_time")}</th>
                             <th className="px-3 py-2 font-medium">{tk("dash_avg_difficulty")}</th>
                             <th className="px-3 py-2 font-medium">{tk("dash_avg_quality")}</th>
@@ -1899,25 +2406,6 @@ export function ReviewerWorkboard({
                                 {annotator.projects.length}
                               </td>
                               <td className="px-3 py-2 tabular-nums">{annotator.stats.totalCases}</td>
-                              {[("24h" as const), ("72h" as const), ("7d" as const)].map((key) => {
-                                const window = getCapacityWindow(annotator, key);
-                                return (
-                                  <td key={key} className="px-3 py-2">
-                                    <div className="font-medium tabular-nums text-[var(--text)]">
-                                      {window.availableHours.toFixed(1)}h
-                                    </div>
-                                    <div
-                                      className={`text-xs tabular-nums ${
-                                        window.remainingHours < 0
-                                          ? "text-[var(--danger)]"
-                                          : "text-[var(--muted)]"
-                                      }`}
-                                    >
-                                      {window.remainingHours.toFixed(1)}h {tk("availability_left")}
-                                    </div>
-                                  </td>
-                                );
-                              })}
                               <td className="px-3 py-2 tabular-nums text-[var(--muted)]">
                                 {formatMinutes(lang, annotator.stats.averageTime)}
                               </td>
@@ -1968,28 +2456,6 @@ export function ReviewerWorkboard({
                           {formatMinutes(lang, selectedAnnotator.stats.averageTime)} {tk("reviewer_perf_avg_time")}
                         </span>
                       </div>
-                    </div>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                      {[("24h" as const), ("72h" as const), ("7d" as const)].map((key) => {
-                        const window = getCapacityWindow(selectedAnnotator, key);
-                        return (
-                          <div key={key} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
-                            <p className="text-xs text-[var(--muted)]">
-                              {tk(`availability_${key}` as DictKey)}
-                            </p>
-                            <p className="mt-1 text-2xl font-semibold tabular-nums">
-                              {window.availableHours.toFixed(1)}h
-                            </p>
-                            <p
-                              className={`mt-1 text-xs tabular-nums ${
-                                window.remainingHours < 0 ? "text-[var(--danger)]" : "text-[var(--muted)]"
-                              }`}
-                            >
-                              {window.remainingHours.toFixed(1)}h {tk("availability_left")}
-                            </p>
-                          </div>
-                        );
-                      })}
                     </div>
                     <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                       <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
@@ -2153,6 +2619,8 @@ export function ReviewerWorkboard({
                                                   maxMinutesPerCase: c.maxMinutesPerCase,
                                                   annotatorBonus: c.bonusCompensation,
                                                   wasResubmitted: c.wasResubmitted,
+                                                  rushPercent: c.rushPercent,
+                                                  rushForfeitReason: c.rushForfeitReason,
                                                 };
                                                 return (
                                                   <tr
@@ -2392,6 +2860,18 @@ export function ReviewerWorkboard({
                                                     {tk("reviewer_delete_case")}
                                                   </button>
                                                 )}
+                                                {(c.status === CaseStatus.AVAILABLE ||
+                                                  c.status === CaseStatus.ASSIGNED ||
+                                                  c.status === CaseStatus.REJECTED) &&
+                                                  !c.isReference && (
+                                                  <button
+                                                    type="button"
+                                                    className="rounded border border-[var(--muted)]/50 bg-[var(--bg)] px-1.5 py-0.5 text-[var(--muted)] hover:border-[var(--text)] hover:text-[var(--text)]"
+                                                    onClick={() => adminCompleteCase(c.id)}
+                                                  >
+                                                    {tk("reviewer_admin_complete")}
+                                                  </button>
+                                                )}
                                                 {c.status === CaseStatus.SUBMITTED && (
                                                   <>
                                                     <button
@@ -2399,6 +2879,7 @@ export function ReviewerWorkboard({
                                                       className="rounded border border-[var(--success)]/50 bg-[var(--success)]/15 px-1.5 py-0.5 text-[var(--success)] hover:bg-[var(--success)]/25"
                                                       onClick={() => {
                                                         setErr(null);
+                                                        setAuditBonusOverridden(false);
                                                         setAudit({ caseId: c.id, decision: "ACCEPT" });
                                                         resetAuditComposer();
                                                       }}
@@ -2410,6 +2891,7 @@ export function ReviewerWorkboard({
                                                       className="rounded border border-[var(--danger)]/50 bg-[var(--danger)]/15 px-1.5 py-0.5 text-[var(--danger)] hover:bg-[var(--danger)]/25"
                                                       onClick={() => {
                                                         setErr(null);
+                                                        setAuditBonusOverridden(false);
                                                         setAudit({ caseId: c.id, decision: "REJECT" });
                                                         resetAuditComposer();
                                                       }}
@@ -2635,13 +3117,7 @@ export function ReviewerWorkboard({
               {cases.find((x) => x.id === audit.caseId)?.caseId}
             </p>
             {audit.decision === "ACCEPT" &&
-              (() => {
-                const auditCase = cases.find((x) => x.id === audit.caseId);
-                return (
-                  auditCase != null &&
-                  (auditCase.wasResubmitted || caseWasResubmitted(auditCase.reviews))
-                );
-              })() && (
+              cases.find((x) => x.id === audit.caseId)?.wasResubmitted && (
                 <p className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-[var(--text)]">
                   {tk("pay_calc_resubmit_note")}
                 </p>
@@ -2662,6 +3138,7 @@ export function ReviewerWorkboard({
               value={auditQualityRating}
               onChange={(rating) => {
                 setAuditQualityRating(rating);
+                setAuditBonusOverridden(false);
                 if (audit.decision !== "ACCEPT") {
                   setAuditAnnotatorBonus("");
                   return;
@@ -2680,11 +3157,9 @@ export function ReviewerWorkboard({
                         auditCase.compensationAmount,
                         auditCase.minMinutesPerCase,
                         auditCase.maxMinutesPerCase,
+                        caseRushPercent(auditCase),
                       ),
-                      {
-                        wasResubmitted:
-                          auditCase.wasResubmitted || caseWasResubmitted(auditCase.reviews),
-                      },
+                      { wasResubmitted: auditCase.wasResubmitted, fiveStarBonusPercent: auditCase.fiveStarBonusPercent },
                     ),
                   ),
                 );
@@ -2694,12 +3169,12 @@ export function ReviewerWorkboard({
             {audit.decision === "ACCEPT" && auditQualityRating != null && (
               <label className="mb-2 block">
                 <span className="text-sm text-[var(--muted)]">{tk("case_quality_adjustment")}</span>
-                <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("review_quality_adjustment_hint")}</p>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("review_quality_adjustment_hint")} {lang === "vi" ? "Thưởng 5★ của ca" : "Case 5★ bonus"}: {cases.find(c => c.id === audit.caseId)?.fiveStarBonusPercent ?? 15}%.</p>
                 <input
                   type="number"
                   step="0.01"
                   value={auditAnnotatorBonus}
-                  onChange={(e) => setAuditAnnotatorBonus(e.target.value)}
+                  onChange={(e) => { setAuditAnnotatorBonus(e.target.value); setAuditBonusOverridden(e.target.value.trim() !== ""); }}
                   className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-sm"
                 />
               </label>

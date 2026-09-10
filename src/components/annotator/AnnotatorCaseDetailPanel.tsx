@@ -11,15 +11,22 @@ import { CopyTextButton } from "@/components/CopyTextButton";
 import { LoadingProgressBar } from "@/components/LoadingProgressBar";
 import { RichTextContent } from "@/components/RichTextContent";
 import { StarRating } from "@/components/StarRating";
+import { parseCommentChoiceMode, parseCommentChoices } from "@/lib/comment-choices";
 import {
   formatAnnotatorTakeBlockMessage,
   type TakeCaseBlockReason,
 } from "@/lib/annotator-take-case";
 import { CaseCompensationAmountButton } from "@/components/CaseCompensationBreakdown";
 import {
+  AnnotatorCasePayProspectCard,
+  buildAnnotatorCasePayProspect,
+} from "@/components/annotator/AnnotatorCasePayProspect";
+import {
   caseWasResubmitted,
+  caseRushForfeitReason,
   computeCaseBasePay,
   computeCompensation,
+  caseRushPercent,
   optimalMinutes,
   resubmitPenaltyApplies,
 } from "@/lib/compensation";
@@ -35,14 +42,21 @@ import { CaseStatus } from "@prisma/client";
 import { useState } from "react";
 
 export type AnnotatorCaseRow = AnnotationCase & {
+  fiveStarBonusPercent?: number;
   guide: { id: string; title: string } | null;
   topics: SerializedCaseTopic[];
-  reviews?: Pick<Review, "id" | "decision" | "comment" | "createdAt">[];
-  /** `reviews` count is filtered to REJECT decisions (prior rejection / resubmit). */
+  reviews?: Pick<Review, "id" | "decision" | "comment" | "createdAt" | "annotatorId">[];
+  /** `reviews` count is this annotator's prior REJECT decisions (same-annotator resubmit). */
   _count?: { caseNotes: number; reviews: number };
   auditedBy?: { id: string; name: string; email: string } | null;
   /** Optional template to prefill the annotator composer based on `scopeOfWork`. */
   scopeOfWorkTemplate?: string | null;
+  /** When true, each template-row note must include ≥1 image before submit. */
+  scopeOfWorkTemplateRequiresImages?: boolean;
+  commentChoiceMode?: string | null;
+  commentChoices?: string | null;
+  /** JSON per-row comment configs aligned with template lines. */
+  commentFieldConfigs?: string | null;
 };
 
 export type ReferenceCaseLinkRow = Pick<
@@ -88,6 +102,20 @@ export function AnnotatorCaseDetailPanel({
   const last = row.reviews?.[0];
   const showAuditedInfo =
     row.status === CaseStatus.AUDITED || row.status === CaseStatus.ACCEPTED;
+  const isTerminalDone =
+    showAuditedInfo ||
+    row.status === CaseStatus.EXPIRED ||
+    row.status === CaseStatus.ADMIN_COMPLETED;
+  const hadPriorReject =
+    (row._count?.reviews ?? 0) > 0 || caseWasResubmitted(row.reviews, row.annotatorId);
+  const rushPercent = caseRushPercent({
+    ...row,
+    wasRejected: hadPriorReject,
+  });
+  const rushForfeit = caseRushForfeitReason({
+    ...row,
+    wasRejected: hadPriorReject,
+  });
   const earned = computeCompensation(
     row.compensationType,
     row.compensationAmount,
@@ -95,14 +123,26 @@ export function AnnotatorCaseDetailPanel({
     row.maxMinutesPerCase,
     row.minMinutesPerCase,
     row.annotatorBonus,
+    rushPercent,
   );
   const caseBasePay = computeCaseBasePay(
     row.compensationType,
     row.compensationAmount,
     row.minMinutesPerCase,
     row.maxMinutesPerCase,
+    rushPercent,
   );
   const optMinutes = optimalMinutes(row.minMinutesPerCase, row.maxMinutesPerCase);
+  const wasResubmitted = resubmitPenaltyApplies(hadPriorReject, row.auditedAt);
+  const payProspect = buildAnnotatorCasePayProspect({
+    fiveStarBonusPercent: row.fiveStarBonusPercent,
+    compensationType: row.compensationType,
+    compensationAmount: row.compensationAmount,
+    minMinutesPerCase: row.minMinutesPerCase,
+    maxMinutesPerCase: row.maxMinutesPerCase,
+    wasResubmitted,
+    rushPercent,
+  });
   const { html: guideHtml, loading: guideLoading } = useGuideHtml(row.guide?.id);
   const guideGuideline = guideHtml ? htmlToPlainText(guideHtml) : "";
   const showGuideline = !row.guide || row.guideline.trim() !== guideGuideline;
@@ -140,6 +180,9 @@ export function AnnotatorCaseDetailPanel({
         <p className="rounded-md border border-yellow-500/40 bg-yellow-300/20 px-3 py-2 text-sm text-yellow-950">
           {tk("case_reference_help")}
         </p>
+      )}
+      {!row.isReference && !isTerminalDone && (
+        <AnnotatorCasePayProspectCard lang={lang} prospect={payProspect} rushForfeitReason={rushForfeit} />
       )}
       {!row.isReference && row.status === CaseStatus.AVAILABLE && (
         <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3">
@@ -208,6 +251,21 @@ export function AnnotatorCaseDetailPanel({
             </dd>
           </div>
         )}
+        {row.radiologistFinding.trim() !== "" && (
+          <div className="md:col-span-2">
+            <dt className="sr-only">{tk("case_radiologist_finding")}</dt>
+            <dd className="m-0">
+              <details open className="rounded-md border border-[var(--border)] bg-[var(--bg)]">
+                <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-[var(--muted)] hover:bg-[var(--surface)]">
+                  {tk("case_radiologist_finding")}
+                </summary>
+                <div className="border-t border-[var(--border)] px-3 py-2 text-sm whitespace-pre-wrap text-[var(--text)]">
+                  {row.radiologistFinding}
+                </div>
+              </details>
+            </dd>
+          </div>
+        )}
         {row.topics.length > 0 && (
           <div className="md:col-span-2">
             <dt className="text-[var(--muted)]">{tk("case_topic")}</dt>
@@ -269,6 +327,26 @@ export function AnnotatorCaseDetailPanel({
           <dd>{compLabel(lang, row.compensationType, row.compensationAmount)}</dd>
         </div>
         <div>
+          <dt className="text-[var(--muted)]">{tk("case_deadline")}</dt>
+          <dd>{formatDate(lang, row.deadline)}</dd>
+          <dt className="text-[var(--muted)]">{tk("case_expiry")}</dt>
+          <dd>{formatDate(lang, row.expiresAt)}</dd>
+        </div>
+        <div>
+          <dt className="text-[var(--muted)]">{tk("case_rush_bonus")}</dt>
+          <dd>
+            {rushPercent > 0
+              ? tk("case_rush_bonus_value").replace("{percent}", String(rushPercent))
+              : tk("case_rush_none")}
+          </dd>
+          {rushForfeit === "rejected" && (
+            <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("case_rush_forfeit_rejected")}</p>
+          )}
+          {rushForfeit === "late" && (
+            <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("case_rush_forfeit_late")}</p>
+          )}
+        </div>
+        <div>
           <dt className="text-[var(--muted)]">{tk("case_minimum_pay")}</dt>
           <dd className="tabular-nums">{formatCompensationAmount(lang, caseBasePay)}</dd>
         </div>
@@ -313,8 +391,11 @@ export function AnnotatorCaseDetailPanel({
                     minMinutesPerCase: row.minMinutesPerCase,
                     maxMinutesPerCase: row.maxMinutesPerCase,
                     annotatorBonus: row.annotatorBonus,
+                    rushPercent,
+                    rushForfeitReason: rushForfeit,
                     wasResubmitted: resubmitPenaltyApplies(
-                      (row._count?.reviews ?? 0) > 0 || caseWasResubmitted(row.reviews),
+                      (row._count?.reviews ?? 0) > 0 ||
+                        caseWasResubmitted(row.reviews, row.annotatorId),
                       row.auditedAt,
                     ),
                   }}
@@ -367,6 +448,18 @@ export function AnnotatorCaseDetailPanel({
           mentionOptions={mentionOptions}
           composerTemplate={!row.isReference ? row.scopeOfWorkTemplate ?? null : null}
           requireComposerTemplate={true}
+          requireTemplateImages={
+            !row.isReference ? row.scopeOfWorkTemplateRequiresImages === true : false
+          }
+          commentChoiceMode={
+            !row.isReference
+              ? parseCommentChoiceMode(row.commentChoiceMode)
+              : "FREE"
+          }
+          commentChoices={
+            !row.isReference ? parseCommentChoices(row.commentChoices) : []
+          }
+          commentFieldConfigs={!row.isReference ? row.commentFieldConfigs ?? "[]" : "[]"}
         />
       </div>
       <TopicDetailModal lang={lang} topic={topicModal} onClose={() => setTopicModal(null)} />

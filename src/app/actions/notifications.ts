@@ -1,4 +1,6 @@
 "use server";
+import { withActionLog } from "@/lib/logged-action";
+
 
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth";
@@ -50,21 +52,25 @@ export async function getNotifications(): Promise<NotificationGroup[]> {
 }
 
 export async function markCaseNotificationsReadAction(annotationCaseDbId: string) {
-  const user = await requireUser();
-  await prisma.notification.updateMany({
-    where: { userId: user.id, annotationCaseId: annotationCaseDbId, readAt: null },
-    data: { readAt: new Date() },
+  return withActionLog("markCaseNotificationsReadAction", { annotationCaseDbId }, async () => {
+    const user = await requireUser();
+    await prisma.notification.updateMany({
+      where: { userId: user.id, annotationCaseId: annotationCaseDbId, readAt: null },
+      data: { readAt: new Date() },
+    });
+    return { ok: true as const };
   });
-  return { ok: true as const };
 }
 
 export async function markAllNotificationsReadAction() {
-  const user = await requireUser();
-  await prisma.notification.updateMany({
-    where: { userId: user.id, readAt: null },
-    data: { readAt: new Date() },
+  return withActionLog("markAllNotificationsReadAction", {  }, async () => {
+    const user = await requireUser();
+    await prisma.notification.updateMany({
+      where: { userId: user.id, readAt: null },
+      data: { readAt: new Date() },
+    });
+    return { ok: true as const };
   });
-  return { ok: true as const };
 }
 
 export async function getReviewerNotificationRecipients() {

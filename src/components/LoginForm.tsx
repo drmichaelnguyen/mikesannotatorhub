@@ -88,7 +88,6 @@ export function LoginForm({ lang, next }: { lang: Lang; next?: string }) {
       >
         {tk("signIn")}
       </button>
-      <p className="text-xs text-[var(--muted)]">{tk("login_demo_hint")}</p>
     </form>
   );
 }

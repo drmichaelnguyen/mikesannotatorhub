@@ -1,0 +1,3 @@
+-- CaseStatus.ADMIN_COMPLETED is a Prisma enum value stored as TEXT on SQLite.
+-- No ALTER needed; apply schema with `npx prisma db push` (or your usual migrate flow)
+-- then `npx prisma generate`.

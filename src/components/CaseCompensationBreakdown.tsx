@@ -18,6 +18,8 @@ export type CaseCompensationInputs = {
   maxMinutesPerCase: number;
   annotatorBonus: number;
   wasResubmitted?: boolean;
+  rushPercent?: number;
+  rushForfeitReason?: "rejected" | "late" | null;
 };
 
 function formatSignedAmount(lang: Lang, value: number) {
@@ -31,10 +33,12 @@ function BreakdownRows({
   lang,
   breakdown,
   wasResubmitted = false,
+  rushForfeitReason = null,
 }: {
   lang: Lang;
   breakdown: CaseCompensationBreakdown;
   wasResubmitted?: boolean;
+  rushForfeitReason?: "rejected" | "late" | null;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const fmt = (n: number) => formatCompensationAmount(lang, n);
@@ -55,6 +59,33 @@ function BreakdownRows({
         <dt className="text-[var(--muted)]">{tk("case_compAmount")}</dt>
         <dd className="text-right tabular-nums text-[var(--text)]">{rateLabel}</dd>
       </div>
+      <div className="flex justify-between gap-4">
+        <dt className="text-[var(--muted)]">{tk("case_rush_bonus")}</dt>
+        <dd className="text-right tabular-nums text-[var(--text)]">
+          {breakdown.rushPercent > 0
+            ? tk("case_rush_bonus_value").replace("{percent}", String(breakdown.rushPercent))
+            : tk("case_rush_none")}
+        </dd>
+      </div>
+      {rushForfeitReason === "rejected" && (
+        <p className="rounded-md bg-[var(--bg)] px-2 py-1.5 text-xs text-[var(--muted)]">
+          {tk("case_rush_forfeit_rejected")}
+        </p>
+      )}
+      {rushForfeitReason === "late" && (
+        <p className="rounded-md bg-[var(--bg)] px-2 py-1.5 text-xs text-[var(--muted)]">
+          {tk("case_rush_forfeit_late")}
+        </p>
+      )}
+      {breakdown.rushPercent > 0 && (
+        <div className="flex justify-between gap-4">
+          <dt className="text-[var(--muted)]">{tk("case_base_rate")}</dt>
+          <dd className="text-right tabular-nums text-[var(--muted)]">
+            {fmt(breakdown.baseRateOrAmount)}
+            {breakdown.type === "PER_MINUTE" ? ` × ${tk("comp_per_minute")}` : ""}
+          </dd>
+        </div>
+      )}
 
       {breakdown.type === "PER_MINUTE" && (
         <>
@@ -180,6 +211,7 @@ export function CaseCompensationBreakdownModal({
     inputs.maxMinutesPerCase,
     inputs.minMinutesPerCase,
     inputs.annotatorBonus,
+    inputs.rushPercent ?? 0,
   );
 
   useEffect(() => {
@@ -222,6 +254,7 @@ export function CaseCompensationBreakdownModal({
           lang={lang}
           breakdown={breakdown}
           wasResubmitted={inputs.wasResubmitted}
+          rushForfeitReason={inputs.rushForfeitReason}
         />
       </div>
     </div>

@@ -8,7 +8,7 @@ import {
   unassignCaseAction,
   type PendingReviewAckCase,
 } from "@/app/actions/cases";
-import { MentionTextarea } from "@/components/CaseDiscussion";
+import { CommentChoiceInput } from "@/components/CommentChoiceInput";
 import { AnnotatorTakeCaseButton } from "@/components/annotator/AnnotatorTakeCaseButton";
 import {
   AnnotatorCaseDetailPanel,
@@ -27,11 +27,22 @@ import { CopyTextButton } from "@/components/CopyTextButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
 import { createCaseNote, fetchCaseNotes } from "@/lib/case-note-api";
 import { buildTemplateRowNote } from "@/lib/template-row-comment";
+import {
+  expandFieldCommentConfigs,
+  fieldRequiresImage,
+  parseCommentChoiceMode,
+  parseCommentChoices,
+  resolveCommentChoiceForField,
+} from "@/lib/comment-choices";
 import { StarRating } from "@/components/StarRating";
 import { getClipboardImageFiles, readFilesAsDataUrls } from "@/lib/client-image-data";
 import { AnnotatorPayExplainer } from "@/components/annotator/AnnotatorPayExplainer";
+import {
+  AnnotatorCasePayProspectCells,
+  buildAnnotatorCasePayProspect,
+} from "@/components/annotator/AnnotatorCasePayProspect";
 import { CaseCompensationAmountButton } from "@/components/CaseCompensationBreakdown";
-import { caseWasResubmitted, computeCompensation, resubmitPenaltyApplies } from "@/lib/compensation";
+import { caseWasResubmitted, caseRushForfeitReason, caseRushPercent, computeCompensation, resubmitPenaltyApplies } from "@/lib/compensation";
 import { buildMentionOptionsForCase, type GuideOptionLite, type TopicOptionLite } from "@/lib/guide-topic";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -46,20 +57,20 @@ type CaseTree<T> = {
   }[];
 };
 
-function getProjectName(_caseId: string): string {
-  return "BC2";
+function getProjectName(c: Pick<{ project: string }, "project">): string {
+  return (c.project || "").trim() || "—";
 }
 
 function normalizeScopeKey(scope: string): string {
   return scope.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function groupByHierarchy<T extends { redbrickProject: string; scopeOfWork: string; caseId: string }>(
+function groupByHierarchy<T extends { project: string; redbrickProject: string; scopeOfWork: string; caseId: string }>(
   items: T[],
 ): CaseTree<T>[] {
   const projectMap = new Map<string, Map<string, Map<string, T[]>>>();
   for (const c of items) {
-    const project = getProjectName(c.caseId);
+    const project = getProjectName(c);
     const scope = (c.scopeOfWork || "").trim() || "—";
     const rbProject = (c.redbrickProject || "").trim() || "—";
     if (!projectMap.has(project)) projectMap.set(project, new Map());
@@ -96,7 +107,7 @@ function makeAnnotatorTreePath(parts: string[]): string {
 }
 
 function collectAnnotatorExpandPathsForRow(section: AnnotatorTreeSection, row: AnnotatorCaseRow): Set<string> {
-  const project = getProjectName(row.caseId);
+  const project = getProjectName(row);
   const scope = (row.scopeOfWork || "").trim() || "—";
   const rb = (row.redbrickProject || "").trim() || "—";
   const outerKey =
@@ -274,9 +285,13 @@ function AnnotatorSubmitForm({
               ? tk("rating_required")
               : state.error === "template"
                 ? tk("discussion_template_need_fill")
-                : tk("required")}
+                : state.error === "template_images"
+                  ? tk("discussion_template_screenshot_required")
+                  : state.error === "expired"
+                    ? tk("case_expired_action")
+                    : tk("required")}
           </p>
-          {state.error === "template" &&
+          {(state.error === "template" || state.error === "template_images") &&
             "missingTemplateFields" in state &&
             Array.isArray(state.missingTemplateFields) &&
             state.missingTemplateFields.length > 0 && (
@@ -320,6 +335,26 @@ export function AnnotatorWorkboard({
   const [searchInput, setSearchInput] = useState("");
   const searchNeedle = useDebouncedSearchNeedle(searchInput, 300);
   const annotatorBoardRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const now = Date.now();
+    const nextExpiry = [...available, ...mine, ...rejected]
+      .filter(
+        (c) =>
+          c.expiresAt &&
+          (c.status === CaseStatus.AVAILABLE ||
+            c.status === CaseStatus.ASSIGNED ||
+            c.status === CaseStatus.REJECTED),
+      )
+      .map((c) => new Date(c.expiresAt!).getTime())
+      .filter((time) => Number.isFinite(time) && time > now)
+      .sort((a, b) => a - b)[0];
+    if (nextExpiry == null) return;
+    const timer = window.setTimeout(
+      () => router.refresh(),
+      Math.min(nextExpiry - now + 250, 2_147_483_647),
+    );
+    return () => window.clearTimeout(timer);
+  }, [available, mine, rejected, router]);
 
   const { inProgress, completed } = useMemo(() => {
     const activeStatuses = new Set<CaseStatus>([
@@ -327,7 +362,12 @@ export function AnnotatorWorkboard({
       CaseStatus.SUBMITTED,
       CaseStatus.REJECTED,
     ]);
-    const doneStatuses = new Set<CaseStatus>([CaseStatus.ACCEPTED, CaseStatus.AUDITED]);
+    const doneStatuses = new Set<CaseStatus>([
+      CaseStatus.ACCEPTED,
+      CaseStatus.AUDITED,
+      CaseStatus.EXPIRED,
+      CaseStatus.ADMIN_COMPLETED,
+    ]);
     const fromMine = mine.filter((c) => activeStatuses.has(c.status));
     const done = mine.filter((c) => doneStatuses.has(c.status));
     const progress = [...fromMine, ...rejected].sort((a, b) =>
@@ -403,7 +443,10 @@ export function AnnotatorWorkboard({
       map.set(
         project,
         current ||
-          (row.status !== CaseStatus.AUDITED && row.status !== CaseStatus.ACCEPTED),
+          (row.status !== CaseStatus.AUDITED &&
+            row.status !== CaseStatus.ACCEPTED &&
+            row.status !== CaseStatus.EXPIRED &&
+            row.status !== CaseStatus.ADMIN_COMPLETED),
       );
     }
     return map;
@@ -518,6 +561,27 @@ export function AnnotatorWorkboard({
       .sort((a, b) => a.caseId.localeCompare(b.caseId));
   }, [detailRow, reference]);
   const noteCase = noteCaseId ? (allRows.find((c) => c.id === noteCaseId) ?? null) : null;
+  const noteActiveCommentChoice = useMemo(() => {
+    if (!noteCase) return { mode: "FREE" as const, choices: [] as string[] };
+    const fieldConfigs = expandFieldCommentConfigs(
+      noteCase.scopeOfWorkTemplate,
+      noteCase.commentFieldConfigs,
+      noteCase.commentChoiceMode,
+      noteCase.commentChoices,
+      noteCase.scopeOfWorkTemplateRequiresImages === true,
+    );
+    const templateRows = (noteCase.scopeOfWorkTemplate ?? "")
+      .split(/\r?\n/g)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (templateRows.length > 0) {
+      return resolveCommentChoiceForField(noteTemplateSelectedIndex, fieldConfigs);
+    }
+    return {
+      mode: parseCommentChoiceMode(noteCase.commentChoiceMode),
+      choices: parseCommentChoices(noteCase.commentChoices),
+    };
+  }, [noteCase, noteTemplateSelectedIndex]);
   const detailMentionOptions = detailRow
     ? buildMentionOptionsForCase(guides, topics, {
         redbrickProject: detailRow.redbrickProject,
@@ -602,6 +666,24 @@ export function AnnotatorWorkboard({
         .filter(Boolean);
       const rowLabel = templateRows[noteTemplateSelectedIndex];
       if (rowLabel) {
+        if (!baseText) {
+          setErr(tk("discussion_template_need_fill"));
+          return;
+        }
+        const fieldConfigs = expandFieldCommentConfigs(
+          noteCase.scopeOfWorkTemplate,
+          noteCase.commentFieldConfigs,
+          noteCase.commentChoiceMode,
+          noteCase.commentChoices,
+          noteCase.scopeOfWorkTemplateRequiresImages === true,
+        );
+        if (
+          fieldRequiresImage(fieldConfigs[noteTemplateSelectedIndex]) &&
+          noteImages.length === 0
+        ) {
+          setErr(tk("discussion_template_screenshot_required"));
+          return;
+        }
         text = buildTemplateRowNote(noteTemplateSelectedIndex, rowLabel, baseText);
       }
     }
@@ -647,12 +729,22 @@ export function AnnotatorWorkboard({
       if (!alive) return;
       const completed = new Set<number>();
       if (res.ok) {
+        const fieldConfigs = expandFieldCommentConfigs(
+          noteCase.scopeOfWorkTemplate,
+          noteCase.commentFieldConfigs,
+          noteCase.commentChoiceMode,
+          noteCase.commentChoices,
+          noteCase.scopeOfWorkTemplateRequiresImages === true,
+        );
         for (const note of res.notes) {
           const content = (note.content ?? "").trim();
           const match = content.match(TEMPLATE_ROW_MARKER_RE);
           if (!match) continue;
           const idx = Number(match[1]) - 1;
-          if (Number.isInteger(idx) && idx >= 0 && idx < templateRows.length) completed.add(idx);
+          if (!Number.isInteger(idx) || idx < 0 || idx >= templateRows.length) continue;
+          if (!(match[2] ?? "").trim()) continue;
+          if (fieldRequiresImage(fieldConfigs[idx]) && note.images.length === 0) continue;
+          completed.add(idx);
         }
       }
       const options = templateRows
@@ -682,7 +774,7 @@ export function AnnotatorWorkboard({
     return (
       <div className="overflow-x-auto px-1 pb-1">
         <table
-          className={`w-full min-w-[560px] border-collapse text-left text-xs ${
+          className={`w-full min-w-[720px] border-collapse text-left text-xs ${
             isPool ? "text-slate-900" : "text-[var(--text)]"
           }`}
         >
@@ -696,6 +788,22 @@ export function AnnotatorWorkboard({
             >
               <th className="py-1.5 pr-2 font-medium">{tk("col_case_id")}</th>
               <th className="py-1.5 pr-2 font-medium">{tk("col_redbrick")}</th>
+              {(mode === "pool" || mode === "active") && (
+                <>
+                  <th
+                    className="py-1.5 pr-2 font-medium"
+                    title={tk("case_optimal_time_hint")}
+                  >
+                    {tk("col_optimal_time")}
+                  </th>
+                  <th
+                    className="py-1.5 pr-2 font-medium"
+                    title={tk("case_maximum_potential_pay_hint")}
+                  >
+                    {tk("col_max_pay")}
+                  </th>
+                </>
+              )}
               {mode !== "pool" && (
                 <th className="py-1.5 pr-2 font-medium">{tk("case_status")}</th>
               )}
@@ -712,6 +820,24 @@ export function AnnotatorWorkboard({
             {cases.map((c) => {
               const highlightReviewedComment =
                 (mode === "done" || mode === "reference") && (c._count?.caseNotes ?? 0) > 0;
+              const hadPriorReject =
+                (c._count?.reviews ?? 0) > 0 || caseWasResubmitted(c.reviews, c.annotatorId);
+              const rushPercent = caseRushPercent({
+                ...c,
+                wasRejected: hadPriorReject,
+              });
+              const payProspect =
+                mode === "pool" || mode === "active"
+                  ? buildAnnotatorCasePayProspect({
+                      fiveStarBonusPercent: c.fiveStarBonusPercent,
+                      compensationType: c.compensationType,
+                      compensationAmount: c.compensationAmount,
+                      minMinutesPerCase: c.minMinutesPerCase,
+                      maxMinutesPerCase: c.maxMinutesPerCase,
+                      rushPercent,
+                      wasResubmitted: resubmitPenaltyApplies(hadPriorReject, c.auditedAt),
+                    })
+                  : null;
               return (
               <tr
                 key={c.id}
@@ -777,6 +903,9 @@ export function AnnotatorWorkboard({
                     <CopyTextButton lang={lang} value={c.redbrickProject} />
                   </div>
                 </td>
+                {payProspect && (
+                  <AnnotatorCasePayProspectCells lang={lang} prospect={payProspect} isPool={isPool} />
+                )}
                 {mode !== "pool" && (
                   <td className={`py-1.5 pr-2 ${c.status === CaseStatus.REJECTED ? "font-semibold text-[var(--danger)]" : ""}`}>
                     {tk(`status_${c.status}` as DictKey)}
@@ -798,6 +927,7 @@ export function AnnotatorWorkboard({
                         c.maxMinutesPerCase,
                         c.minMinutesPerCase,
                         c.annotatorBonus,
+                        rushPercent,
                       )}
                       inputs={{
                         compensationType: c.compensationType,
@@ -806,10 +936,12 @@ export function AnnotatorWorkboard({
                         minMinutesPerCase: c.minMinutesPerCase,
                         maxMinutesPerCase: c.maxMinutesPerCase,
                         annotatorBonus: c.annotatorBonus,
-                        wasResubmitted: resubmitPenaltyApplies(
-                          (c._count?.reviews ?? 0) > 0 || caseWasResubmitted(c.reviews),
-                          c.auditedAt,
-                        ),
+                        rushPercent,
+                        rushForfeitReason: caseRushForfeitReason({
+                          ...c,
+                          wasRejected: hadPriorReject,
+                        }),
+                        wasResubmitted: resubmitPenaltyApplies(hadPriorReject, c.auditedAt),
                       }}
                       title={c.caseId}
                       className="font-medium text-[var(--success)]"
@@ -1321,8 +1453,11 @@ export function AnnotatorWorkboard({
                 </select>
               </label>
             )}
-            <MentionTextarea
+            <CommentChoiceInput
+              textareaKey={`${noteCase.id}-${noteTemplateSelectedIndex ?? "general"}`}
               lang={lang}
+              mode={noteActiveCommentChoice.mode}
+              choices={noteActiveCommentChoice.choices}
               value={noteText}
               onChange={setNoteText}
               onPaste={onPasteNote}

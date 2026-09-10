@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { AnnotatorCompensationSummary } from "@/app/actions/cases";
 import { CaseCompensationAmountButton } from "@/components/CaseCompensationBreakdown";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
+import { caseRushForfeitReason, caseRushPercent } from "@/lib/compensation";
 import { formatCompensationAmount, formatDate, formatHours } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -152,6 +153,14 @@ export function AnnotatorStatsPanel({
                                       maxMinutesPerCase: c.maxMinutesPerCase,
                                       annotatorBonus: c.bonusCompensation,
                                       wasResubmitted: c.wasResubmitted,
+                                      rushPercent: caseRushPercent({
+                                        ...c,
+                                        wasRejected: c.wasRejected,
+                                      }),
+                                      rushForfeitReason: caseRushForfeitReason({
+                                        ...c,
+                                        wasRejected: c.wasRejected,
+                                      }),
                                     };
                                     return (
                                       <tr

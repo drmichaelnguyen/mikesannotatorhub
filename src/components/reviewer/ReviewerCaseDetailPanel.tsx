@@ -2,7 +2,7 @@
 
 import { memo, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { deleteCaseAction, unassignCaseAction } from "@/app/actions/cases";
+import { adminCompleteCaseAction, deleteCaseAction, unassignCaseAction } from "@/app/actions/cases";
 import { CaseContinuityReportSection } from "@/components/CaseContinuityReportSection";
 import { CaseDiscussion } from "@/components/CaseDiscussion";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
@@ -15,7 +15,7 @@ import { ReviewerAssignCase } from "@/components/ReviewerAssignCase";
 import { ReviewerCaseEditor } from "@/components/reviewer/ReviewerCaseEditor";
 import { StarRating } from "@/components/StarRating";
 import { CaseCompensationAmountButton } from "@/components/CaseCompensationBreakdown";
-import { caseWasResubmitted, computeCompensation } from "@/lib/compensation";
+import { computeCompensation, caseRushForfeitReason, caseRushPercent } from "@/lib/compensation";
 import { formatDate } from "@/lib/format";
 import type { SerializedCaseTopic, SerializedReviewerCase } from "@/lib/reviewer-serialize";
 import type { DictKey, Lang } from "@/lib/i18n";
@@ -23,6 +23,7 @@ import { t } from "@/lib/i18n";
 import type { MentionOption } from "@/lib/guide-topic";
 import type { GuideOptionLite, TopicOptionLite } from "@/lib/guide-topic";
 import { CaseStatus, type CompensationType } from "@prisma/client";
+import { parseCommentChoiceMode, parseCommentChoices } from "@/lib/comment-choices";
 import { TopicDetailModal } from "@/components/TopicDetailModal";
 import type { ReferenceCaseLinkRow } from "@/components/annotator/AnnotatorCaseDetailPanel";
 import { useGuideHtml } from "@/lib/use-guide-html";
@@ -122,17 +123,62 @@ function ReviewerUnassignCase({
   );
 }
 
+function ReviewerAdminCompleteCase({
+  lang,
+  caseDbId,
+}: {
+  lang: Lang;
+  caseDbId: string;
+}) {
+  const tk = (k: DictKey) => t(lang, k);
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [err, setErr] = useState<string | null>(null);
+
+  return (
+    <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--bg)] p-3">
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => {
+          if (!window.confirm(tk("reviewer_admin_complete_confirm"))) return;
+          start(async () => {
+            setErr(null);
+            const res = await adminCompleteCaseAction(caseDbId);
+            if (!res.ok) {
+              setErr(
+                res.error === "state" ? tk("reviewer_admin_complete_taken") : tk("required"),
+              );
+              return;
+            }
+            router.refresh();
+          });
+        }}
+        className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)] hover:border-[var(--accent)] disabled:opacity-50"
+      >
+        {tk("reviewer_admin_complete")}
+      </button>
+      {err && <p className="mt-2 text-sm text-[var(--danger)]">{err}</p>}
+    </div>
+  );
+}
+
 function ReviewerCaseDetailPanelImpl({
   lang,
   c,
   annotators,
   guides = [],
   scopeOptions = [],
+  projectOptions = [],
+  rbProjectOptions = [],
   mentionOptions = [],
   topics = [],
   referenceCases = [],
   /** Scope-of-work checklist text; used to label template-row notes in discussion export only. */
   scopeOfWorkTemplate = null,
+  commentChoiceMode = "FREE",
+  commentChoicesText = "",
+  commentFieldConfigs = "[]",
   onDeleted,
 }: {
   lang: Lang;
@@ -140,16 +186,23 @@ function ReviewerCaseDetailPanelImpl({
   annotators: { id: string; name: string; email: string }[];
   guides?: GuideOptionLite[];
   scopeOptions?: string[];
+  projectOptions?: string[];
+  rbProjectOptions?: string[];
   mentionOptions?: MentionOption[];
   topics?: TopicOptionLite[];
   referenceCases?: ReferenceCaseLinkRow[];
   scopeOfWorkTemplate?: string | null;
+  commentChoiceMode?: string | null;
+  commentChoicesText?: string | null;
+  commentFieldConfigs?: string | null;
   onDeleted?: () => void;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const [topicModal, setTopicModal] = useState<SerializedCaseTopic | null>(null);
   const showAuditedInfo =
     c.status === CaseStatus.AUDITED || c.status === CaseStatus.ACCEPTED;
+  const rushPercent = caseRushPercent(c);
+  const rushForfeit = caseRushForfeitReason(c);
   const earned = computeCompensation(
     c.compensationType,
     c.compensationAmount,
@@ -157,6 +210,7 @@ function ReviewerCaseDetailPanelImpl({
     c.maxMinutesPerCase,
     c.minMinutesPerCase,
     c.annotatorBonus,
+    rushPercent,
   );
   /** Guide body is fetched on demand so case lists stay lightweight. */
   const { html: guideHtml, loading: guideLoading } = useGuideHtml(c.guide?.id);
@@ -173,7 +227,11 @@ function ReviewerCaseDetailPanelImpl({
             <h2 className="text-xl font-semibold">{c.caseId}</h2>
             <CopyTextButton lang={lang} value={c.caseId} />
           </div>
-          <p className="text-sm text-[var(--muted)]">{c.redbrickProject}</p>
+          <p className="text-sm text-[var(--muted)]">
+            {c.project}
+            {c.project && c.redbrickProject ? " · " : ""}
+            {c.redbrickProject}
+          </p>
           {c.isReference && (
             <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-yellow-500 bg-yellow-300 px-2 py-0.5 text-xs font-semibold text-yellow-950">
               <span aria-hidden>★</span>
@@ -225,6 +283,21 @@ function ReviewerCaseDetailPanelImpl({
                 </summary>
                 <div className="border-t border-[var(--border)] px-3 py-2 text-sm whitespace-pre-wrap text-[var(--text)]">
                   {c.guideline}
+                </div>
+              </details>
+            </dd>
+          </div>
+        )}
+        {c.radiologistFinding.trim() !== "" && (
+          <div className="md:col-span-2">
+            <dt className="sr-only">{tk("case_radiologist_finding")}</dt>
+            <dd className="m-0">
+              <details open className="rounded-md border border-[var(--border)] bg-[var(--bg)]">
+                <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-[var(--muted)] hover:bg-[var(--surface)]">
+                  {tk("case_radiologist_finding")}
+                </summary>
+                <div className="border-t border-[var(--border)] px-3 py-2 text-sm whitespace-pre-wrap text-[var(--text)]">
+                  {c.radiologistFinding}
                 </div>
               </details>
             </dd>
@@ -285,6 +358,26 @@ function ReviewerCaseDetailPanelImpl({
         <div>
           <dt className="text-[var(--muted)]">{tk("case_compAmount")}</dt>
           <dd>{compLabel(lang, c.compensationType, c.compensationAmount)}</dd>
+        </div>
+        <div>
+          <dt className="text-[var(--muted)]">{tk("case_deadline")}</dt>
+          <dd>{formatDate(lang, c.deadline)}</dd>
+          <dt className="text-[var(--muted)]">{tk("case_expiry")}</dt>
+          <dd>{formatDate(lang, c.expiresAt)}</dd>
+        </div>
+        <div>
+          <dt className="text-[var(--muted)]">{tk("case_rush_bonus")}</dt>
+          <dd>
+            {rushPercent > 0
+              ? tk("case_rush_bonus_value").replace("{percent}", String(rushPercent))
+              : tk("case_rush_none")}
+          </dd>
+          {rushForfeit === "rejected" && (
+            <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("case_rush_forfeit_rejected")}</p>
+          )}
+          {rushForfeit === "late" && (
+            <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("case_rush_forfeit_late")}</p>
+          )}
         </div>
         <div>
           <dt className="text-[var(--muted)]">{tk("case_quality_adjustment")}</dt>
@@ -350,7 +443,9 @@ function ReviewerCaseDetailPanelImpl({
                     minMinutesPerCase: c.minMinutesPerCase,
                     maxMinutesPerCase: c.maxMinutesPerCase,
                     annotatorBonus: c.annotatorBonus,
-                    wasResubmitted: c.wasResubmitted || caseWasResubmitted(c.reviews),
+                    wasResubmitted: c.wasResubmitted,
+                    rushPercent,
+                    rushForfeitReason: rushForfeit,
                   }}
                   title={c.caseId}
                   className="font-medium text-[var(--success)]"
@@ -360,7 +455,15 @@ function ReviewerCaseDetailPanelImpl({
           </>
         )}
       </dl>
-      <ReviewerCaseEditor lang={lang} c={c} guides={guides} topics={topics} scopeOptions={scopeOptions} />
+      <ReviewerCaseEditor
+        lang={lang}
+        c={c}
+        guides={guides}
+        topics={topics}
+        scopeOptions={scopeOptions}
+        projectOptions={projectOptions}
+        rbProjectOptions={rbProjectOptions}
+      />
       <div>
         <h3 className="mb-2 text-sm font-medium text-[var(--muted)]">{tk("discussion_title")}</h3>
         <CaseDiscussion
@@ -370,6 +473,13 @@ function ReviewerCaseDetailPanelImpl({
           canPost
           mentionOptions={mentionOptions}
           composerTemplate={!c.isReference ? scopeOfWorkTemplate : null}
+          commentChoiceMode={
+            !c.isReference ? parseCommentChoiceMode(commentChoiceMode) : "FREE"
+          }
+          commentChoices={
+            !c.isReference ? parseCommentChoices(commentChoicesText) : []
+          }
+          commentFieldConfigs={!c.isReference ? commentFieldConfigs ?? "[]" : "[]"}
         />
       </div>
       {c.reviews[0]?.comment && c.status !== CaseStatus.SUBMITTED && (
@@ -383,7 +493,14 @@ function ReviewerCaseDetailPanelImpl({
           <ReviewerDeleteCase lang={lang} caseDbId={c.id} onDeleted={onDeleted} />
         </>
       )}
-      {c.annotator && c.status !== CaseStatus.AUDITED && c.status !== CaseStatus.ACCEPTED && (
+      {(c.status === CaseStatus.AVAILABLE ||
+        c.status === CaseStatus.ASSIGNED ||
+        c.status === CaseStatus.REJECTED) &&
+        !c.isReference && <ReviewerAdminCompleteCase lang={lang} caseDbId={c.id} />}
+      {c.annotator &&
+        c.status !== CaseStatus.AUDITED &&
+        c.status !== CaseStatus.ACCEPTED &&
+        c.status !== CaseStatus.ADMIN_COMPLETED && (
         <ReviewerUnassignCase lang={lang} caseDbId={c.id} />
       )}
       {c.status === CaseStatus.SUBMITTED && (
@@ -391,6 +508,7 @@ function ReviewerCaseDetailPanelImpl({
           <h4 className="mb-2 font-medium">{tk("reviewer_audit_title")}</h4>
           <p className="mb-3 text-xs text-[var(--muted)]">{tk("reviewer_audit_intro")}</p>
           <ReviewCasePanel
+            fiveStarBonusPercent={c.fiveStarBonusPercent}
             lang={lang}
             caseDbId={c.id}
             compensationType={c.compensationType}
@@ -398,7 +516,8 @@ function ReviewerCaseDetailPanelImpl({
             annotationMinutes={c.annotationMinutes}
             minMinutesPerCase={c.minMinutesPerCase}
             maxMinutesPerCase={c.maxMinutesPerCase}
-            wasResubmitted={c.wasResubmitted || caseWasResubmitted(c.reviews)}
+            wasResubmitted={c.wasResubmitted}
+            rushPercent={rushPercent}
           />
         </div>
       )}

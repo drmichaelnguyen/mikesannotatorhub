@@ -1,6 +1,7 @@
 import type { AnnotationCase, Guide, Review, Topic, TopicProject, TopicScope, User } from "@prisma/client";
 
 export type ReviewerCaseRow = AnnotationCase & {
+  fiveStarBonusPercent?: number;
   guide: Pick<Guide, "id" | "title"> | null;
   caseTopics: {
     topic: Pick<Topic, "id" | "name"> & {
@@ -11,7 +12,6 @@ export type ReviewerCaseRow = AnnotationCase & {
   }[];
   annotator: Pick<User, "id" | "name" | "email"> | null;
   auditedBy: Pick<User, "id" | "name" | "email"> | null;
-  reviews: Pick<Review, "id" | "decision" | "comment" | "createdAt">[];
-  /** `reviews` count is filtered to REJECT decisions (prior rejection / resubmit). */
-  _count: { caseNotes: number; reviews: number };
+  reviews: Pick<Review, "id" | "decision" | "comment" | "createdAt" | "annotatorId">[];
+  _count: { caseNotes: number };
 };

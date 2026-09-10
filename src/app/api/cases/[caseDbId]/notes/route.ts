@@ -1,3 +1,5 @@
+
+import { withActionLog } from "@/lib/logged-action";
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -57,92 +59,94 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ caseDbId: string }> },
 ) {
-  const user = await getCurrentUser();
-  if (!user) return jsonError(401, "auth");
+  return withActionLog("api/cases/[caseDbId]/notes/route.ts:POST", await context.params, async () => {
+    const user = await getCurrentUser();
+    if (!user) return jsonError(401, "auth");
 
-  const { caseDbId } = await context.params;
-  const body = (await request.json().catch(() => null)) as
-    | {
-        content?: unknown;
-        imageDataList?: unknown;
-        parentNoteId?: unknown;
-        isQuestion?: unknown;
-      }
-    | null;
+    const { caseDbId } = await context.params;
+    const body = (await request.json().catch(() => null)) as
+      | {
+          content?: unknown;
+          imageDataList?: unknown;
+          parentNoteId?: unknown;
+          isQuestion?: unknown;
+        }
+      | null;
 
-  const row = await prisma.annotationCase.findUnique({ where: { id: caseDbId } });
-  if (!row) return jsonError(404, "notfound");
+    const row = await prisma.annotationCase.findUnique({ where: { id: caseDbId } });
+    if (!row) return jsonError(404, "notfound");
 
-  const workspaceUserId = await resolveAnnotatorWorkspaceUserId(user);
-  if (user.role !== "REVIEWER") {
-    if (!row.isReference && row.annotatorId !== workspaceUserId) return jsonError(403, "forbidden");
-  }
-
-  const parentNoteId =
-    typeof body?.parentNoteId === "string" && body.parentNoteId.trim()
-      ? body.parentNoteId.trim()
-      : null;
-
-  if (parentNoteId) {
-    const parent = await prisma.caseNote.findUnique({
-      where: { id: parentNoteId },
-      select: { id: true, annotationCaseId: true },
-    });
-    if (!parent || parent.annotationCaseId !== row.id) {
-      return jsonError(400, "invalid_parent");
+    const workspaceUserId = await resolveAnnotatorWorkspaceUserId(user);
+    if (user.role !== "REVIEWER") {
+      if (!row.isReference && row.annotatorId !== workspaceUserId) return jsonError(403, "forbidden");
     }
-  }
 
-  const text = typeof body?.content === "string" ? body.content.trim() : "";
-  const images = Array.isArray(body?.imageDataList)
-    ? body.imageDataList
-        .filter((item): item is string => typeof item === "string")
-        .map((item) => item.trim())
-        .filter(Boolean)
-    : [];
+    const parentNoteId =
+      typeof body?.parentNoteId === "string" && body.parentNoteId.trim()
+        ? body.parentNoteId.trim()
+        : null;
 
-  if (!text && images.length === 0) {
-    return jsonError(400, "empty");
-  }
+    if (parentNoteId) {
+      const parent = await prisma.caseNote.findUnique({
+        where: { id: parentNoteId },
+        select: { id: true, annotationCaseId: true },
+      });
+      if (!parent || parent.annotationCaseId !== row.id) {
+        return jsonError(400, "invalid_parent");
+      }
+    }
 
-  const isQuestion = body?.isQuestion === true;
+    const text = typeof body?.content === "string" ? body.content.trim() : "";
+    const images = Array.isArray(body?.imageDataList)
+      ? body.imageDataList
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : [];
 
-  await prisma.caseNote.create({
-    data: {
-      annotationCaseId: row.id,
-      parentNoteId,
-      authorId: user.id,
-      content: text || null,
-      imageData: images[0] ?? null,
-      imageDataListJson: images.length > 0 ? JSON.stringify(images) : null,
-      isQuestion,
-    },
-  });
+    if (!text && images.length === 0) {
+      return jsonError(400, "empty");
+    }
 
-  if (user.role === "REVIEWER" && row.isReference) {
-    const allAnnotators = await prisma.user.findMany({
-      where: { role: "ANNOTATOR" },
-      select: { id: true },
+    const isQuestion = body?.isQuestion === true;
+
+    await prisma.caseNote.create({
+      data: {
+        annotationCaseId: row.id,
+        parentNoteId,
+        authorId: user.id,
+        content: text || null,
+        imageData: images[0] ?? null,
+        imageDataListJson: images.length > 0 ? JSON.stringify(images) : null,
+        isQuestion,
+      },
     });
-    await pushNotification(
-      allAnnotators.map((annotator) => annotator.id),
-      NOTIF.NEW_COMMENT,
-      row.id,
-      row.caseId,
-    );
-  } else if (
-    user.role === "REVIEWER" &&
-    row.annotatorId &&
-    row.annotatorId !== workspaceUserId
-  ) {
-    await pushNotification([row.annotatorId], NOTIF.NEW_COMMENT, row.id, row.caseId);
-  }
-  if (!row.isReference && row.annotatorId === workspaceUserId) {
-    const reviewerIds = await getReviewerNotificationRecipients();
-    await pushNotification(reviewerIds, NOTIF.NEW_COMMENT, row.id, row.caseId);
-  }
 
-  revalidatePath("/reviewer");
-  revalidatePath("/annotator");
-  return NextResponse.json({ ok: true as const });
+    if (user.role === "REVIEWER" && row.isReference) {
+      const allAnnotators = await prisma.user.findMany({
+        where: { role: "ANNOTATOR" },
+        select: { id: true },
+      });
+      await pushNotification(
+        allAnnotators.map((annotator) => annotator.id),
+        NOTIF.NEW_COMMENT,
+        row.id,
+        row.caseId,
+      );
+    } else if (
+      user.role === "REVIEWER" &&
+      row.annotatorId &&
+      row.annotatorId !== workspaceUserId
+    ) {
+      await pushNotification([row.annotatorId], NOTIF.NEW_COMMENT, row.id, row.caseId);
+    }
+    if (!row.isReference && row.annotatorId === workspaceUserId) {
+      const reviewerIds = await getReviewerNotificationRecipients();
+      await pushNotification(reviewerIds, NOTIF.NEW_COMMENT, row.id, row.caseId);
+    }
+
+    revalidatePath("/reviewer");
+    revalidatePath("/annotator");
+    return NextResponse.json({ ok: true as const });
+  });
 }

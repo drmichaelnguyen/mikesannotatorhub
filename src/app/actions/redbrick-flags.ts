@@ -1,4 +1,6 @@
 "use server";
+import { withActionLog } from "@/lib/logged-action";
+
 
 import { getReviewerNotificationRecipients, pushNotification } from "@/app/actions/notifications";
 import { requireAnnotatorWorkspace } from "@/lib/annotator-workspace";
@@ -44,48 +46,50 @@ export async function flagRedbrickAssignmentAction(input: {
   caseDbId: string;
   comment?: string;
 }) {
-  const { workspaceUserId } = await requireAnnotatorWorkspace();
-  const comment = input.comment?.trim() || null;
+  return withActionLog("flagRedbrickAssignmentAction", input, async () => {
+    const { workspaceUserId } = await requireAnnotatorWorkspace();
+    const comment = input.comment?.trim() || null;
 
-  const row = await prisma.annotationCase.findUnique({
-    where: { id: input.caseDbId },
-    select: { id: true, caseId: true, isReference: true, status: true, annotatorId: true },
+    const row = await prisma.annotationCase.findUnique({
+      where: { id: input.caseDbId },
+      select: { id: true, caseId: true, isReference: true, status: true, annotatorId: true },
+    });
+    if (!row || row.isReference) {
+      return { ok: false as const, error: "not_found" as const };
+    }
+
+    const canFlag =
+      row.status === "AVAILABLE" ||
+      row.annotatorId === workspaceUserId;
+    if (!canFlag) {
+      return { ok: false as const, error: "forbidden" as const };
+    }
+
+    const existing = await prisma.caseRedbrickFlag.findFirst({
+      where: {
+        annotationCaseId: input.caseDbId,
+        flaggedById: workspaceUserId,
+        resolvedAt: null,
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      return { ok: false as const, error: "already_flagged" as const };
+    }
+
+    await prisma.caseRedbrickFlag.create({
+      data: {
+        annotationCaseId: input.caseDbId,
+        flaggedById: workspaceUserId,
+        comment,
+      },
+    });
+
+    const reviewerIds = await getReviewerNotificationRecipients();
+    await pushNotification(reviewerIds, NOTIF.REDBRICK_FLAG, row.id, row.caseId);
+
+    return { ok: true as const };
   });
-  if (!row || row.isReference) {
-    return { ok: false as const, error: "not_found" as const };
-  }
-
-  const canFlag =
-    row.status === "AVAILABLE" ||
-    row.annotatorId === workspaceUserId;
-  if (!canFlag) {
-    return { ok: false as const, error: "forbidden" as const };
-  }
-
-  const existing = await prisma.caseRedbrickFlag.findFirst({
-    where: {
-      annotationCaseId: input.caseDbId,
-      flaggedById: workspaceUserId,
-      resolvedAt: null,
-    },
-    select: { id: true },
-  });
-  if (existing) {
-    return { ok: false as const, error: "already_flagged" as const };
-  }
-
-  await prisma.caseRedbrickFlag.create({
-    data: {
-      annotationCaseId: input.caseDbId,
-      flaggedById: workspaceUserId,
-      comment,
-    },
-  });
-
-  const reviewerIds = await getReviewerNotificationRecipients();
-  await pushNotification(reviewerIds, NOTIF.REDBRICK_FLAG, row.id, row.caseId);
-
-  return { ok: true as const };
 }
 
 export async function listUnresolvedRedbrickFlagsAction(): Promise<ReviewerRedbrickFlagRow[]> {
@@ -126,13 +130,15 @@ export async function listUnresolvedRedbrickFlagsAction(): Promise<ReviewerRedbr
 }
 
 export async function resolveRedbrickFlagAction(flagId: string) {
-  const user = await requireRole("REVIEWER");
-  const updated = await prisma.caseRedbrickFlag.updateMany({
-    where: { id: flagId, resolvedAt: null },
-    data: { resolvedAt: new Date(), resolvedById: user.id },
+  return withActionLog("resolveRedbrickFlagAction", { flagId }, async () => {
+    const user = await requireRole("REVIEWER");
+    const updated = await prisma.caseRedbrickFlag.updateMany({
+      where: { id: flagId, resolvedAt: null },
+      data: { resolvedAt: new Date(), resolvedById: user.id },
+    });
+    if (updated.count === 0) {
+      return { ok: false as const, error: "not_found" as const };
+    }
+    return { ok: true as const };
   });
-  if (updated.count === 0) {
-    return { ok: false as const, error: "not_found" as const };
-  }
-  return { ok: true as const };
 }

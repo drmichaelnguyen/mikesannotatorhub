@@ -3,10 +3,18 @@ import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
-const ADMIN_EMAIL: string = "dr.trongto@gmail.com";
-const ADMIN_PASSWORD: string = "host1234";
+function requireEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
+const ADMIN_EMAIL: string = requireEnv("SEED_ADMIN_EMAIL");
+const ADMIN_PASSWORD: string = requireEnv("SEED_ADMIN_PASSWORD");
 const LEGACY_ADMIN_EMAIL: string = "reviewer@example.com";
-const ANNOTATOR_PASSWORD: string = "demo123";
+const ANNOTATOR_PASSWORD: string = requireEnv("SEED_ANNOTATOR_PASSWORD");
 
 type AnnotatorSeed = {
   email: string;
@@ -395,6 +403,7 @@ async function seedCases(annotatorByAlias: Map<string, string>) {
 
     return {
       caseId: row.caseId,
+      project: "BC2",
       redbrickProject: row.project,
       guideline: project.guideline,
       scopeOfWork: project.scopeOfWork,
@@ -446,9 +455,9 @@ async function main() {
 
   console.log(
     [
-      `Seed OK: admin ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`,
+      `Seed OK: reviewer ${ADMIN_EMAIL}`,
       `Annotators: ${TEAM_ANNOTATORS.map((a) => `${a.name} <${a.email}>`).join(", ")}`,
-      `Annotator password: ${ANNOTATOR_PASSWORD}`,
+      "Annotator password: [set via SEED_ANNOTATOR_PASSWORD]",
       `Cases seeded: created ${caseResult.created}, newly assigned ${caseResult.newlyAssigned}`,
     ].join("\n"),
   );

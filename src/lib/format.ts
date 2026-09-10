@@ -34,3 +34,21 @@ export function formatHours(lang: Lang, value: number | null) {
     maximumFractionDigits: 1,
   }).format(value)} h`;
 }
+
+/** Value for `<input type="datetime-local">` in the browser's local timezone. */
+export function toDatetimeLocalValue(d: Date | string | null | undefined): string {
+  if (d == null || d === "") return "";
+  const dt = typeof d === "string" ? new Date(d) : d;
+  if (Number.isNaN(dt.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+}
+
+/** Parse a datetime-local form value into a Date, or null if blank/invalid. */
+export function parseDatetimeLocalValue(raw: string): Date | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const d = new Date(trimmed);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}

@@ -17,7 +17,7 @@ import { t } from "@/lib/i18n";
 const ENTITY_KEYS: AdvancedDataEntity[] = ["cases", "topics", "guides", "users", "notes"];
 
 const FILTER_COLUMNS: Partial<Record<AdvancedDataEntity, string[]>> = {
-  cases: ["status", "redbrickProject", "isReference"],
+  cases: ["status", "project", "redbrickProject", "isReference"],
   users: ["role"],
   notes: ["isQuestion"],
 };

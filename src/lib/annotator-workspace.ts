@@ -12,7 +12,7 @@ export function linkedAnnotatorEmailForReviewer(reviewerEmail: string): string |
   return `${local}+annotator@${domain}`;
 }
 
-/** User id whose cases/availability the annotator workspace should show. */
+/** User id whose cases the annotator workspace should show. */
 export async function resolveAnnotatorWorkspaceUserId(
   user: Pick<User, "id" | "role" | "email">,
 ): Promise<string> {

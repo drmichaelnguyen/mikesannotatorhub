@@ -1,5 +1,5 @@
 import type { CaseStatus, CompensationType } from "@prisma/client";
-import { resubmitPenaltyApplies } from "@/lib/compensation";
+import { caseWasResubmitted, resubmitPenaltyApplies } from "@/lib/compensation";
 import type { ReviewerCaseRow } from "@/lib/reviewer-types";
 import { videoGuideUrlsFromDb } from "@/lib/video-guides";
 
@@ -34,10 +34,13 @@ export function mapPrismaCaseTopics(
 export type SerializedReviewerCase = {
   id: string;
   caseId: string;
+  project: string;
+  fiveStarBonusPercent?: number;
   redbrickProject: string;
   guide: { id: string; title: string } | null;
   topics: SerializedCaseTopic[];
   guideline: string;
+  radiologistFinding: string;
   videoGuideUrls: string[];
   scopeOfWork: string;
   minMinutesPerCase: number;
@@ -54,9 +57,18 @@ export type SerializedReviewerCase = {
   qualityRating: number | null;
   isReference: boolean;
   hasContinuityReport: boolean;
+  deadline: string | null;
+  expiresAt: string | null;
+  createdAt: string;
   annotator: { id: string; name: string; email: string } | null;
   auditedBy: { id: string; name: string; email: string } | null;
-  reviews: { id: string; decision: string; comment: string | null; createdAt: string }[];
+  reviews: {
+    id: string;
+    decision: string;
+    comment: string | null;
+    createdAt: string;
+    annotatorId: string | null;
+  }[];
   caseNoteCount: number;
   wasResubmitted: boolean;
 };
@@ -65,10 +77,13 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
   return {
     id: c.id,
     caseId: c.caseId,
+    project: c.project,
+    fiveStarBonusPercent: c.fiveStarBonusPercent,
     redbrickProject: c.redbrickProject,
     guide: c.guide ? { id: c.guide.id, title: c.guide.title } : null,
     topics: mapPrismaCaseTopics(c.caseTopics),
     guideline: c.guideline,
+    radiologistFinding: c.radiologistFinding,
     videoGuideUrls: videoGuideUrlsFromDb(c.videoGuideUrls),
     scopeOfWork: c.scopeOfWork,
     minMinutesPerCase: c.minMinutesPerCase,
@@ -85,6 +100,9 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
     qualityRating: c.qualityRating,
     isReference: c.isReference,
     hasContinuityReport: c.hasContinuityReport,
+    deadline: c.deadline?.toISOString() ?? null,
+    expiresAt: c.expiresAt?.toISOString() ?? null,
+    createdAt: c.createdAt.toISOString(),
     annotator: c.annotator
       ? { id: c.annotator.id, name: c.annotator.name, email: c.annotator.email }
       : null,
@@ -96,9 +114,13 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
       decision: r.decision,
       comment: r.comment,
       createdAt: r.createdAt.toISOString(),
+      annotatorId: r.annotatorId,
     })),
     caseNoteCount: c._count.caseNotes,
-    // Penalty only for accepts from July 2026 UTC; pending reviews use "now".
-    wasResubmitted: resubmitPenaltyApplies(c._count.reviews > 0, c.auditedAt),
+    // Same-annotator resubmit only; penalty from July 2026 UTC (pending reviews use "now").
+    wasResubmitted: resubmitPenaltyApplies(
+      caseWasResubmitted(c.reviews, c.annotatorId),
+      c.auditedAt,
+    ),
   };
 }

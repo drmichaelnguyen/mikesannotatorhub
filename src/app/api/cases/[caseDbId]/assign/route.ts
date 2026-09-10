@@ -1,3 +1,5 @@
+
+import { withActionLog } from "@/lib/logged-action";
 import { NextResponse } from "next/server";
 import { assignCaseAction } from "@/app/actions/cases";
 
@@ -9,17 +11,19 @@ export async function POST(
   _request: Request,
   context: { params: Promise<{ caseDbId: string }> },
 ) {
-  const { caseDbId } = await context.params;
-  try {
-    const result = await assignCaseAction(caseDbId);
-    if (!result.ok) {
-      return NextResponse.json(result, {
-        status:
-          result.error === "pending_review_ack" || result.error === "active_case" ? 409 : 400,
-      });
+  return withActionLog("api/cases/[caseDbId]/assign/route.ts:POST", await context.params, async () => {
+    const { caseDbId } = await context.params;
+    try {
+      const result = await assignCaseAction(caseDbId);
+      if (!result.ok) {
+        return NextResponse.json(result, {
+          status:
+            result.error === "pending_review_ack" || result.error === "active_case" ? 409 : 400,
+        });
+      }
+      return NextResponse.json(result);
+    } catch {
+      return jsonError(401, "auth");
     }
-    return NextResponse.json(result);
-  } catch {
-    return jsonError(401, "auth");
-  }
+  });
 }
