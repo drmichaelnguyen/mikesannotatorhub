@@ -7,11 +7,46 @@ import {
   type CaseDetailsFieldsValue,
 } from "@/components/CaseDetailsFields";
 import type { GuideOptionLite, TopicOptionLite } from "@/lib/guide-topic";
+import { createCaseErrorMessage, type CreateCaseError } from "@/lib/create-case-errors";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import { parseVideoGuideUrlsInput } from "@/lib/video-guides";
 import { toDatetimeLocalValue } from "@/lib/format";
 import { CaseStatus, CompensationType } from "@prisma/client";
+
+const CASE_EDIT_ERROR_KEYS = new Set<string>([
+  "project",
+  "redbrick_project",
+  "scope",
+  "instructions",
+  "guide",
+  "topics",
+  "limits",
+  "scope_words",
+  "invalid_amount",
+  "bonus",
+  "case_id",
+  "status",
+  "deadline",
+  "expiry",
+  "case_exists",
+]);
+
+function caseEditErrorMessage(error: string | undefined, lang: Lang): string {
+  if (error && CASE_EDIT_ERROR_KEYS.has(error)) {
+    if (error === "case_exists") return t(lang, "case_exists");
+    return createCaseErrorMessage(error as CreateCaseError, lang);
+  }
+  if (error === "notfound") {
+    return lang === "vi" ? "Không tìm thấy ca." : "Case not found.";
+  }
+  if (error) {
+    return lang === "vi"
+      ? `Không lưu được (mã lỗi: ${error}).`
+      : `Could not save (error code: ${error}).`;
+  }
+  return t(lang, "required");
+}
 
 function sameStringArray(a: string[], b: string[]) {
   if (a.length !== b.length) return false;
@@ -118,13 +153,16 @@ export function ReviewerCaseEditor({
     const compensationAmount = Number(details.compensationAmount);
     const annotatorBonus = Number(bonusAmount);
 
-    if (
-      !Number.isFinite(minMinutesPerCase) ||
-      !Number.isFinite(maxMinutesPerCase) ||
-      !Number.isFinite(compensationAmount) ||
-      !Number.isFinite(annotatorBonus)
-    ) {
-      setErr(tk("required"));
+    if (!Number.isFinite(minMinutesPerCase) || !Number.isFinite(maxMinutesPerCase)) {
+      setErr(createCaseErrorMessage("limits", lang));
+      return;
+    }
+    if (!Number.isFinite(compensationAmount) || compensationAmount < 0) {
+      setErr(createCaseErrorMessage("invalid_amount", lang));
+      return;
+    }
+    if (!Number.isFinite(annotatorBonus)) {
+      setErr(createCaseErrorMessage("bonus", lang));
       return;
     }
 
@@ -137,7 +175,7 @@ export function ReviewerCaseEditor({
           })()
         : null;
       if (deadline.trim() && deadlineIso == null) {
-        setErr(tk("required"));
+        setErr(createCaseErrorMessage("deadline", lang));
         return;
       }
       const expiresAtIso = expiresAt.trim()
@@ -150,9 +188,31 @@ export function ReviewerCaseEditor({
         (expiresAt.trim() && expiresAtIso == null) ||
         (deadlineIso && expiresAtIso && expiresAtIso <= deadlineIso)
       ) {
-        setErr(tk("case_expiry_required"));
+        setErr(createCaseErrorMessage("expiry", lang));
         return;
       }
+      const statusOnlyChanged =
+        status !== c.status &&
+        caseId === c.caseId &&
+        details.project === c.project &&
+        details.redbrickProject === c.redbrickProject &&
+        details.guideId === (c.guide?.id ?? "") &&
+        sameStringArray(
+          details.topicIds,
+          c.topics.map((topic) => topic.id),
+        ) &&
+        details.guideline === c.guideline &&
+        details.radiologistFinding === c.radiologistFinding &&
+        sameStringArray(parsedVideoGuideUrls, c.videoGuideUrls) &&
+        details.scopeOfWork === c.scopeOfWork &&
+        minMinutesPerCase === c.minMinutesPerCase &&
+        maxMinutesPerCase === c.maxMinutesPerCase &&
+        details.compensationType === c.compensationType &&
+        compensationAmount === c.compensationAmount &&
+        annotatorBonus === c.annotatorBonus &&
+        deadline === toDatetimeLocalValue(c.deadline) &&
+        expiresAt === toDatetimeLocalValue(c.expiresAt);
+
       const detailsChanged =
         caseId !== c.caseId ||
         status !== c.status ||
@@ -174,28 +234,36 @@ export function ReviewerCaseEditor({
         annotatorBonus !== c.annotatorBonus ||
         deadlineIso !== c.deadline ||
         expiresAtIso !== c.expiresAt;
-      const requestBody = detailsChanged
+
+      // Status-only updates skip full field re-validation (avoids false "Required"
+      // from negative quality bonuses / missing instruction sources on old cases).
+      const requestBody = statusOnlyChanged
         ? {
-            caseId,
             status,
-            project: details.project,
-            redbrickProject: details.redbrickProject,
-            guideId: details.guideId,
-            topicIds: details.topicIds,
-            guideline: details.guideline,
-            radiologistFinding: details.radiologistFinding,
-            videoGuideUrls: parsedVideoGuideUrls,
-            scopeOfWork: details.scopeOfWork,
-            minMinutesPerCase,
-            maxMinutesPerCase,
-            compensationType: details.compensationType,
-            compensationAmount,
-            annotatorBonus,
-            deadline: deadlineIso,
-            expiresAt: expiresAtIso,
-            isReference,
+            ...(isReference !== c.isReference ? { isReference } : {}),
           }
-        : { isReference };
+        : detailsChanged
+          ? {
+              caseId,
+              status,
+              project: details.project,
+              redbrickProject: details.redbrickProject,
+              guideId: details.guideId,
+              topicIds: details.topicIds,
+              guideline: details.guideline,
+              radiologistFinding: details.radiologistFinding,
+              videoGuideUrls: parsedVideoGuideUrls,
+              scopeOfWork: details.scopeOfWork,
+              minMinutesPerCase,
+              maxMinutesPerCase,
+              compensationType: details.compensationType,
+              compensationAmount,
+              annotatorBonus,
+              deadline: deadlineIso,
+              expiresAt: expiresAtIso,
+              isReference,
+            }
+          : { isReference };
       const response = await fetch(`/api/reviewer/cases/${encodeURIComponent(c.id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -206,11 +274,7 @@ export function ReviewerCaseEditor({
         | { ok: false; error?: string }
         | null;
       if (!res?.ok) {
-        const error = res?.error;
-        if (error === "case_exists") setErr(tk("case_exists"));
-        else if (error === "limits") setErr(tk("case_limits_invalid"));
-        else if (error === "scope_words") setErr(tk("scope_word_limit"));
-        else setErr(tk("required"));
+        setErr(caseEditErrorMessage(res?.error, lang));
         return;
       }
       setMsg(tk("reviewer_case_saved"));
@@ -263,15 +327,15 @@ export function ReviewerCaseEditor({
         />
 
         <label>
-          <span className="text-sm text-[var(--muted)]">{tk("case_annotatorBonus")}</span>
+          <span className="text-sm text-[var(--muted)]">{tk("case_quality_adjustment")}</span>
           <input
             type="number"
-            min={0}
             step="0.01"
             value={bonusAmount}
             onChange={(e) => setBonusAmount(e.target.value)}
             className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 tabular-nums"
           />
+          <p className="mt-1 text-xs text-[var(--muted)]">{tk("review_quality_adjustment_hint")}</p>
         </label>
         <label className="md:col-span-2">
           <span className="text-sm text-[var(--muted)]">{tk("case_deadline")}</span>

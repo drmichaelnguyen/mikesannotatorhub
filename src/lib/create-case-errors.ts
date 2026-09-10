@@ -14,6 +14,12 @@ const messages = {
   scope_words: ["Shorten the scope of work to 12 words or fewer.", "Rút gọn phạm vi công việc còn tối đa 12 từ."],
   comp_amount: ["Enter a base rate. No default rate is configured for this selection.", "Nhập mức trả cơ bản. Chưa có mức trả mặc định cho lựa chọn này."],
   invalid_amount: ["Enter a valid base rate of zero or more.", "Nhập mức trả cơ bản hợp lệ, lớn hơn hoặc bằng 0."],
+  bonus: [
+    "Enter a valid quality adjustment (can be negative for low ratings).",
+    "Nhập điều chỉnh chất lượng hợp lệ (có thể âm với điểm thấp).",
+  ],
+  case_id: ["Enter a case ID.", "Nhập mã ca."],
+  status: ["Choose a valid case status.", "Chọn trạng thái ca hợp lệ."],
   deadline: ["Choose a valid deadline after the current time.", "Chọn hạn chót hợp lệ sau thời điểm hiện tại."],
   expiry: ["Choose an expiry time later than the deadline.", "Chọn thời gian hết hạn sau hạn chót."],
   annotator: ["The selected annotator is no longer available. Choose another annotator or leave the cases unassigned.", "Người gán nhãn đã chọn không còn khả dụng. Chọn người khác hoặc để ca chưa được giao."],

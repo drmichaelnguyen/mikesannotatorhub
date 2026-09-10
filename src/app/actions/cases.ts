@@ -1290,7 +1290,7 @@ export async function updateCaseDetailsAction(input: {
     if (input.deadline != null && input.deadline !== "") {
       const parsed = new Date(input.deadline);
       if (Number.isNaN(parsed.getTime())) {
-        return { ok: false as const, error: "required" as const };
+        return { ok: false as const, error: "deadline" as const };
       }
       deadline = parsed;
     }
@@ -1298,7 +1298,7 @@ export async function updateCaseDetailsAction(input: {
     if (input.expiresAt != null && input.expiresAt !== "") {
       const parsed = new Date(input.expiresAt);
       if (Number.isNaN(parsed.getTime())) {
-        return { ok: false as const, error: "required" as const };
+        return { ok: false as const, error: "expiry" as const };
       }
       expiresAt = parsed;
     }
@@ -1306,22 +1306,35 @@ export async function updateCaseDetailsAction(input: {
       return { ok: false as const, error: "expiry" as const };
     }
 
+    if (!caseId) {
+      return { ok: false as const, error: "case_id" as const };
+    }
+    if (!project) {
+      return { ok: false as const, error: "project" as const };
+    }
+    if (!redbrickProject) {
+      return { ok: false as const, error: "redbrick_project" as const };
+    }
+    if (!scopeOfWork) {
+      return { ok: false as const, error: "scope" as const };
+    }
+    if (!hasInstructionSource) {
+      return { ok: false as const, error: "instructions" as const };
+    }
     if (
-      !caseId ||
-      !project ||
-      !redbrickProject ||
-      !hasInstructionSource ||
-      !scopeOfWork ||
       !Number.isFinite(minMinutesPerCase) ||
       minMinutesPerCase <= 0 ||
       !Number.isFinite(maxMinutesPerCase) ||
-      maxMinutesPerCase <= 0 ||
-      !Number.isFinite(input.compensationAmount) ||
-      input.compensationAmount < 0 ||
-      !Number.isFinite(input.annotatorBonus) ||
-      input.annotatorBonus < 0
+      maxMinutesPerCase <= 0
     ) {
-      return { ok: false as const, error: "required" as const };
+      return { ok: false as const, error: "limits" as const };
+    }
+    if (!Number.isFinite(input.compensationAmount) || input.compensationAmount < 0) {
+      return { ok: false as const, error: "invalid_amount" as const };
+    }
+    // Quality adjustments are signed (penalties for 1–3★ can be negative).
+    if (!Number.isFinite(input.annotatorBonus)) {
+      return { ok: false as const, error: "bonus" as const };
     }
 
     if (minMinutesPerCase > maxMinutesPerCase) {
@@ -1341,14 +1354,14 @@ export async function updateCaseDetailsAction(input: {
       input.status !== CaseStatus.EXPIRED &&
       input.status !== CaseStatus.ADMIN_COMPLETED
     ) {
-      return { ok: false as const, error: "required" as const };
+      return { ok: false as const, error: "status" as const };
     }
 
     if (
       input.compensationType !== CompensationType.PER_CASE &&
       input.compensationType !== CompensationType.PER_MINUTE
     ) {
-      return { ok: false as const, error: "required" as const };
+      return { ok: false as const, error: "comp_type" as const };
     }
 
     if (guideId) {
@@ -1357,12 +1370,12 @@ export async function updateCaseDetailsAction(input: {
         select: { id: true },
       });
       if (!guide) {
-        return { ok: false as const, error: "required" as const };
+        return { ok: false as const, error: "guide" as const };
       }
     }
 
     if (!(await assertTopicsAllowedForCase(topicIds, redbrickProject, scopeOfWork))) {
-      return { ok: false as const, error: "required" as const };
+      return { ok: false as const, error: "topics" as const };
     }
 
     const row = await prisma.annotationCase.findUnique({
@@ -1454,6 +1467,76 @@ export async function updateCaseReferenceAction(input: {
     await prisma.annotationCase.update({
       where: { id: caseDbId },
       data: { isReference: input.isReference },
+    });
+
+    revalidatePath("/reviewer");
+    revalidatePath("/annotator");
+    return { ok: true as const };
+  });
+}
+
+/** Change case status only — skips full field re-validation (for reopen / re-audit). */
+export async function updateCaseStatusAction(input: {
+  caseDbId: string;
+  status: CaseStatus;
+  isReference?: boolean;
+}) {
+  return withActionLog("updateCaseStatusAction", input, async () => {
+    await requireRole("REVIEWER");
+    const caseDbId = input.caseDbId.trim();
+    if (!caseDbId) return { ok: false as const, error: "case_id" as const };
+
+    if (
+      input.status !== CaseStatus.AVAILABLE &&
+      input.status !== CaseStatus.ASSIGNED &&
+      input.status !== CaseStatus.SUBMITTED &&
+      input.status !== CaseStatus.ACCEPTED &&
+      input.status !== CaseStatus.AUDITED &&
+      input.status !== CaseStatus.REJECTED &&
+      input.status !== CaseStatus.EXPIRED &&
+      input.status !== CaseStatus.ADMIN_COMPLETED
+    ) {
+      return { ok: false as const, error: "status" as const };
+    }
+
+    const row = await prisma.annotationCase.findUnique({
+      where: { id: caseDbId },
+      select: { id: true },
+    });
+    if (!row) return { ok: false as const, error: "notfound" as const };
+
+    const data: {
+      status: CaseStatus;
+      isReference?: boolean;
+      annotatorId?: null;
+      assignedAt?: null;
+      completedAt?: null;
+      annotationMinutes?: null;
+      difficultyRating?: null;
+      auditedAt?: null;
+      auditedById?: null;
+      qualityRating?: null;
+    } = { status: input.status };
+
+    if (typeof input.isReference === "boolean") {
+      data.isReference = input.isReference;
+    }
+
+    // Releasing back to the pool clears assignment fields (same as full edit).
+    if (input.status === CaseStatus.AVAILABLE) {
+      data.annotatorId = null;
+      data.assignedAt = null;
+      data.completedAt = null;
+      data.annotationMinutes = null;
+      data.difficultyRating = null;
+      data.auditedAt = null;
+      data.auditedById = null;
+      data.qualityRating = null;
+    }
+
+    await prisma.annotationCase.update({
+      where: { id: caseDbId },
+      data,
     });
 
     revalidatePath("/reviewer");
@@ -2055,6 +2138,96 @@ export async function reviewCaseAction(input: {
             rushPercent,
           )
         : 0,
+    };
+  });
+}
+
+/** Update annotation quality on an already audited (or legacy accepted) case. */
+export async function rerateCaseQualityAction(input: {
+  caseDbId: string;
+  qualityRating: number;
+  annotatorBonus?: number;
+}) {
+  return withActionLog("rerateCaseQualityAction", input, async () => {
+    const reviewer = await requireRole("REVIEWER");
+    if (
+      !Number.isInteger(input.qualityRating) ||
+      input.qualityRating < 1 ||
+      input.qualityRating > 5
+    ) {
+      return { ok: false as const, error: "rating" as const };
+    }
+
+    const row = await prisma.annotationCase.findUnique({
+      where: { id: input.caseDbId },
+      include: { annotator: true },
+    });
+    if (!row) return { ok: false as const, error: "notfound" as const };
+    if (row.status !== CaseStatus.AUDITED && row.status !== CaseStatus.ACCEPTED) {
+      return { ok: false as const, error: "state" as const };
+    }
+
+    const priorRejectBySameAnnotator =
+      row.annotatorId == null
+        ? null
+        : await prisma.review.findFirst({
+            where: {
+              annotationCaseId: row.id,
+              decision: "REJECT",
+              annotatorId: row.annotatorId,
+            },
+            select: { id: true },
+          });
+    const rushPercent = caseRushPercent({
+      ...row,
+      wasRejected: priorRejectBySameAnnotator != null,
+    });
+
+    let approvedBonus: number;
+    if (input.annotatorBonus != null) {
+      if (!Number.isFinite(input.annotatorBonus)) {
+        return { ok: false as const, error: "bonus" as const };
+      }
+      approvedBonus = input.annotatorBonus;
+    } else {
+      const caseBase = computeCaseBasePay(
+        row.compensationType,
+        row.compensationAmount,
+        row.minMinutesPerCase,
+        row.maxMinutesPerCase,
+        rushPercent,
+      );
+      approvedBonus = suggestedQualityAdjustment(input.qualityRating, caseBase, {
+        fiveStarBonusPercent: row.fiveStarBonusPercent ?? (await getProjectFiveStarBonusPercent(row.project)),
+        wasResubmitted: priorRejectBySameAnnotator != null,
+        at: row.auditedAt ?? new Date(),
+      });
+    }
+
+    await prisma.annotationCase.update({
+      where: { id: row.id },
+      data: {
+        qualityRating: input.qualityRating,
+        annotatorBonus: approvedBonus,
+        auditedAt: new Date(),
+        auditedById: reviewer.id,
+        status: CaseStatus.AUDITED,
+      },
+    });
+
+    revalidatePath("/reviewer");
+    revalidatePath("/annotator");
+    return {
+      ok: true as const,
+      payout: computeCompensation(
+        row.compensationType,
+        row.compensationAmount,
+        row.annotationMinutes,
+        row.maxMinutesPerCase,
+        row.minMinutesPerCase,
+        approvedBonus,
+        rushPercent,
+      ),
     };
   });
 }

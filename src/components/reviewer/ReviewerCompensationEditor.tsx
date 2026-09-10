@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { updateCaseCompensationAction } from "@/app/actions/cases";
+import { createCaseErrorMessage } from "@/lib/create-case-errors";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import { CompensationType } from "@prisma/client";
@@ -42,8 +43,12 @@ export function ReviewerCompensationEditor({
     setMsg(null);
     const compensationAmount = Number(amountStr);
     const annotatorBonus = Number(bonusStr);
-    if (!Number.isFinite(compensationAmount) || compensationAmount < 0 || !Number.isFinite(annotatorBonus)) {
-      setErr(tk("required"));
+    if (!Number.isFinite(compensationAmount) || compensationAmount < 0) {
+      setErr(createCaseErrorMessage("invalid_amount", lang));
+      return;
+    }
+    if (!Number.isFinite(annotatorBonus)) {
+      setErr(createCaseErrorMessage("bonus", lang));
       return;
     }
     start(async () => {
@@ -54,7 +59,14 @@ export function ReviewerCompensationEditor({
         annotatorBonus,
       });
       if (!res.ok) {
-        setErr(tk("required"));
+        setErr(
+          res.error === "notfound"
+            ? tk("required")
+            : createCaseErrorMessage(
+                res.error === "required" ? "invalid_amount" : "bonus",
+                lang,
+              ),
+        );
         return;
       }
       setMsg(tk("reviewer_compensation_saved"));

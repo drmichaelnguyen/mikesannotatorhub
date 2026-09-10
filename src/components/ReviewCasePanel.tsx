@@ -6,6 +6,7 @@ import { reviewCaseAction } from "@/app/actions/cases";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
 import { StarRating } from "@/components/StarRating";
 import { getClipboardImageFile, readFileAsDataUrl } from "@/lib/client-image-data";
+import { createCaseErrorMessage } from "@/lib/create-case-errors";
 import {
   computeCaseBasePay,
   computeCompensation,
@@ -120,8 +121,12 @@ export function ReviewCasePanel({
           res.error === "rating"
             ? tk("rating_required")
             : res.error === "bonus"
-              ? tk("required")
-              : tk("required"),
+              ? createCaseErrorMessage("bonus", lang)
+              : res.error === "state"
+                ? lang === "vi"
+                  ? "Ca không còn ở trạng thái Đã nộp. Làm mới rồi thử lại."
+                  : "This case is no longer Submitted. Refresh and try again."
+                : tk("required"),
         );
       } else {
         setMsg(

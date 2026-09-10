@@ -13,6 +13,7 @@ import { RichTextContent } from "@/components/RichTextContent";
 import { LoadingProgressBar } from "@/components/LoadingProgressBar";
 import { ReviewerAssignCase } from "@/components/ReviewerAssignCase";
 import { ReviewerCaseEditor } from "@/components/reviewer/ReviewerCaseEditor";
+import { RerateQualityPanel } from "@/components/reviewer/RerateQualityPanel";
 import { StarRating } from "@/components/StarRating";
 import { CaseCompensationAmountButton } from "@/components/CaseCompensationBreakdown";
 import { computeCompensation, caseRushForfeitReason, caseRushPercent } from "@/lib/compensation";
@@ -455,6 +456,21 @@ function ReviewerCaseDetailPanelImpl({
           </>
         )}
       </dl>
+      {showAuditedInfo && (
+        <RerateQualityPanel
+          lang={lang}
+          caseDbId={c.id}
+          currentRating={c.qualityRating}
+          compensationType={c.compensationType}
+          compensationAmount={c.compensationAmount}
+          annotationMinutes={c.annotationMinutes}
+          minMinutesPerCase={c.minMinutesPerCase}
+          maxMinutesPerCase={c.maxMinutesPerCase}
+          wasResubmitted={c.wasResubmitted}
+          rushPercent={rushPercent}
+          fiveStarBonusPercent={c.fiveStarBonusPercent ?? 15}
+        />
+      )}
       <ReviewerCaseEditor
         lang={lang}
         c={c}

@@ -545,6 +545,12 @@ export const dict = {
     reviewer_audit_intro:
       "Approve to finalize compensation and move this case to the Audited section. Reject to return it to the annotator.",
     reviewer_quality_rating: "Annotation quality",
+    reviewer_rerate_title: "Re-rate annotation quality",
+    reviewer_rerate_intro:
+      "Update the quality stars and pay adjustment for this already audited case. Status stays Audited.",
+    reviewer_rerate_save: "Save new rating",
+    reviewer_rerate_saved: "Quality rating updated",
+    reviewer_rerate_not_audited: "Only audited cases can be re-rated here.",
     case_audited_at: "Audited at",
     case_audited_by: "Audited by",
     case_compensation_earned: "Compensation (this case)",
@@ -1105,6 +1111,12 @@ export const dict = {
     reviewer_audit_intro:
       "Duyệt để chốt thù lao và chuyển ca sang mục Đã kiểm duyệt. Từ chối để trả lại người gán nhãn.",
     reviewer_quality_rating: "Chất lượng gán nhãn",
+    reviewer_rerate_title: "Đánh giá lại chất lượng gán nhãn",
+    reviewer_rerate_intro:
+      "Cập nhật số sao chất lượng và điều chỉnh thù lao cho ca đã kiểm duyệt. Trạng thái vẫn là Đã kiểm duyệt.",
+    reviewer_rerate_save: "Lưu đánh giá mới",
+    reviewer_rerate_saved: "Đã cập nhật chất lượng",
+    reviewer_rerate_not_audited: "Chỉ ca đã kiểm duyệt mới đánh giá lại tại đây.",
     case_audited_at: "Thời điểm kiểm duyệt",
     case_audited_by: "Người kiểm duyệt",
     case_compensation_earned: "Thù lao (ca này)",

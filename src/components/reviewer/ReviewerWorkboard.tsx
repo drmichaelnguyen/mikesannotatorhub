@@ -1502,8 +1502,12 @@ export function ReviewerWorkboard({
           res.error === "rating"
             ? tk("rating_required")
             : res.error === "bonus"
-              ? tk("required")
-              : tk("reviewer_assign_taken"),
+              ? createCaseErrorMessage("bonus", lang)
+              : res.error === "state"
+                ? (lang === "vi"
+                    ? "Ca không còn ở trạng thái Đã nộp. Làm mới danh sách rồi thử lại."
+                    : "This case is no longer Submitted. Refresh the list and try again.")
+                : tk("reviewer_assign_taken"),
         );
         return;
       }
