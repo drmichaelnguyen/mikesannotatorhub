@@ -21,6 +21,7 @@ import {
 import {
   adminCompleteCaseAction,
   batchDeleteCasesAction,
+  batchSetCasePauseAction,
   batchUpdateCasesAction,
   deleteCaseAction,
   reviewCaseAction,
@@ -169,7 +170,13 @@ function sameTopicIds(rows: SerializedReviewerCase[]): string[] {
 
 type GroupDimension = "project" | "scope" | "rbProject" | "annotator";
 
-type BatchApplyGroupKey = "available" | "unsubmitted" | "rejected" | "submitted" | "completed";
+type BatchApplyGroupKey =
+  | "available"
+  | "unsubmitted"
+  | "rejected"
+  | "submitted"
+  | "paused"
+  | "completed";
 
 const BATCH_APPLY_GROUPS: {
   key: BatchApplyGroupKey;
@@ -184,6 +191,7 @@ const BATCH_APPLY_GROUPS: {
   },
   { key: "rejected", statuses: [CaseStatus.REJECTED], labelKey: "status_REJECTED" },
   { key: "submitted", statuses: [CaseStatus.SUBMITTED], labelKey: "status_SUBMITTED" },
+  { key: "paused", statuses: [CaseStatus.PAUSED], labelKey: "status_PAUSED" },
   {
     key: "completed",
     statuses: [
@@ -202,6 +210,7 @@ function defaultBatchApplyFilters(): Record<BatchApplyGroupKey, boolean> {
     unsubmitted: true,
     rejected: true,
     submitted: true,
+    paused: true,
     completed: true,
   };
 }
@@ -376,6 +385,7 @@ function buildAnnotatorFocus(
     CaseStatus.AUDITED,
     CaseStatus.ACCEPTED,
     CaseStatus.REJECTED,
+    CaseStatus.PAUSED,
     CaseStatus.EXPIRED,
     CaseStatus.ADMIN_COMPLETED,
     CaseStatus.AVAILABLE,
@@ -1202,6 +1212,72 @@ export function ReviewerWorkboard({
     });
   }
 
+  function pauseSelectedCases() {
+    if (selectedCaseIds.length === 0) return;
+    const pauseableRows = cases.filter(
+      (row) =>
+        selectedCaseIds.includes(row.id) &&
+        (row.status === CaseStatus.AVAILABLE || row.status === CaseStatus.ASSIGNED),
+    );
+    if (pauseableRows.length === 0) {
+      setErr(tk("reviewer_batch_pause_none"));
+      return;
+    }
+    const confirmMessage = tk("reviewer_batch_pause_confirm").replace(
+      "{count}",
+      String(pauseableRows.length),
+    );
+    if (!window.confirm(confirmMessage)) return;
+
+    setErr(null);
+    start(async () => {
+      const res = await batchSetCasePauseAction(selectedCaseIds, true);
+      if (!res.ok) {
+        setErr(res.error === "none_pausable" ? tk("reviewer_batch_pause_none") : tk("required"));
+        return;
+      }
+      setBatchSuccess(
+        tk("reviewer_batch_pause_result")
+          .replace("{updated}", String(res.updated))
+          .replace("{skipped}", String(res.skipped)),
+      );
+      clearSelection();
+      refresh();
+    });
+  }
+
+  function unpauseSelectedCases() {
+    if (selectedCaseIds.length === 0) return;
+    const pausedRows = cases.filter(
+      (row) => selectedCaseIds.includes(row.id) && row.status === CaseStatus.PAUSED,
+    );
+    if (pausedRows.length === 0) {
+      setErr(tk("reviewer_batch_unpause_none"));
+      return;
+    }
+    const confirmMessage = tk("reviewer_batch_unpause_confirm").replace(
+      "{count}",
+      String(pausedRows.length),
+    );
+    if (!window.confirm(confirmMessage)) return;
+
+    setErr(null);
+    start(async () => {
+      const res = await batchSetCasePauseAction(selectedCaseIds, false);
+      if (!res.ok) {
+        setErr(res.error === "none_paused" ? tk("reviewer_batch_unpause_none") : tk("required"));
+        return;
+      }
+      setBatchSuccess(
+        tk("reviewer_batch_unpause_result")
+          .replace("{updated}", String(res.updated))
+          .replace("{skipped}", String(res.skipped)),
+      );
+      clearSelection();
+      refresh();
+    });
+  }
+
   function setBatchApplyAll(checked: boolean) {
     setBatchApplyFilters(
       Object.fromEntries(BATCH_APPLY_GROUPS.map((group) => [group.key, checked])) as Record<
@@ -1841,6 +1917,22 @@ export function ReviewerWorkboard({
           className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-white disabled:opacity-50"
         >
           {tk("reviewer_batch_edit_details")}
+        </button>
+        <button
+          type="button"
+          disabled={selectedCaseIds.length === 0}
+          onClick={pauseSelectedCases}
+          className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 disabled:opacity-50"
+        >
+          {tk("reviewer_batch_pause")}
+        </button>
+        <button
+          type="button"
+          disabled={selectedCaseIds.length === 0}
+          onClick={unpauseSelectedCases}
+          className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 disabled:opacity-50"
+        >
+          {tk("reviewer_batch_unpause")}
         </button>
         <button
           type="button"

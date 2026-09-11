@@ -181,6 +181,11 @@ export function AnnotatorCaseDetailPanel({
           {tk("case_reference_help")}
         </p>
       )}
+      {!row.isReference && row.status === CaseStatus.PAUSED && (
+        <p className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--muted)]">
+          {tk("case_paused_banner")}
+        </p>
+      )}
       {!row.isReference && !isTerminalDone && (
         <AnnotatorCasePayProspectCard lang={lang} prospect={payProspect} rushForfeitReason={rushForfeit} />
       )}

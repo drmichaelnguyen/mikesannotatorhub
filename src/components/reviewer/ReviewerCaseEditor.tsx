@@ -310,6 +310,7 @@ export function ReviewerCaseEditor({
             <option value={CaseStatus.REJECTED}>{tk("status_REJECTED")}</option>
             <option value={CaseStatus.EXPIRED}>{tk("status_EXPIRED")}</option>
             <option value={CaseStatus.ADMIN_COMPLETED}>{tk("status_ADMIN_COMPLETED")}</option>
+            <option value={CaseStatus.PAUSED}>{tk("status_PAUSED")}</option>
           </select>
         </label>
 

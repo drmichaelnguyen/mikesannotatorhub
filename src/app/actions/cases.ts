@@ -908,7 +908,7 @@ async function annotatorHasUnsubmittedCase(annotatorUserId: string): Promise<boo
     where: {
       annotatorId: annotatorUserId,
       isReference: false,
-      status: CaseStatus.ASSIGNED,
+      status: { in: [CaseStatus.ASSIGNED, CaseStatus.PAUSED] },
     },
   });
   return count > 0;
@@ -1352,7 +1352,8 @@ export async function updateCaseDetailsAction(input: {
       input.status !== CaseStatus.AUDITED &&
       input.status !== CaseStatus.REJECTED &&
       input.status !== CaseStatus.EXPIRED &&
-      input.status !== CaseStatus.ADMIN_COMPLETED
+      input.status !== CaseStatus.ADMIN_COMPLETED &&
+      input.status !== CaseStatus.PAUSED
     ) {
       return { ok: false as const, error: "status" as const };
     }
@@ -1494,7 +1495,8 @@ export async function updateCaseStatusAction(input: {
       input.status !== CaseStatus.AUDITED &&
       input.status !== CaseStatus.REJECTED &&
       input.status !== CaseStatus.EXPIRED &&
-      input.status !== CaseStatus.ADMIN_COMPLETED
+      input.status !== CaseStatus.ADMIN_COMPLETED &&
+      input.status !== CaseStatus.PAUSED
     ) {
       return { ok: false as const, error: "status" as const };
     }
@@ -1836,6 +1838,84 @@ export async function batchUpdateCasesAction(
   });
 }
 
+/** Reviewer pauses or resumes multiple cases.
+ * Pause: AVAILABLE / ASSIGNED / REJECTED → PAUSED (assignment kept).
+ * Resume: PAUSED → ASSIGNED if annotator set, else AVAILABLE.
+ */
+export async function batchSetCasePauseAction(
+  caseDbIds: string[],
+  paused: boolean,
+) {
+  return withActionLog("batchSetCasePauseAction", { caseDbIds, paused }, async () => {
+    await requireRole("REVIEWER");
+    const ids = [...new Set(caseDbIds.map((id) => id.trim()).filter(Boolean))];
+    if (ids.length === 0) {
+      return { ok: false as const, error: "no_cases" as const };
+    }
+
+    const rows = await prisma.annotationCase.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, status: true, annotatorId: true },
+    });
+
+    if (paused) {
+      const pauseable = rows.filter(
+        (row) =>
+          row.status === CaseStatus.AVAILABLE || row.status === CaseStatus.ASSIGNED,
+      );
+      if (pauseable.length === 0) {
+        return { ok: false as const, error: "none_pausable" as const };
+      }
+      const pauseableIds = pauseable.map((row) => row.id);
+      await prisma.annotationCase.updateMany({
+        where: {
+          id: { in: pauseableIds },
+          status: { in: [CaseStatus.AVAILABLE, CaseStatus.ASSIGNED] },
+        },
+        data: { status: CaseStatus.PAUSED },
+      });
+      revalidatePath("/reviewer");
+      revalidatePath("/annotator");
+      return {
+        ok: true as const,
+        updated: pauseableIds.length,
+        skipped: ids.length - pauseableIds.length,
+      };
+    }
+
+    const pausedRows = rows.filter((row) => row.status === CaseStatus.PAUSED);
+    if (pausedRows.length === 0) {
+      return { ok: false as const, error: "none_paused" as const };
+    }
+
+    const withAnnotator = pausedRows.filter((row) => row.annotatorId).map((row) => row.id);
+    const withoutAnnotator = pausedRows.filter((row) => !row.annotatorId).map((row) => row.id);
+
+    await prisma.$transaction(async (tx) => {
+      if (withAnnotator.length > 0) {
+        await tx.annotationCase.updateMany({
+          where: { id: { in: withAnnotator }, status: CaseStatus.PAUSED },
+          data: { status: CaseStatus.ASSIGNED },
+        });
+      }
+      if (withoutAnnotator.length > 0) {
+        await tx.annotationCase.updateMany({
+          where: { id: { in: withoutAnnotator }, status: CaseStatus.PAUSED },
+          data: { status: CaseStatus.AVAILABLE },
+        });
+      }
+    });
+
+    revalidatePath("/reviewer");
+    revalidatePath("/annotator");
+    return {
+      ok: true as const,
+      updated: pausedRows.length,
+      skipped: ids.length - pausedRows.length,
+    };
+  });
+}
+
 /** Reviewer removes multiple unclaimed available cases from the pool. */
 export async function batchDeleteCasesAction(caseDbIds: string[]) {
   return withActionLog("batchDeleteCasesAction", { caseDbIds }, async () => {
@@ -1908,6 +1988,9 @@ export async function submitAnnotationAction(
     }
     if (row.isReference) {
       return { ok: false as const, error: "forbidden" };
+    }
+    if (row.status === CaseStatus.PAUSED) {
+      return { ok: false as const, error: "paused" as const };
     }
     if (row.status === CaseStatus.EXPIRED || (row.expiresAt && row.expiresAt <= now)) {
       return { ok: false as const, error: "expired" as const };
@@ -2695,6 +2778,7 @@ export async function listCasesForAnnotator(userId: string) {
             CaseStatus.AUDITED,
             CaseStatus.EXPIRED,
             CaseStatus.ADMIN_COMPLETED,
+            CaseStatus.PAUSED,
           ],
         },
       },

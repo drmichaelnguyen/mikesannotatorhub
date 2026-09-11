@@ -289,7 +289,9 @@ function AnnotatorSubmitForm({
                   ? tk("discussion_template_screenshot_required")
                   : state.error === "expired"
                     ? tk("case_expired_action")
-                    : tk("required")}
+                    : state.error === "paused"
+                      ? tk("case_paused_banner")
+                      : tk("required")}
           </p>
           {(state.error === "template" || state.error === "template_images") &&
             "missingTemplateFields" in state &&
@@ -361,6 +363,7 @@ export function AnnotatorWorkboard({
       CaseStatus.ASSIGNED,
       CaseStatus.SUBMITTED,
       CaseStatus.REJECTED,
+      CaseStatus.PAUSED,
     ]);
     const doneStatuses = new Set<CaseStatus>([
       CaseStatus.ACCEPTED,
@@ -377,11 +380,21 @@ export function AnnotatorWorkboard({
   }, [mine, rejected]);
 
   const hasUnsubmittedCase = useMemo(
-    () => mine.some((c) => !c.isReference && c.status === CaseStatus.ASSIGNED),
+    () =>
+      mine.some(
+        (c) =>
+          !c.isReference &&
+          (c.status === CaseStatus.ASSIGNED || c.status === CaseStatus.PAUSED),
+      ),
     [mine],
   );
   const activeAssignedCase = useMemo(
-    () => mine.find((c) => !c.isReference && c.status === CaseStatus.ASSIGNED) ?? null,
+    () =>
+      mine.find(
+        (c) =>
+          !c.isReference &&
+          (c.status === CaseStatus.ASSIGNED || c.status === CaseStatus.PAUSED),
+      ) ?? null,
     [mine],
   );
   const takeBlockReason = useMemo(
@@ -968,6 +981,9 @@ export function AnnotatorWorkboard({
                           isResubmit={c.status === CaseStatus.REJECTED}
                         />
                       )}
+                    {mode === "active" && c.status === CaseStatus.PAUSED && (
+                      <span className="text-xs text-[var(--muted)]">{tk("case_paused_banner")}</span>
+                    )}
                     {mode === "active" && c.status === CaseStatus.ASSIGNED && (
                       <AnnotatorUnassignForm lang={lang} caseDbId={c.id} />
                     )}

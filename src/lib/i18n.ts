@@ -168,6 +168,20 @@ export const dict = {
     status_REJECTED: "Rejected",
     status_EXPIRED: "Expired",
     status_ADMIN_COMPLETED: "Completed by admin",
+    status_PAUSED: "Paused",
+    case_paused_banner:
+      "This case is paused. You cannot submit until a reviewer resumes it.",
+    reviewer_batch_pause: "Pause selected",
+    reviewer_batch_unpause: "Resume selected",
+    reviewer_batch_pause_confirm:
+      "Pause {count} case(s)? Annotators will not be able to take or submit them until resumed.",
+    reviewer_batch_unpause_confirm:
+      "Resume {count} paused case(s)? Available cases return to the pool; assigned cases stay with their annotator.",
+    reviewer_batch_pause_none:
+      "No selected cases can be paused (only Available or Assigned).",
+    reviewer_batch_unpause_none: "No selected cases are paused.",
+    reviewer_batch_pause_result: "Paused {updated} case(s). Skipped {skipped}.",
+    reviewer_batch_unpause_result: "Resumed {updated} case(s). Skipped {skipped}.",
     reviewer_title: "Reviewer — cases",
     reviewer_create: "New case",
     reviewer_guide_section: "Guides",
@@ -734,6 +748,20 @@ export const dict = {
     status_REJECTED: "Từ chối",
     status_EXPIRED: "Đã hết hạn",
     status_ADMIN_COMPLETED: "Admin đã hoàn thành",
+    status_PAUSED: "Tạm dừng",
+    case_paused_banner:
+      "Ca này đang tạm dừng. Bạn không thể nộp cho đến khi người duyệt mở lại.",
+    reviewer_batch_pause: "Tạm dừng đã chọn",
+    reviewer_batch_unpause: "Mở lại đã chọn",
+    reviewer_batch_pause_confirm:
+      "Tạm dừng {count} ca? Annotator sẽ không lấy hoặc nộp được cho đến khi mở lại.",
+    reviewer_batch_unpause_confirm:
+      "Mở lại {count} ca đang tạm dừng? Ca trống trở lại pool; ca đã giao giữ nguyên annotator.",
+    reviewer_batch_pause_none:
+      "Không có ca nào trong lựa chọn có thể tạm dừng (chỉ Available hoặc Assigned).",
+    reviewer_batch_unpause_none: "Không có ca nào đang tạm dừng trong lựa chọn.",
+    reviewer_batch_pause_result: "Đã tạm dừng {updated} ca. Bỏ qua {skipped}.",
+    reviewer_batch_unpause_result: "Đã mở lại {updated} ca. Bỏ qua {skipped}.",
     reviewer_title: "Người duyệt — danh sách ca",
     reviewer_create: "Tạo ca mới",
     reviewer_guide_section: "Guides",
