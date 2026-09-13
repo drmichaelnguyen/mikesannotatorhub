@@ -902,13 +902,13 @@ async function annotatorHasPendingReviewAcknowledgment(annotatorUserId: string):
   return rows.some((r) => r.reviews[0] && r.reviews[0].id !== r.annotatorAcknowledgedReviewId);
 }
 
-/** True when the annotator holds a case they have not submitted yet. */
+/** True when the annotator holds an actively assigned case (not paused/expired). */
 async function annotatorHasUnsubmittedCase(annotatorUserId: string): Promise<boolean> {
   const count = await prisma.annotationCase.count({
     where: {
       annotatorId: annotatorUserId,
       isReference: false,
-      status: { in: [CaseStatus.ASSIGNED, CaseStatus.PAUSED] },
+      status: CaseStatus.ASSIGNED,
     },
   });
   return count > 0;

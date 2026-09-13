@@ -380,21 +380,11 @@ export function AnnotatorWorkboard({
   }, [mine, rejected]);
 
   const hasUnsubmittedCase = useMemo(
-    () =>
-      mine.some(
-        (c) =>
-          !c.isReference &&
-          (c.status === CaseStatus.ASSIGNED || c.status === CaseStatus.PAUSED),
-      ),
+    () => mine.some((c) => !c.isReference && c.status === CaseStatus.ASSIGNED),
     [mine],
   );
   const activeAssignedCase = useMemo(
-    () =>
-      mine.find(
-        (c) =>
-          !c.isReference &&
-          (c.status === CaseStatus.ASSIGNED || c.status === CaseStatus.PAUSED),
-      ) ?? null,
+    () => mine.find((c) => !c.isReference && c.status === CaseStatus.ASSIGNED) ?? null,
     [mine],
   );
   const takeBlockReason = useMemo(

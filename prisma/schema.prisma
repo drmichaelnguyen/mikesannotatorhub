@@ -27,7 +27,7 @@ enum CaseStatus {
   EXPIRED
   /** Closed by a reviewer so the case leaves the grab pool without a normal audit/payout. */
   ADMIN_COMPLETED
-  /** Temporarily held: annotators cannot take or submit until status changes. */
+  /** Temporarily held: annotators cannot submit; may take another case from the pool. */
   PAUSED
 }
 
