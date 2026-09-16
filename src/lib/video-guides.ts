@@ -53,27 +53,38 @@ export function videoGuideUrlsToDbColumn(urls: string[]): string {
   return JSON.stringify(urls);
 }
 
-/** Returns embed src for YouTube watch / short / youtu.be URLs, or null. */
-export function tryYoutubeEmbedSrc(url: string): string | null {
+/** Returns YouTube video id for watch / short / youtu.be / embed URLs, or null. */
+export function tryYoutubeVideoId(url: string): string | null {
   try {
     const u = new URL(url.trim());
     const host = u.hostname.replace(/^www\./, "").toLowerCase();
     if (host === "youtu.be") {
       const id = u.pathname.replace(/^\//, "").split("/")[0];
-      return id ? `https://www.youtube-nocookie.com/embed/${id}` : null;
+      return id || null;
     }
     if (host === "youtube.com" || host === "m.youtube.com" || host === "www.youtube.com") {
       if (u.pathname === "/watch") {
-        const id = u.searchParams.get("v");
-        return id ? `https://www.youtube-nocookie.com/embed/${id}` : null;
+        return u.searchParams.get("v");
       }
       const m = u.pathname.match(/^\/embed\/([^/?]+)/);
-      if (m?.[1]) return `https://www.youtube-nocookie.com/embed/${m[1]}`;
+      if (m?.[1]) return m[1];
       const shorts = u.pathname.match(/^\/shorts\/([^/?]+)/);
-      if (shorts?.[1]) return `https://www.youtube-nocookie.com/embed/${shorts[1]}`;
+      if (shorts?.[1]) return shorts[1];
     }
   } catch {
     return null;
   }
   return null;
+}
+
+/** Returns embed src for YouTube watch / short / youtu.be URLs, or null. */
+export function tryYoutubeEmbedSrc(url: string, opts?: { autoplay?: boolean }): string | null {
+  const id = tryYoutubeVideoId(url);
+  if (!id) return null;
+  const q = opts?.autoplay ? "?autoplay=1" : "";
+  return `https://www.youtube-nocookie.com/embed/${id}${q}`;
+}
+
+export function youtubeThumbnailUrl(videoId: string): string {
+  return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 }

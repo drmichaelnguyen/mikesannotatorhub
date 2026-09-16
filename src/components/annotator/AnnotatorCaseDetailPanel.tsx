@@ -235,27 +235,30 @@ export function AnnotatorCaseDetailPanel({
             </dd>
           </div>
         )}
-        <CaseVideoGuidesSection lang={lang} urls={videoUrls} />
-        <CaseContinuityReportSection
-          lang={lang}
-          caseDbId={row.id}
-          hasContinuityReport={row.hasContinuityReport}
-        />
         {showGuideline && row.guideline.trim() !== "" && (
           <div className="md:col-span-2">
             <dt className="sr-only">{tk("case_guideline")}</dt>
             <dd className="m-0">
-              <details className="rounded-md border border-[var(--border)] bg-[var(--bg)]">
-                <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-[var(--muted)] hover:bg-[var(--surface)]">
+              <details
+                open
+                className="rounded-md border-2 border-[var(--accent)]/50 bg-[var(--surface)] shadow-sm"
+              >
+                <summary className="cursor-pointer px-3 py-2.5 text-base font-semibold tracking-wide text-[var(--text)] hover:bg-[var(--bg)]">
                   {tk("case_guideline")}
                 </summary>
-                <div className="border-t border-[var(--border)] px-3 py-2 text-sm whitespace-pre-wrap text-[var(--text)]">
+                <div className="border-t border-[var(--accent)]/30 px-3 py-3 text-base leading-relaxed whitespace-pre-wrap text-[var(--text)]">
                   {row.guideline}
                 </div>
               </details>
             </dd>
           </div>
         )}
+        <CaseVideoGuidesSection lang={lang} urls={videoUrls} />
+        <CaseContinuityReportSection
+          lang={lang}
+          caseDbId={row.id}
+          hasContinuityReport={row.hasContinuityReport}
+        />
         {row.radiologistFinding.trim() !== "" && (
           <div className="md:col-span-2">
             <dt className="sr-only">{tk("case_radiologist_finding")}</dt>
