@@ -88,3 +88,48 @@ export function tryYoutubeEmbedSrc(url: string, opts?: { autoplay?: boolean }): 
 export function youtubeThumbnailUrl(videoId: string): string {
   return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 }
+
+/** Match http(s) URLs in free text (stops at whitespace / common wrappers). */
+const HTTP_URL_IN_TEXT_RE = /https?:\/\/[^\s<>"'`]+/gi;
+
+function stripTrailingUrlPunctuation(raw: string): { url: string; matchedLength: number } {
+  let end = raw.length;
+  while (end > 0 && /[.,;:!?)\]\}'"]/.test(raw[end - 1]!)) {
+    end -= 1;
+  }
+  return { url: raw.slice(0, end), matchedLength: raw.length };
+}
+
+export type TextYoutubePart =
+  | { type: "text"; value: string }
+  | { type: "youtube"; url: string; videoId: string };
+
+/** Split free text into plain segments and YouTube URL segments for in-app embeds. */
+export function splitTextWithYoutubeUrls(text: string): TextYoutubePart[] {
+  if (!text) return [];
+  const parts: TextYoutubePart[] = [];
+  const re = new RegExp(HTTP_URL_IN_TEXT_RE.source, "gi");
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const raw = m[0];
+    const { url, matchedLength } = stripTrailingUrlPunctuation(raw);
+    const start = m.index;
+    if (start > last) {
+      parts.push({ type: "text", value: text.slice(last, start) });
+    }
+    const videoId = url ? tryYoutubeVideoId(url) : null;
+    if (videoId && url) {
+      parts.push({ type: "youtube", url, videoId });
+      const trailing = raw.slice(url.length);
+      if (trailing) parts.push({ type: "text", value: trailing });
+    } else {
+      parts.push({ type: "text", value: raw });
+    }
+    last = start + matchedLength;
+  }
+  if (last < text.length) {
+    parts.push({ type: "text", value: text.slice(last) });
+  }
+  return parts.length > 0 ? parts : [{ type: "text", value: text }];
+}

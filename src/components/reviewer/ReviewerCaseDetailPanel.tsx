@@ -6,6 +6,7 @@ import { adminCompleteCaseAction, deleteCaseAction, unassignCaseAction } from "@
 import { CaseContinuityReportSection } from "@/components/CaseContinuityReportSection";
 import { CaseDiscussion } from "@/components/CaseDiscussion";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
+import { CommentBodyWithVideos } from "@/components/CommentBodyWithVideos";
 import { CaseVideoGuidesSection } from "@/components/CaseVideoGuides";
 import { CopyTextButton } from "@/components/CopyTextButton";
 import { ReviewCasePanel } from "@/components/ReviewCasePanel";
@@ -499,9 +500,10 @@ function ReviewerCaseDetailPanelImpl({
         />
       </div>
       {c.reviews[0]?.comment && c.status !== CaseStatus.SUBMITTED && (
-        <p className="text-sm text-[var(--muted)]">
-          {tk("last_review")}: {c.reviews[0].comment}
-        </p>
+        <div className="text-sm text-[var(--muted)]">
+          <span className="font-medium">{tk("last_review")}:</span>
+          <CommentBodyWithVideos lang={lang} text={c.reviews[0].comment} className="mt-1 text-[var(--text)]" />
+        </div>
       )}
       {c.status === CaseStatus.AVAILABLE && !c.annotator && (
         <>

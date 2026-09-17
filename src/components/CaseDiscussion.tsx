@@ -6,6 +6,7 @@ import {
 } from "@/app/actions/export";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
 import { CommentChoiceInput } from "@/components/CommentChoiceInput";
+import { CommentBodyWithVideos } from "@/components/CommentBodyWithVideos";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import { createCaseNote, deleteCaseNote, fetchCaseNotes, updateCaseNote } from "@/lib/case-note-api";
 import type { CommentChoiceMode } from "@/lib/comment-choices";
@@ -1031,7 +1032,7 @@ function NoteItem({
                         </div>
                       ) : null}
                       {bodyDisplay ? (
-                        <p className="mt-2 whitespace-pre-wrap text-[var(--text)]">{bodyDisplay}</p>
+                        <CommentBodyWithVideos lang={lang} text={bodyDisplay} className="mt-2" />
                       ) : null}
                     </>
                   );

@@ -5,6 +5,7 @@ import { AnnotatorRedbrickFlagButton } from "@/components/annotator/AnnotatorRed
 import { CaseContinuityReportSection } from "@/components/CaseContinuityReportSection";
 import { CaseDiscussion } from "@/components/CaseDiscussion";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
+import { CommentBodyWithVideos } from "@/components/CommentBodyWithVideos";
 import { TopicDetailModal } from "@/components/TopicDetailModal";
 import { CaseVideoGuidesSection } from "@/components/CaseVideoGuides";
 import { CopyTextButton } from "@/components/CopyTextButton";
@@ -441,10 +442,10 @@ export function AnnotatorCaseDetailPanel({
         )}
       </dl>
       {last?.comment && (
-        <p className="rounded-md bg-[var(--bg)] p-2 text-sm">
+        <div className="rounded-md bg-[var(--bg)] p-2 text-sm">
           <span className="font-medium text-[var(--text)]">{tk("last_review")}: </span>
-          {last.comment}
-        </p>
+          <CommentBodyWithVideos lang={lang} text={last.comment} className="mt-1" />
+        </div>
       )}
       <div>
         <h3 className="mb-2 text-sm font-medium text-[var(--muted)]">{tk("discussion_title")}</h3>

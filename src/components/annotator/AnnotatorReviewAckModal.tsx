@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { acknowledgeAnnotatorReviewAction, type PendingReviewAckCase } from "@/app/actions/cases";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
+import { CommentBodyWithVideos } from "@/components/CommentBodyWithVideos";
 import { StarRating } from "@/components/StarRating";
 import { dispatchOpenCaseDetail } from "@/lib/case-detail-url";
 import { formatDate } from "@/lib/format";
@@ -120,8 +121,8 @@ export function AnnotatorReviewAckModal({
           {current.review.comment?.trim() ? (
             <div>
               <div className="text-xs text-[var(--muted)]">{tk("review_comment")}</div>
-              <blockquote className="mt-1 whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--surface)] p-3 text-[var(--text)]">
-                {current.review.comment}
+              <blockquote className="mt-1 rounded border border-[var(--border)] bg-[var(--surface)] p-3 text-[var(--text)]">
+                <CommentBodyWithVideos lang={lang} text={current.review.comment} />
               </blockquote>
             </div>
           ) : (
