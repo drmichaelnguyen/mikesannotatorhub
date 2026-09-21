@@ -5,6 +5,7 @@ import {
   updateCaseDetailsAction,
   updateCaseReferenceAction,
   updateCaseStatusAction,
+  updateCaseTimingAction,
 } from "@/app/actions/cases";
 import { CaseStatus } from "@prisma/client";
 
@@ -43,6 +44,26 @@ export async function PATCH(
           "isReference" in body
             ? Boolean((body as { isReference?: unknown }).isReference)
             : undefined,
+      });
+      return NextResponse.json(result);
+    }
+
+    if (
+      keys.length === 2 &&
+      keys.includes("deadline") &&
+      keys.includes("expiresAt")
+    ) {
+      const timing = body as { deadline?: unknown; expiresAt?: unknown };
+      if (
+        (timing.deadline !== null && typeof timing.deadline !== "string") ||
+        (timing.expiresAt !== null && typeof timing.expiresAt !== "string")
+      ) {
+        return NextResponse.json({ ok: false as const, error: "deadline" as const }, { status: 400 });
+      }
+      const result = await updateCaseTimingAction({
+        caseDbId,
+        deadline: timing.deadline as string | null,
+        expiresAt: timing.expiresAt as string | null,
       });
       return NextResponse.json(result);
     }

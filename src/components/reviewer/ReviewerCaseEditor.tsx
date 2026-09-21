@@ -12,6 +12,7 @@ import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import { parseVideoGuideUrlsInput } from "@/lib/video-guides";
 import { toDatetimeLocalValue } from "@/lib/format";
+import { adjustExpiryForDeadlineChange } from "@/lib/case-timing-edit";
 import { CaseStatus, CompensationType } from "@prisma/client";
 
 const CASE_EDIT_ERROR_KEYS = new Set<string>([
@@ -213,6 +214,28 @@ export function ReviewerCaseEditor({
         deadline === toDatetimeLocalValue(c.deadline) &&
         expiresAt === toDatetimeLocalValue(c.expiresAt);
 
+      const timingOnlyChanged =
+        (deadlineIso !== c.deadline || expiresAtIso !== c.expiresAt) &&
+        caseId === c.caseId &&
+        status === c.status &&
+        details.project === c.project &&
+        details.redbrickProject === c.redbrickProject &&
+        details.guideId === (c.guide?.id ?? "") &&
+        sameStringArray(
+          details.topicIds,
+          c.topics.map((topic) => topic.id),
+        ) &&
+        details.guideline === c.guideline &&
+        details.radiologistFinding === c.radiologistFinding &&
+        sameStringArray(parsedVideoGuideUrls, c.videoGuideUrls) &&
+        details.scopeOfWork === c.scopeOfWork &&
+        minMinutesPerCase === c.minMinutesPerCase &&
+        maxMinutesPerCase === c.maxMinutesPerCase &&
+        details.compensationType === c.compensationType &&
+        compensationAmount === c.compensationAmount &&
+        annotatorBonus === c.annotatorBonus &&
+        isReference === c.isReference;
+
       const detailsChanged =
         caseId !== c.caseId ||
         status !== c.status ||
@@ -242,7 +265,9 @@ export function ReviewerCaseEditor({
             status,
             ...(isReference !== c.isReference ? { isReference } : {}),
           }
-        : detailsChanged
+        : timingOnlyChanged
+          ? { deadline: deadlineIso, expiresAt: expiresAtIso }
+          : detailsChanged
           ? {
               caseId,
               status,
@@ -343,7 +368,13 @@ export function ReviewerCaseEditor({
           <input
             type="datetime-local"
             value={deadline}
-            onChange={(e) => setDeadline(e.target.value)}
+            onChange={(e) => {
+              const nextDeadline = e.target.value;
+              setExpiresAt((currentExpiry) =>
+                adjustExpiryForDeadlineChange(deadline, nextDeadline, currentExpiry),
+              );
+              setDeadline(nextDeadline);
+            }}
             className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2"
           />
           <p className="mt-1 text-xs text-[var(--muted)]">{tk("case_deadline_hint")}</p>

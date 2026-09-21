@@ -1476,6 +1476,52 @@ export async function updateCaseReferenceAction(input: {
   });
 }
 
+/** Change case timing only, without re-validating unrelated legacy fields. */
+export async function updateCaseTimingAction(input: {
+  caseDbId: string;
+  deadline: string | null;
+  expiresAt: string | null;
+}) {
+  return withActionLog("updateCaseTimingAction", input, async () => {
+    await requireRole("REVIEWER");
+    const caseDbId = input.caseDbId.trim();
+    if (!caseDbId) return { ok: false as const, error: "case_id" as const };
+
+    let deadline: Date | null = null;
+    if (input.deadline != null && input.deadline !== "") {
+      deadline = new Date(input.deadline);
+      if (Number.isNaN(deadline.getTime())) {
+        return { ok: false as const, error: "deadline" as const };
+      }
+    }
+
+    let expiresAt: Date | null = null;
+    if (input.expiresAt != null && input.expiresAt !== "") {
+      expiresAt = new Date(input.expiresAt);
+      if (Number.isNaN(expiresAt.getTime())) {
+        return { ok: false as const, error: "expiry" as const };
+      }
+    }
+    if (deadline && expiresAt && expiresAt <= deadline) {
+      return { ok: false as const, error: "expiry" as const };
+    }
+
+    const row = await prisma.annotationCase.findUnique({
+      where: { id: caseDbId },
+      select: { id: true },
+    });
+    if (!row) return { ok: false as const, error: "notfound" as const };
+
+    await prisma.annotationCase.update({
+      where: { id: caseDbId },
+      data: { deadline, expiresAt },
+    });
+    revalidatePath("/reviewer");
+    revalidatePath("/annotator");
+    return { ok: true as const };
+  });
+}
+
 /** Change case status only — skips full field re-validation (for reopen / re-audit). */
 export async function updateCaseStatusAction(input: {
   caseDbId: string;
