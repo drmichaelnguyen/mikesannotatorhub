@@ -28,7 +28,7 @@ const messages = {
   conflict: ["A case with this ID, Redbrick project and scope already exists. Refresh the case list and check the existing cases before retrying.", "Ca với mã, dự án Redbrick và phạm vi này đã tồn tại. Làm mới danh sách và kiểm tra ca hiện có trước khi thử lại."],
   server: ["The server could not finish creating cases. Check the case list before retrying: some cases or attachments may already have been saved. Share the reference below if this continues.", "Máy chủ không thể hoàn tất tạo ca. Kiểm tra danh sách trước khi thử lại: một số ca hoặc tệp có thể đã được lưu. Gửi mã tham chiếu bên dưới nếu lỗi tiếp diễn."],
   network: ["The request could not be completed. Check your connection and the case list before retrying. If you attached a large folder, try fewer files (under 15 MB total). Your entries are still here.", "Không thể hoàn tất yêu cầu. Kiểm tra kết nối và danh sách ca trước khi thử lại. Nếu đính kèm thư mục lớn, thử ít tệp hơn (tổng dưới 15 MB). Nội dung đã nhập vẫn được giữ."],
-  upload_size: ["The attachments are too large. Select fewer files (under 15 MB total), then try again.", "Tệp đính kèm quá lớn. Chọn ít tệp hơn (tổng dưới 15 MB) rồi thử lại."],
+  upload_size: ["The attachments are too large. Key-image folders can be up to 500 MB (uploaded in small chunks). Continuity reports stay under 20 MB.", "Tệp đính kèm quá lớn. Thư mục ảnh key tối đa 500 MB (tải theo từng phần nhỏ). Báo cáo continuity dưới 20 MB."],
 } as const;
 export type CreateCaseError = keyof typeof messages;
 export function createCaseErrorMessage(error: CreateCaseError, lang: Lang) {

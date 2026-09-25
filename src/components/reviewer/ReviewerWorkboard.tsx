@@ -26,6 +26,7 @@ import {
   deleteCaseAction,
   reviewCaseAction,
   reviewerAssignCaseAction,
+  uploadKeyImagesChunkAction,
 } from "@/app/actions/cases";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
@@ -33,6 +34,7 @@ import {
   CaseDetailsFields,
   type CaseDetailsFieldsValue,
 } from "@/components/CaseDetailsFields";
+import { KeyImageUploadProgressBar } from "@/components/KeyImageUploadProgressBar";
 import {
   readAnnotatorsPanelFromBrowser,
   replaceCaseQueryInBrowser,
@@ -53,10 +55,19 @@ import {
 import { createCaseNote } from "@/lib/case-note-api";
 import { matchContinuityReportFileToCaseId } from "@/lib/continuity-report-filename";
 import {
+  isKeyImageFilename,
+  matchKeyImagePathToCaseId,
+} from "@/lib/key-image-path";
+import {
   looksLikeRadiologistFindingsTable,
   matchFindingsToCaseIds,
   parseRadiologistFindingsTable,
 } from "@/lib/radiologist-findings";
+import {
+  KEY_IMAGE_MAX_TOTAL_BYTES,
+  uploadKeyImagesInChunks,
+  type KeyImageUploadProgress,
+} from "@/lib/upload-key-images-client";
 import { StarRating } from "@/components/StarRating";
 import { ReviewerCaseDetailPanel } from "@/components/reviewer/ReviewerCaseDetailPanel";
 import { getClipboardImageFile, getClipboardImageFiles, readFileAsDataUrl, readFilesAsDataUrls } from "@/lib/client-image-data";
@@ -877,6 +888,8 @@ export function ReviewerWorkboard({
   const [batchSuccess, setBatchSuccess] = useState<string | null>(null);
   const [batchAssignment, setBatchAssignment] = useState("KEEP");
   const [batchContinuityFiles, setBatchContinuityFiles] = useState<File[]>([]);
+  const [batchKeyImageFiles, setBatchKeyImageFiles] = useState<File[]>([]);
+  const [keyImageProgress, setKeyImageProgress] = useState<KeyImageUploadProgress | null>(null);
   const [annotatorFocusId, setAnnotatorFocusId] = useState<string | null>(null);
   const [annotatorsPanelOpen, setAnnotatorsPanelOpen] = useState(
     () => searchParams.get("annotators") === "1",
@@ -941,6 +954,28 @@ export function ReviewerWorkboard({
     }
     return { matched, unmatched };
   }, [batchContinuityFiles, batchTargetRows]);
+  const batchKeyImagesPreview = useMemo(() => {
+    const caseIds = batchTargetRows.map((row) => row.caseId);
+    const byCase = new Map<string, number>();
+    const unmatched: string[] = [];
+    for (const file of batchKeyImageFiles) {
+      const relativePath = file.webkitRelativePath || file.name;
+      if (!isKeyImageFilename(relativePath)) {
+        unmatched.push(relativePath);
+        continue;
+      }
+      const caseId = matchKeyImagePathToCaseId(relativePath, caseIds);
+      if (!caseId) {
+        unmatched.push(relativePath);
+        continue;
+      }
+      byCase.set(caseId, (byCase.get(caseId) ?? 0) + 1);
+    }
+    return {
+      matched: [...byCase.entries()].map(([caseId, count]) => ({ caseId, count })),
+      unmatched,
+    };
+  }, [batchKeyImageFiles, batchTargetRows]);
   const batchFindingsPreview = useMemo(() => {
     const parsed = parseRadiologistFindingsTable(batchFindingsPaste);
     return matchFindingsToCaseIds(
@@ -1328,12 +1363,17 @@ export function ReviewerWorkboard({
     setErr(null);
     start(async () => {
       try {
-        const uploadBytes = batchContinuityFiles.reduce((total, file) => total + file.size, 0) + new Blob([JSON.stringify(batchDetails), batchFindingsPaste]).size;
-        if (uploadBytes > 15 * 1024 * 1024) { setErr(createCaseErrorMessage("upload_size", lang)); return; }
+        const continuityBytes = batchContinuityFiles.reduce((total, file) => total + file.size, 0);
+        const keyImageBytes = batchKeyImageFiles.reduce((total, file) => total + file.size, 0);
+        if (continuityBytes > 20 * 1024 * 1024 || keyImageBytes > KEY_IMAGE_MAX_TOTAL_BYTES) {
+          setErr(createCaseErrorMessage("upload_size", lang));
+          return;
+        }
         const continuityReportFormData = new FormData();
         for (const file of batchContinuityFiles) {
           continuityReportFormData.append("continuityReports", file);
         }
+        setKeyImageProgress(null);
         const findingsParsed = parseRadiologistFindingsTable(batchFindingsPaste);
         const batchTargetIds = batchTargetRows.map((row) => row.id);
         const findingsByCaseId = Object.fromEntries(
@@ -1375,11 +1415,38 @@ export function ReviewerWorkboard({
           setErr(message + ("referenceId" in res && res.referenceId ? ` (${res.referenceId})` : ""));
           return;
         }
-        setBatchSuccess(`${lang === "vi" ? "Đã cập nhật" : "Updated"} ${res.updated} ${lang === "vi" ? "ca" : "cases"}. ${lang === "vi" ? "Báo cáo đính kèm" : "Reports attached"}: ${res.continuityReportsAttached}.${res.continuityReportsUnmatched.length ? ` ${tk("case_continuity_report_preview_unmatched")}: ${res.continuityReportsUnmatched.join(", ")}` : ""}`);
+
+        let keyImagesAttached = 0;
+        let keyImagesUnmatched: string[] = [];
+        if (batchKeyImageFiles.length > 0) {
+          const clearCaseIds = batchKeyImagesPreview.matched.map((row) => row.caseId);
+          const uploadRes = await uploadKeyImagesInChunks({
+            files: batchKeyImageFiles,
+            caseIds: batchTargetRows.map((row) => row.caseId),
+            clearCaseIds,
+            caseDbIds: batchTargetIds,
+            onProgress: setKeyImageProgress,
+            uploadChunk: async (chunkFd, meta) =>
+              uploadKeyImagesChunkAction(
+                {
+                  caseIds: meta.caseIds,
+                  clearCaseIds: meta.clearCaseIds,
+                  caseDbIds: meta.caseDbIds,
+                },
+                chunkFd,
+              ),
+          });
+          keyImagesAttached = uploadRes.matchedCaseCount;
+          keyImagesUnmatched = uploadRes.unmatchedPaths;
+        }
+        setKeyImageProgress(null);
+
+        setBatchSuccess(`${lang === "vi" ? "Đã cập nhật" : "Updated"} ${res.updated} ${lang === "vi" ? "ca" : "cases"}. ${lang === "vi" ? "Báo cáo đính kèm" : "Reports attached"}: ${res.continuityReportsAttached}.${res.continuityReportsUnmatched.length ? ` ${tk("case_continuity_report_preview_unmatched")}: ${res.continuityReportsUnmatched.join(", ")}` : ""}${keyImagesAttached ? ` ${tk("batch_result_key_images_attached")}: ${keyImagesAttached}.` : ""}${keyImagesUnmatched.length ? ` ${tk("case_key_images_preview_unmatched")}: ${keyImagesUnmatched.slice(0, 8).join(", ")}` : ""}`);
         setBatchEditOpen(false);
         clearSelection();
         refresh();
       } catch {
+        setKeyImageProgress(null);
         setErr(lang === "vi" ? "Không thể hoàn tất cập nhật. Kiểm tra danh sách ca trước khi thử lại; một số thay đổi có thể đã lưu. Nội dung nhập vẫn được giữ." : "Could not finish updating cases. Check the case list before retrying; some changes may already be saved. Your entries are still here.");
       }
     });
@@ -2103,6 +2170,57 @@ export function ReviewerWorkboard({
                 )}
               </div>
               <div className="md:col-span-2">
+                <label htmlFor="batch-case-key-images" className="text-sm text-[var(--muted)]">
+                  {tk("case_key_images_upload")}
+                </label>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">
+                  {tk("case_key_images_upload_hint")}
+                </p>
+                <input
+                  id="batch-case-key-images"
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  className="mt-2 block w-full text-sm"
+                  onChange={(e) =>
+                    setBatchKeyImageFiles(Array.from(e.target.files ?? []))
+                  }
+                  {...({
+                    webkitdirectory: "",
+                    directory: "",
+                  } as InputHTMLAttributes<HTMLInputElement>)}
+                />
+                {keyImageProgress && (
+                  <div className="mt-2">
+                    <KeyImageUploadProgressBar
+                      progress={keyImageProgress}
+                      label={tk("case_key_images_uploading")}
+                    />
+                  </div>
+                )}
+                {(batchKeyImagesPreview.matched.length > 0 ||
+                  batchKeyImagesPreview.unmatched.length > 0) && (
+                  <div className="mt-2 rounded-md border border-[var(--border)] bg-[var(--bg)] p-3 text-xs">
+                    {batchKeyImagesPreview.matched.length > 0 && (
+                      <p>
+                        <span className="font-medium">
+                          {tk("case_key_images_preview_matched")}:
+                        </span>{" "}
+                        {batchKeyImagesPreview.matched
+                          .map((row) => `${row.caseId} ← ${row.count}`)
+                          .join(", ")}
+                      </p>
+                    )}
+                    {batchKeyImagesPreview.unmatched.length > 0 && (
+                      <p className="mt-1 text-[var(--warn)]">
+                        {tk("case_key_images_preview_unmatched")}:{" "}
+                        {batchKeyImagesPreview.unmatched.slice(0, 8).join(", ")}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="md:col-span-2">
                 <label htmlFor="batch-case-rad-findings" className="text-sm text-[var(--muted)]">
                   {tk("case_radiologist_findings_paste")}
                 </label>
@@ -2116,6 +2234,25 @@ export function ReviewerWorkboard({
                   onChange={(e) => setBatchFindingsPaste(e.target.value)}
                   placeholder={"study_id\tfinal_impressions\nasi-708cbd32-…\tThere is an indeterminate…"}
                   className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono text-sm"
+                />
+                <label htmlFor="batch-case-rad-findings-csv" className="mt-2 block text-xs text-[var(--muted)]">
+                  {tk("case_radiologist_findings_csv_upload")}
+                </label>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">
+                  {tk("case_radiologist_findings_csv_hint")}
+                </p>
+                <input
+                  id="batch-case-rad-findings-csv"
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="mt-1 block w-full text-sm"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const text = await file.text();
+                    setBatchFindingsPaste(text);
+                    e.target.value = "";
+                  }}
                 />
                 {(batchFindingsPreview.matched.length > 0 ||
                   batchFindingsPreview.unmatchedStudyIds.length > 0 ||

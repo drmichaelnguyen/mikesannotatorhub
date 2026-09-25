@@ -98,6 +98,9 @@ model AnnotationCase {
   annotatorAcknowledgedReviewId String?
   isReference        Boolean            @default(false)
   hasContinuityReport Boolean           @default(false)
+  /** Radiologist key images stored under uploads/key-images/{id}/. */
+  hasKeyImages       Boolean            @default(false)
+  keyImageCount      Int                @default(0)
   /** When the case is due; rush bonus uses hours from createdAt (issue time) to this. */
   deadline           DateTime?
   /** Hard cutoff. Active work becomes EXPIRED at this time and can no longer be claimed or submitted. */
