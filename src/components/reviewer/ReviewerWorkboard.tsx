@@ -22,6 +22,7 @@ import {
   adminCompleteCaseAction,
   batchDeleteCasesAction,
   batchSetCasePauseAction,
+  batchUpdateCaseStatusAction,
   batchUpdateCasesAction,
   deleteCaseAction,
   reviewCaseAction,
@@ -876,6 +877,7 @@ export function ReviewerWorkboard({
   const batchErrorRef = useRef<HTMLDivElement>(null);
   const [batchSuccess, setBatchSuccess] = useState<string | null>(null);
   const [batchAssignment, setBatchAssignment] = useState("KEEP");
+  const [batchStatus, setBatchStatus] = useState<CaseStatus | "">("");
   const [batchContinuityFiles, setBatchContinuityFiles] = useState<File[]>([]);
   const [annotatorFocusId, setAnnotatorFocusId] = useState<string | null>(null);
   const [annotatorsPanelOpen, setAnnotatorsPanelOpen] = useState(
@@ -1178,6 +1180,41 @@ export function ReviewerWorkboard({
     if (selectedCaseIds.length === 0) return;
     const selectedRows = cases.filter((row) => selectedCaseIds.includes(row.id));
     openBatchEditForRows(selectedRows);
+  }
+
+  function updateSelectedCaseStatus() {
+    if (selectedCaseIds.length === 0 || !batchStatus) return;
+    const label = statusLabel(lang, batchStatus);
+    const confirmMessage = tk("reviewer_batch_status_confirm")
+      .replace("{count}", String(selectedCaseIds.length))
+      .replace("{status}", label);
+    if (!window.confirm(confirmMessage)) return;
+
+    setErr(null);
+    start(async () => {
+      const res = await batchUpdateCaseStatusAction({
+        caseDbIds: selectedCaseIds,
+        status: batchStatus,
+      });
+      if (!res.ok) {
+        setErr(
+          res.error === "no_cases"
+            ? tk("reviewer_batch_apply_none")
+            : res.error === "notfound"
+              ? (lang === "vi" ? "Không tìm thấy một hoặc nhiều ca đã chọn." : "One or more selected cases could not be found.")
+            : createCaseErrorMessage(res.error, lang),
+        );
+        return;
+      }
+      setBatchSuccess(
+        tk("reviewer_batch_status_result")
+          .replace("{updated}", String(res.updated))
+          .replace("{status}", label),
+      );
+      setBatchStatus("");
+      clearSelection();
+      refresh();
+    });
   }
 
   function removeSelectedCases() {
@@ -1917,6 +1954,32 @@ export function ReviewerWorkboard({
           className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-white disabled:opacity-50"
         >
           {tk("reviewer_batch_edit_details")}
+        </button>
+        <select
+          aria-label={tk("reviewer_batch_status")}
+          value={batchStatus}
+          disabled={selectedCaseIds.length === 0 || pending}
+          onChange={(e) => setBatchStatus(e.target.value as CaseStatus | "")}
+          className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 disabled:opacity-50"
+        >
+          <option value="">{tk("reviewer_batch_status")}</option>
+          <option value={CaseStatus.AVAILABLE}>{tk("status_AVAILABLE")}</option>
+          <option value={CaseStatus.ASSIGNED}>{tk("status_ASSIGNED")}</option>
+          <option value={CaseStatus.SUBMITTED}>{tk("status_SUBMITTED")}</option>
+          <option value={CaseStatus.ACCEPTED}>{tk("status_ACCEPTED")}</option>
+          <option value={CaseStatus.AUDITED}>{tk("status_AUDITED")}</option>
+          <option value={CaseStatus.REJECTED}>{tk("status_REJECTED")}</option>
+          <option value={CaseStatus.EXPIRED}>{tk("status_EXPIRED")}</option>
+          <option value={CaseStatus.ADMIN_COMPLETED}>{tk("status_ADMIN_COMPLETED")}</option>
+          <option value={CaseStatus.PAUSED}>{tk("status_PAUSED")}</option>
+        </select>
+        <button
+          type="button"
+          disabled={selectedCaseIds.length === 0 || !batchStatus || pending}
+          onClick={updateSelectedCaseStatus}
+          className="rounded-md border border-[var(--accent)] bg-[var(--surface)] px-3 py-1.5 text-[var(--accent)] disabled:opacity-50"
+        >
+          {tk("reviewer_batch_status_apply")}
         </button>
         <button
           type="button"

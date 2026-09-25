@@ -2,6 +2,7 @@
 import { actionContext, errorCode, writeActionLog } from "@/lib/action-log";
 import type { CreateCaseError } from "@/lib/create-case-errors";
 import { resolveBatchCutoffs, resolveBatchPayChanges } from "@/lib/batch-case-edit";
+import { restoredStatusForDeadlineExtension } from "@/lib/case-timing-edit";
 import { getProjectQualityBonuses, getProjectFiveStarBonusPercent } from "@/lib/project-quality-settings";
 import { isValidFiveStarBonusPercent, resolveCaseFiveStarBonusPercent } from "@/lib/project-quality-bonus";
 import { withActionLog } from "@/lib/logged-action";
@@ -1508,13 +1509,32 @@ export async function updateCaseTimingAction(input: {
 
     const row = await prisma.annotationCase.findUnique({
       where: { id: caseDbId },
-      select: { id: true },
+      select: {
+        id: true,
+        status: true,
+        deadline: true,
+        annotatorId: true,
+        completedAt: true,
+      },
     });
     if (!row) return { ok: false as const, error: "notfound" as const };
 
+    const restoredStatus = restoredStatusForDeadlineExtension({
+      currentStatus: row.status,
+      currentDeadline: row.deadline,
+      nextDeadline: deadline,
+      nextExpiresAt: expiresAt,
+      annotatorId: row.annotatorId,
+      completedAt: row.completedAt,
+    });
+
     await prisma.annotationCase.update({
       where: { id: caseDbId },
-      data: { deadline, expiresAt },
+      data: {
+        deadline,
+        expiresAt,
+        ...(restoredStatus !== row.status ? { status: restoredStatus } : {}),
+      },
     });
     revalidatePath("/reviewer");
     revalidatePath("/annotator");
@@ -1590,6 +1610,61 @@ export async function updateCaseStatusAction(input: {
     revalidatePath("/reviewer");
     revalidatePath("/annotator");
     return { ok: true as const };
+  });
+}
+
+/** Change the status of multiple reviewer-selected cases without rewriting their details. */
+export async function batchUpdateCaseStatusAction(input: {
+  caseDbIds: string[];
+  status: CaseStatus;
+}) {
+  return withActionLog("batchUpdateCaseStatusAction", input, async () => {
+    await requireRole("REVIEWER");
+    const caseDbIds = [...new Set(input.caseDbIds.map((id) => id.trim()).filter(Boolean))];
+    if (caseDbIds.length === 0) {
+      return { ok: false as const, error: "no_cases" as const };
+    }
+    if (
+      input.status !== CaseStatus.AVAILABLE &&
+      input.status !== CaseStatus.ASSIGNED &&
+      input.status !== CaseStatus.SUBMITTED &&
+      input.status !== CaseStatus.ACCEPTED &&
+      input.status !== CaseStatus.AUDITED &&
+      input.status !== CaseStatus.REJECTED &&
+      input.status !== CaseStatus.EXPIRED &&
+      input.status !== CaseStatus.ADMIN_COMPLETED &&
+      input.status !== CaseStatus.PAUSED
+    ) {
+      return { ok: false as const, error: "status" as const };
+    }
+
+    const found = await prisma.annotationCase.count({ where: { id: { in: caseDbIds } } });
+    if (found !== caseDbIds.length) {
+      return { ok: false as const, error: "notfound" as const };
+    }
+
+    const releaseAssignment =
+      input.status === CaseStatus.AVAILABLE
+        ? {
+            annotatorId: null,
+            assignedAt: null,
+            completedAt: null,
+            annotationMinutes: null,
+            difficultyRating: null,
+            auditedAt: null,
+            auditedById: null,
+            qualityRating: null,
+            annotatorAcknowledgedReviewId: null,
+          }
+        : {};
+    const result = await prisma.annotationCase.updateMany({
+      where: { id: { in: caseDbIds } },
+      data: { status: input.status, ...releaseAssignment },
+    });
+
+    revalidatePath("/reviewer");
+    revalidatePath("/annotator");
+    return { ok: true as const, updated: result.count };
   });
 }
 
