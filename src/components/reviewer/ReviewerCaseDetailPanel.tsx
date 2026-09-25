@@ -3,6 +3,7 @@
 import { memo, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { adminCompleteCaseAction, deleteCaseAction, unassignCaseAction } from "@/app/actions/cases";
+import { CaseKeyImagesSection } from "@/components/CaseKeyImagesSection";
 import { CaseContinuityReportSection } from "@/components/CaseContinuityReportSection";
 import { CaseDiscussion } from "@/components/CaseDiscussion";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
@@ -275,6 +276,12 @@ function ReviewerCaseDetailPanelImpl({
           caseDbId={c.id}
           hasContinuityReport={c.hasContinuityReport}
         />
+        <CaseKeyImagesSection
+          lang={lang}
+          caseDbId={c.id}
+          hasKeyImages={c.hasKeyImages}
+          keyImageCount={c.keyImageCount}
+        />
         {showGuideline && c.guideline.trim() !== "" && (
           <div className="md:col-span-2">
             <dt className="sr-only">{tk("case_guideline")}</dt>
@@ -294,7 +301,7 @@ function ReviewerCaseDetailPanelImpl({
           <div className="md:col-span-2">
             <dt className="sr-only">{tk("case_radiologist_finding")}</dt>
             <dd className="m-0">
-              <details open className="rounded-md border border-[var(--border)] bg-[var(--bg)]">
+              <details className="rounded-md border border-[var(--border)] bg-[var(--bg)]">
                 <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-[var(--muted)] hover:bg-[var(--surface)]">
                   {tk("case_radiologist_finding")}
                 </summary>

@@ -6,22 +6,43 @@ import { suggestedCaseBonusPercent, type CaseBonusDefault } from "@/lib/project-
 import { createCaseErrorMessage } from "@/lib/create-case-errors";
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from "react";
-import { createCaseAction, type CreateCaseActionResult } from "@/app/actions/cases";
+import {
+  createCaseAction,
+  uploadKeyImagesChunkAction,
+  type CreateCaseActionResult,
+} from "@/app/actions/cases";
 import {
   CaseDetailsFields,
   type CaseDetailsFieldsValue,
 } from "@/components/CaseDetailsFields";
+import { KeyImageUploadProgressBar } from "@/components/KeyImageUploadProgressBar";
 import { matchContinuityReportFileToCaseId } from "@/lib/continuity-report-filename";
+import {
+  isKeyImageFilename,
+  matchKeyImagePathToCaseId,
+} from "@/lib/key-image-path";
 import {
   findingsMapToJson,
   looksLikeRadiologistFindingsTable,
   matchFindingsToCaseIds,
   parseRadiologistFindingsTable,
 } from "@/lib/radiologist-findings";
+import {
+  KEY_IMAGE_MAX_TOTAL_BYTES,
+  uploadKeyImagesInChunks,
+  type KeyImageUploadProgress,
+} from "@/lib/upload-key-images-client";
 import type { GuideOptionLite, TopicOptionLite } from "@/lib/guide-topic";
 import { formatCompensationAmount } from "@/lib/format";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
+
+type CreateFormResult =
+  | (Extract<CreateCaseActionResult, { ok: true }> & {
+      keyImagesAttached: number;
+      keyImagesUnmatched: string[];
+    })
+  | Extract<CreateCaseActionResult, { ok: false }>;
 
 function formatIdList(ids: string[], max = 40) {
   if (ids.length === 0) return "";
@@ -82,7 +103,9 @@ export function CreateCaseForm({
   const [assignEmail, setAssignEmail] = useState("");
   const [caseIdsText, setCaseIdsText] = useState("");
   const [continuityFiles, setContinuityFiles] = useState<File[]>([]);
+  const [keyImageFiles, setKeyImageFiles] = useState<File[]>([]);
   const [findingsPasteText, setFindingsPasteText] = useState("");
+  const [keyImageProgress, setKeyImageProgress] = useState<KeyImageUploadProgress | null>(null);
 
   const fiveStarBonusPercent = bonusOverride ?? String(suggestedCaseBonusPercent(details.project, details.scopeOfWork, bonusDefaults.scopes, bonusDefaults.projects));
 
@@ -112,6 +135,28 @@ export function CreateCaseForm({
     return { matched, unmatched };
   }, [continuityFiles, batchCaseIds]);
 
+  const keyImagesPreview = useMemo(() => {
+    const byCase = new Map<string, number>();
+    const unmatched: string[] = [];
+    for (const file of keyImageFiles) {
+      const relativePath = file.webkitRelativePath || file.name;
+      if (!isKeyImageFilename(relativePath)) {
+        unmatched.push(relativePath);
+        continue;
+      }
+      const caseId = matchKeyImagePathToCaseId(relativePath, batchCaseIds);
+      if (!caseId) {
+        unmatched.push(relativePath);
+        continue;
+      }
+      byCase.set(caseId, (byCase.get(caseId) ?? 0) + 1);
+    }
+    return {
+      matched: [...byCase.entries()].map(([caseId, count]) => ({ caseId, count })),
+      unmatched,
+    };
+  }, [keyImageFiles, batchCaseIds]);
+
   const findingsPreview = useMemo(() => {
     const parsed = parseRadiologistFindingsTable(findingsPasteText);
     return matchFindingsToCaseIds(parsed, batchCaseIds);
@@ -138,19 +183,53 @@ export function CreateCaseForm({
   }
 
   const [state, formAction, pending] = useActionState(
-    async (_: CreateCaseActionResult | null, fd: FormData): Promise<CreateCaseActionResult> => {
+    async (_: CreateFormResult | null, fd: FormData): Promise<CreateFormResult> => {
       setClientError(null);
+      setKeyImageProgress(null);
       fd.delete("continuityReports");
+      fd.delete("keyImages");
       for (const file of continuityFiles) fd.append("continuityReports", file);
-      const size = [...fd.values()].reduce((total, value) => total + (value instanceof File ? value.size : new Blob([value]).size), 0);
-      if (size > 15 * 1024 * 1024) return { ok: false, error: "upload_size" };
+      const continuitySize = continuityFiles.reduce((total, file) => total + file.size, 0);
+      if (continuitySize > 20 * 1024 * 1024) return { ok: false, error: "upload_size" };
+      const keyImageBytes = keyImageFiles.reduce((total, file) => total + file.size, 0);
+      if (keyImageBytes > KEY_IMAGE_MAX_TOTAL_BYTES) return { ok: false, error: "upload_size" };
       try {
-        return await createCaseAction(fd);
+        const createRes = await createCaseAction(fd);
+        if (!createRes.ok) return createRes;
+
+        let keyImagesAttached = 0;
+        let keyImagesUnmatched: string[] = [];
+        if (keyImageFiles.length > 0) {
+          const clearCaseIds = keyImagesPreview.matched.map((row) => row.caseId);
+          const uploadRes = await uploadKeyImagesInChunks({
+            files: keyImageFiles,
+            caseIds: batchCaseIds,
+            clearCaseIds,
+            scopeOfWork: details.scopeOfWork.trim(),
+            redbrickProject: details.redbrickProject.trim(),
+            onProgress: setKeyImageProgress,
+            uploadChunk: async (chunkFd, meta) =>
+              uploadKeyImagesChunkAction(
+                {
+                  caseIds: meta.caseIds,
+                  clearCaseIds: meta.clearCaseIds,
+                  scopeOfWork: meta.scopeOfWork,
+                  redbrickProject: meta.redbrickProject,
+                },
+                chunkFd,
+              ),
+          });
+          keyImagesAttached = uploadRes.matchedCaseCount;
+          keyImagesUnmatched = uploadRes.unmatchedPaths;
+        }
+        setKeyImageProgress(null);
+        return { ...createRes, keyImagesAttached, keyImagesUnmatched };
       } catch {
+        setKeyImageProgress(null);
         return { ok: false, error: "network" };
       }
     },
-    null as CreateCaseActionResult | null,
+    null as CreateFormResult | null,
   );
 
   useEffect(() => {
@@ -243,6 +322,54 @@ export function CreateCaseForm({
       </div>
 
       <div className="md:col-span-2">
+        <label htmlFor="create-case-key-images" className="text-sm text-[var(--muted)]">
+          {tk("case_key_images_upload")}
+        </label>
+        <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("case_key_images_upload_hint")}</p>
+        <input
+          id="create-case-key-images"
+          type="file"
+          name="keyImages"
+          multiple
+          accept="image/*"
+          className="mt-2 block w-full text-sm"
+          onChange={(e) => setKeyImageFiles(Array.from(e.target.files ?? []))}
+          {...({ webkitdirectory: "", directory: "" } as InputHTMLAttributes<HTMLInputElement>)}
+        />
+        {keyImageProgress && (
+          <div className="mt-2">
+            <KeyImageUploadProgressBar
+              progress={keyImageProgress}
+              label={tk("case_key_images_uploading")}
+            />
+          </div>
+        )}
+        {(keyImagesPreview.matched.length > 0 || keyImagesPreview.unmatched.length > 0) && (
+          <div className="mt-2 space-y-2 rounded-md border border-[var(--border)] bg-[var(--bg)] p-3 text-xs">
+            {keyImagesPreview.matched.length > 0 && (
+              <div>
+                <p className="font-medium text-[var(--text)]">{tk("case_key_images_preview_matched")}</p>
+                <ul className="mt-1 list-disc pl-4 text-[var(--muted)]">
+                  {keyImagesPreview.matched.map((row) => (
+                    <li key={row.caseId}>
+                      <span className="font-mono text-[var(--text)]">{row.caseId}</span>
+                      <span className="text-[var(--muted)]"> ← {row.count} image{row.count === 1 ? "" : "s"}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {keyImagesPreview.unmatched.length > 0 && (
+              <div>
+                <p className="font-medium text-[var(--warn)]">{tk("case_key_images_preview_unmatched")}</p>
+                <p className="mt-1 text-[var(--muted)]">{formatIdList(keyImagesPreview.unmatched, 8)}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="md:col-span-2">
         <label htmlFor="create-case-rad-findings" className="text-sm text-[var(--muted)]">
           {tk("case_radiologist_findings_paste")}
         </label>
@@ -254,6 +381,23 @@ export function CreateCaseForm({
           onChange={(e) => setFindingsPasteText(e.target.value)}
           placeholder={"study_id\tfinal_impressions\nasi-708cbd32-…\tThere is an indeterminate…"}
           className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono text-sm"
+        />
+        <label htmlFor="create-case-rad-findings-csv" className="mt-2 block text-xs text-[var(--muted)]">
+          {tk("case_radiologist_findings_csv_upload")}
+        </label>
+        <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("case_radiologist_findings_csv_hint")}</p>
+        <input
+          id="create-case-rad-findings-csv"
+          type="file"
+          accept=".csv,text/csv"
+          className="mt-1 block w-full text-sm"
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            const text = await file.text();
+            setFindingsPasteText(text);
+            e.target.value = "";
+          }}
         />
         <input type="hidden" name="radiologistFindingsByCaseId" value={findingsJson} />
         {(findingsPreview.matched.length > 0 ||
@@ -380,6 +524,20 @@ export function CreateCaseForm({
               </span>
             </p>
           )}
+          {state.keyImagesAttached > 0 && (
+            <p>
+              <span className="text-[var(--muted)]">{tk("batch_result_key_images_attached")}: </span>
+              <span className="font-medium text-[var(--text)]">{state.keyImagesAttached}</span>
+            </p>
+          )}
+          {state.keyImagesUnmatched.length > 0 && (
+            <p>
+              <span className="text-[var(--muted)]">{tk("case_key_images_preview_unmatched")}: </span>
+              <span className="text-[var(--warn)]">
+                {formatIdList(state.keyImagesUnmatched, 8)}
+              </span>
+            </p>
+          )}
         </div>
       )}
       <div className="md:col-span-2">
@@ -388,7 +546,15 @@ export function CreateCaseForm({
           disabled={pending}
           className="rounded-md bg-[var(--accent)] px-4 py-2 text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
         >
-          {pending ? (lang === "vi" ? "Đang tạo ca…" : "Creating cases…") : tk("create_submit")}
+          {pending ? (
+            keyImageProgress
+              ? tk("case_key_images_uploading")
+              : lang === "vi"
+                ? "Đang tạo ca…"
+                : "Creating cases…"
+          ) : (
+            tk("create_submit")
+          )}
         </button>
       </div>
     </form>

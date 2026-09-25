@@ -34,9 +34,12 @@ export const dict = {
     case_radiologist_finding_hint:
       "Shown in case details. For different findings per study_id, use “Radiologist findings (paste table)” on create/batch edit — do not paste a full study_id table into this box.",
     case_radiologist_finding_placeholder: "Finding text for this case…",
-    case_radiologist_findings_paste: "Radiologist findings (paste table)",
+    case_radiologist_findings_paste: "Radiologist findings (paste or CSV)",
     case_radiologist_findings_paste_hint:
-      "Paste from Excel/Sheets (tabs preferred; space-separated study_id rows also work). First column = study_id (must match Case ID, with or without asi- prefix). Next columns = findings (e.g. final_impressions). Header row is skipped.",
+      "Paste from Excel/Sheets or upload a CSV. First column = study_id (must match Case ID, with or without asi- prefix). Next columns = findings (e.g. final_impressions). Header row is skipped.",
+    case_radiologist_findings_csv_upload: "Upload CSV",
+    case_radiologist_findings_csv_hint:
+      "CSV with a study_id (or case_id) column. Other columns are attached as findings for matching case IDs.",
     case_radiologist_findings_preview_matched: "Matched findings",
     case_radiologist_findings_preview_unmatched_ids: "Study IDs not in this batch",
     case_radiologist_findings_preview_missing_cases: "Case IDs with no finding yet",
@@ -55,6 +58,17 @@ export const dict = {
     case_continuity_report_preview_matched: "Matched reports",
     case_continuity_report_preview_unmatched: "Unmatched files",
     batch_result_reports_attached: "Continuity reports attached",
+    case_key_images: "Radiologist key images",
+    case_key_images_view: "View images",
+    case_key_images_empty: "No key images found for this case.",
+    case_key_images_load_error: "Could not load key images.",
+    case_key_images_upload: "Radiologist key images (folder)",
+    case_key_images_upload_hint:
+      "Upload a folder whose subfolders are named by study/case ID. Large folders upload in small chunks with a progress bar (up to 500 MB).",
+    case_key_images_preview_matched: "Matched image folders",
+    case_key_images_preview_unmatched: "Unmatched files",
+    case_key_images_uploading: "Uploading key images…",
+    batch_result_key_images_attached: "Cases with key images attached",
     case_guide: "Guide",
     case_topic: "Topic",
     case_topic_multi_hint:
@@ -619,9 +633,12 @@ export const dict = {
     case_radiologist_finding_hint:
       "Hiển thị trong chi tiết ca. Finding khác nhau theo study_id: dùng “Radiologist findings (dán bảng)” khi tạo/sửa batch — không dán cả bảng study_id vào ô này.",
     case_radiologist_finding_placeholder: "Nội dung finding cho ca này…",
-    case_radiologist_findings_paste: "Radiologist findings (dán bảng)",
+    case_radiologist_findings_paste: "Radiologist findings (dán bảng hoặc CSV)",
     case_radiologist_findings_paste_hint:
-      "Dán từ Excel/Sheets (ưu tiên tab; cũng nhận dòng bắt đầu bằng study_id). Cột đầu = study_id (khớp Case ID, có/không tiền tố asi-). Cột sau = findings (ví dụ final_impressions). Bỏ qua dòng tiêu đề.",
+      "Dán từ Excel/Sheets hoặc tải CSV. Cột đầu = study_id (khớp Case ID, có/không tiền tố asi-). Cột sau = findings (ví dụ final_impressions). Bỏ qua dòng tiêu đề.",
+    case_radiologist_findings_csv_upload: "Tải CSV",
+    case_radiologist_findings_csv_hint:
+      "CSV có cột study_id (hoặc case_id). Các cột khác sẽ gắn vào finding của case ID khớp.",
     case_radiologist_findings_preview_matched: "Findings đã khớp",
     case_radiologist_findings_preview_unmatched_ids: "Study ID không có trong batch",
     case_radiologist_findings_preview_missing_cases: "Case ID chưa có finding",
@@ -640,6 +657,17 @@ export const dict = {
     case_continuity_report_preview_matched: "Báo cáo đã khớp",
     case_continuity_report_preview_unmatched: "File chưa khớp",
     batch_result_reports_attached: "Đã gắn báo cáo continuity",
+    case_key_images: "Ảnh key radiologist",
+    case_key_images_view: "Xem ảnh",
+    case_key_images_empty: "Không có ảnh key cho ca này.",
+    case_key_images_load_error: "Không tải được ảnh key.",
+    case_key_images_upload: "Ảnh key radiologist (thư mục)",
+    case_key_images_upload_hint:
+      "Tải thư mục có các thư mục con đặt tên theo study/case ID. Thư mục lớn được tải theo từng phần nhỏ kèm thanh tiến trình (tối đa 500 MB).",
+    case_key_images_preview_matched: "Thư mục ảnh đã khớp",
+    case_key_images_preview_unmatched: "File chưa khớp",
+    case_key_images_uploading: "Đang tải ảnh key…",
+    batch_result_key_images_attached: "Ca đã gắn ảnh key",
     case_guide: "Guide",
     case_topic: "Topic",
     case_topic_multi_hint:

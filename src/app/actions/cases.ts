@@ -32,6 +32,12 @@ import {
   readContinuityReportsFromFormData,
   saveContinuityReport,
 } from "@/lib/continuity-reports";
+import {
+  deleteKeyImages,
+  readKeyImagesFromFormData,
+  saveKeyImagesForCase,
+  listKeyImages,
+} from "@/lib/key-images";
 import { resolveBlankCompensation } from "@/lib/compensation-defaults";
 import {
   findingsMapFromJson,
@@ -888,6 +894,125 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
   });
 }
 
+/**
+ * Upload one chunk of radiologist key images.
+ * Pass clearCaseIds on the first chunk to wipe prior images for those study IDs.
+ */
+export async function uploadKeyImagesChunkAction(
+  input: {
+    caseIds: string[];
+    clearCaseIds?: string[];
+    caseDbIds?: string[];
+    scopeOfWork?: string;
+    redbrickProject?: string;
+  },
+  formData: FormData,
+): Promise<
+  | {
+      ok: true;
+      matchedCaseIds: string[];
+      matchedFileCount: number;
+      unmatchedPaths: string[];
+    }
+  | { ok: false; error: string; referenceId?: string }
+> {
+  return withActionLog("uploadKeyImagesChunkAction", {
+    caseIds: input.caseIds.length,
+    clearCaseIds: input.clearCaseIds?.length ?? 0,
+    caseDbIds: input.caseDbIds?.length ?? 0,
+  }, async () => {
+    try {
+      await requireRole("REVIEWER");
+      const caseIds = [...new Set(input.caseIds.map((id) => id.trim()).filter(Boolean))];
+      const clearCaseIds = [...new Set((input.clearCaseIds ?? []).map((id) => id.trim()).filter(Boolean))];
+      const caseDbIds = [...new Set((input.caseDbIds ?? []).map((id) => id.trim()).filter(Boolean))];
+      const scopeOfWork = input.scopeOfWork?.trim() || "";
+      const redbrickProject = input.redbrickProject?.trim() || "";
+
+      if (caseIds.length === 0) {
+        return { ok: false as const, error: "no_cases" };
+      }
+
+      let rows: { id: string; caseId: string }[];
+      if (caseDbIds.length > 0) {
+        rows = await prisma.annotationCase.findMany({
+          where: { id: { in: caseDbIds } },
+          select: { id: true, caseId: true },
+        });
+      } else if (scopeOfWork && redbrickProject) {
+        rows = await prisma.annotationCase.findMany({
+          where: {
+            caseId: { in: caseIds },
+            scopeOfWork,
+            redbrickProject,
+          },
+          select: { id: true, caseId: true },
+        });
+      } else {
+        return { ok: false as const, error: "scope" };
+      }
+
+      if (rows.length === 0) {
+        return { ok: false as const, error: "no_cases" };
+      }
+
+      const rowCaseIds = rows.map((r) => r.caseId);
+      const byCaseId = new Map(rows.map((r) => [r.caseId, r]));
+
+      if (clearCaseIds.length > 0) {
+        for (const caseId of clearCaseIds) {
+          const row = byCaseId.get(caseId);
+          if (!row) continue;
+          await deleteKeyImages(row.id);
+          await prisma.annotationCase.update({
+            where: { id: row.id },
+            data: { hasKeyImages: false, keyImageCount: 0 },
+          });
+        }
+      }
+
+      const existingNamesByCase = new Map<string, Set<string>>();
+      for (const row of rows) {
+        const names = await listKeyImages(row.id);
+        if (names.length > 0) existingNamesByCase.set(row.caseId, new Set(names.map((n) => n.toLowerCase())));
+      }
+
+      const parsed = await readKeyImagesFromFormData(formData, rowCaseIds, existingNamesByCase);
+      const matchedCaseIds: string[] = [];
+      let matchedFileCount = 0;
+
+      for (const [caseId, images] of parsed.byCaseId) {
+        const row = byCaseId.get(caseId);
+        if (!row || images.length === 0) continue;
+        const count = await saveKeyImagesForCase(row.id, images, { replace: false });
+        await prisma.annotationCase.update({
+          where: { id: row.id },
+          data: { hasKeyImages: true, keyImageCount: count },
+        });
+        matchedCaseIds.push(caseId);
+        matchedFileCount += images.length;
+      }
+
+      revalidatePath("/reviewer");
+      revalidatePath("/annotator");
+      return {
+        ok: true as const,
+        matchedCaseIds,
+        matchedFileCount,
+        unmatchedPaths: parsed.unmatchedPaths,
+      };
+    } catch (error) {
+      const reason = errorCode(error);
+      await writeActionLog({ action: "uploadKeyImagesChunkAction", outcome: "failed", reason });
+      return {
+        ok: false as const,
+        error: reason === "Unauthorized" ? "auth" : reason === "Forbidden" ? "forbidden" : "server",
+        referenceId: actionContext.getStore()?.referenceId,
+      };
+    }
+  });
+}
+
 async function annotatorHasPendingReviewAcknowledgment(annotatorUserId: string): Promise<boolean> {
   const rows = await prisma.annotationCase.findMany({
     where: {
@@ -1196,6 +1321,7 @@ export async function deleteCaseAction(caseDbId: string) {
       return { ok: false as const, error: "state" as const };
     }
     await deleteContinuityReport(caseDbId);
+    await deleteKeyImages(caseDbId);
     await prisma.notification.deleteMany({ where: { annotationCaseId: caseDbId } });
     revalidatePath("/reviewer");
     revalidatePath("/annotator");
@@ -2061,6 +2187,7 @@ export async function batchDeleteCasesAction(caseDbIds: string[]) {
     const deletableIds = deletable.map((row) => row.id);
     await prisma.annotationCase.deleteMany({ where: { id: { in: deletableIds } } });
     await Promise.all(deletableIds.map((id) => deleteContinuityReport(id)));
+    await Promise.all(deletableIds.map((id) => deleteKeyImages(id)));
     await prisma.notification.deleteMany({
       where: { annotationCaseId: { in: deletableIds } },
     });

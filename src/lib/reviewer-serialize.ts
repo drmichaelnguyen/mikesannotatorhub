@@ -57,6 +57,8 @@ export type SerializedReviewerCase = {
   qualityRating: number | null;
   isReference: boolean;
   hasContinuityReport: boolean;
+  hasKeyImages: boolean;
+  keyImageCount: number;
   deadline: string | null;
   expiresAt: string | null;
   createdAt: string;
@@ -100,6 +102,8 @@ export function serializeReviewerCase(c: ReviewerCaseRow): SerializedReviewerCas
     qualityRating: c.qualityRating,
     isReference: c.isReference,
     hasContinuityReport: c.hasContinuityReport,
+    hasKeyImages: c.hasKeyImages,
+    keyImageCount: c.keyImageCount,
     deadline: c.deadline?.toISOString() ?? null,
     expiresAt: c.expiresAt?.toISOString() ?? null,
     createdAt: c.createdAt.toISOString(),
