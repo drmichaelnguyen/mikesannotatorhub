@@ -57,15 +57,12 @@ import {
 import { createCaseNote } from "@/lib/case-note-api";
 import { matchContinuityReportFileToCaseId } from "@/lib/continuity-report-filename";
 import {
-  isKeyImageFilename,
-  matchKeyImagePathToCaseId,
-} from "@/lib/key-image-path";
-import {
   looksLikeRadiologistFindingsTable,
   matchFindingsToCaseIds,
   parseRadiologistFindingsTable,
 } from "@/lib/radiologist-findings";
 import {
+  analyzeKeyImageMatches,
   CONTINUITY_MAX_TOTAL_BYTES,
   KEY_IMAGE_MAX_TOTAL_BYTES,
   uploadContinuityReportsInChunks,
@@ -961,24 +958,15 @@ export function ReviewerWorkboard({
   }, [batchContinuityFiles, batchTargetRows]);
   const batchKeyImagesPreview = useMemo(() => {
     const caseIds = batchTargetRows.map((row) => row.caseId);
-    const byCase = new Map<string, number>();
-    const unmatched: string[] = [];
-    for (const file of batchKeyImageFiles) {
-      const relativePath = file.webkitRelativePath || file.name;
-      if (!isKeyImageFilename(relativePath)) {
-        unmatched.push(relativePath);
-        continue;
-      }
-      const caseId = matchKeyImagePathToCaseId(relativePath, caseIds);
-      if (!caseId) {
-        unmatched.push(relativePath);
-        continue;
-      }
-      byCase.set(caseId, (byCase.get(caseId) ?? 0) + 1);
-    }
+    const analysis = analyzeKeyImageMatches(batchKeyImageFiles, caseIds);
     return {
-      matched: [...byCase.entries()].map(([caseId, count]) => ({ caseId, count })),
-      unmatched,
+      matched: analysis.matchedCaseIds.map((caseId) => ({
+        caseId,
+        count: analysis.matchedByCaseId.get(caseId)?.length ?? 0,
+      })),
+      unmatched: analysis.unmatchedPaths,
+      matchedFiles: analysis.matchedFiles,
+      matchedCaseIds: analysis.matchedCaseIds,
     };
   }, [batchKeyImageFiles, batchTargetRows]);
   const batchFindingsPreview = useMemo(() => {
@@ -1409,6 +1397,21 @@ export function ReviewerWorkboard({
           setErr(createCaseErrorMessage("upload_size", lang));
           return;
         }
+        // Match study IDs locally before any key-image upload.
+        const keyImageAnalysis =
+          batchKeyImageFiles.length > 0
+            ? analyzeKeyImageMatches(
+                batchKeyImageFiles,
+                batchTargetRows.map((row) => row.caseId),
+              )
+            : null;
+        if (
+          batchKeyImageFiles.length > 0 &&
+          (!keyImageAnalysis || keyImageAnalysis.matchedFiles.length === 0)
+        ) {
+          setErr(createCaseErrorMessage("key_images_match", lang));
+          return;
+        }
         setKeyImageProgress(null);
         const findingsParsed = parseRadiologistFindingsTable(batchFindingsPaste);
         const batchTargetIds = batchTargetRows.map((row) => row.id);
@@ -1472,27 +1475,39 @@ export function ReviewerWorkboard({
         }
 
         let keyImagesAttached = 0;
-        let keyImagesUnmatched: string[] = [];
-        if (batchKeyImageFiles.length > 0) {
-          const clearCaseIds = batchKeyImagesPreview.matched.map((row) => row.caseId);
+        let keyImagesUnmatched: string[] = keyImageAnalysis?.unmatchedPaths ?? [];
+        if (keyImageAnalysis && keyImageAnalysis.matchedFiles.length > 0) {
+          const clearCaseIds = keyImageAnalysis.matchedCaseIds;
           const uploadRes = await uploadKeyImagesInChunks({
-            files: batchKeyImageFiles,
+            files: keyImageAnalysis.matchedFiles,
             caseIds: batchTargetRows.map((row) => row.caseId),
             clearCaseIds,
             caseDbIds: batchTargetIds,
             onProgress: setKeyImageProgress,
-            uploadChunk: async (chunkFd, meta) =>
-              uploadKeyImagesChunkAction(
+            uploadChunk: async (chunkFd, meta) => {
+              const allowed = new Set(meta.caseIds);
+              const scopedDbIds = (meta.caseDbIds ?? []).length
+                ? batchTargetRows
+                    .filter((row) => allowed.has(row.caseId))
+                    .map((row) => row.id)
+                : undefined;
+              return uploadKeyImagesChunkAction(
                 {
                   caseIds: meta.caseIds,
                   clearCaseIds: meta.clearCaseIds,
-                  caseDbIds: meta.caseDbIds,
+                  caseDbIds: scopedDbIds && scopedDbIds.length > 0 ? scopedDbIds : meta.caseDbIds,
                 },
                 chunkFd,
-              ),
+              );
+            },
           });
           keyImagesAttached = uploadRes.matchedCaseCount;
-          keyImagesUnmatched = uploadRes.unmatchedPaths;
+          keyImagesUnmatched = [
+            ...keyImageAnalysis.unmatchedPaths,
+            ...uploadRes.unmatchedPaths.filter(
+              (path) => !keyImageAnalysis.unmatchedPaths.includes(path),
+            ),
+          ];
         }
         setKeyImageProgress(null);
 

@@ -19,16 +19,13 @@ import {
 import { KeyImageUploadProgressBar } from "@/components/KeyImageUploadProgressBar";
 import { matchContinuityReportFileToCaseId } from "@/lib/continuity-report-filename";
 import {
-  isKeyImageFilename,
-  matchKeyImagePathToCaseId,
-} from "@/lib/key-image-path";
-import {
   findingsMapToJson,
   looksLikeRadiologistFindingsTable,
   matchFindingsToCaseIds,
   parseRadiologistFindingsTable,
 } from "@/lib/radiologist-findings";
 import {
+  analyzeKeyImageMatches,
   CONTINUITY_MAX_TOTAL_BYTES,
   KEY_IMAGE_MAX_TOTAL_BYTES,
   uploadContinuityReportsInChunks,
@@ -163,24 +160,14 @@ export function CreateCaseForm({
   }, [continuityFiles, batchCaseIds]);
 
   const keyImagesPreview = useMemo(() => {
-    const byCase = new Map<string, number>();
-    const unmatched: string[] = [];
-    for (const file of keyImageFiles) {
-      const relativePath = file.webkitRelativePath || file.name;
-      if (!isKeyImageFilename(relativePath)) {
-        unmatched.push(relativePath);
-        continue;
-      }
-      const caseId = matchKeyImagePathToCaseId(relativePath, batchCaseIds);
-      if (!caseId) {
-        unmatched.push(relativePath);
-        continue;
-      }
-      byCase.set(caseId, (byCase.get(caseId) ?? 0) + 1);
-    }
+    const analysis = analyzeKeyImageMatches(keyImageFiles, batchCaseIds);
     return {
-      matched: [...byCase.entries()].map(([caseId, count]) => ({ caseId, count })),
-      unmatched,
+      matched: analysis.matchedCaseIds.map((caseId) => ({
+        caseId,
+        count: analysis.matchedByCaseId.get(caseId)?.length ?? 0,
+      })),
+      unmatched: analysis.unmatchedPaths,
+      matchedFiles: analysis.matchedFiles,
     };
   }, [keyImageFiles, batchCaseIds]);
 
@@ -220,57 +207,80 @@ export function CreateCaseForm({
       if (continuitySize > CONTINUITY_MAX_TOTAL_BYTES) return { ok: false, error: "upload_size" };
       const keyImageBytes = keyImageFiles.reduce((total, file) => total + file.size, 0);
       if (keyImageBytes > KEY_IMAGE_MAX_TOTAL_BYTES) return { ok: false, error: "upload_size" };
+
+      // Analyze folder names locally first — never start create/upload with zero matches.
+      const keyImageAnalysis =
+        keyImageFiles.length > 0 ? analyzeKeyImageMatches(keyImageFiles, batchCaseIds) : null;
+      if (keyImageFiles.length > 0 && (!keyImageAnalysis || keyImageAnalysis.matchedFiles.length === 0)) {
+        return { ok: false, error: "key_images_match" };
+      }
+
       try {
         const createRes = await createCaseAction(fd);
         if (!createRes.ok) return createRes;
 
         let continuityReportsAttached = createRes.continuityReportsAttached;
         let continuityReportsUnmatched = [...createRes.continuityReportsUnmatched];
-        if (continuityFiles.length > 0) {
-          const continuityRes = await uploadContinuityReportsInChunks({
-            files: continuityFiles,
-            caseIds: batchCaseIds,
-            scopeOfWork: details.scopeOfWork.trim(),
-            redbrickProject: details.redbrickProject.trim(),
-            onProgress: setKeyImageProgress,
-            uploadChunk: async (chunkFd, meta) =>
-              uploadContinuityReportsChunkAction(
-                {
-                  caseIds: meta.caseIds,
-                  scopeOfWork: meta.scopeOfWork,
-                  redbrickProject: meta.redbrickProject,
-                },
-                chunkFd,
-              ),
-          });
-          continuityReportsAttached = continuityRes.matchedCaseCount;
-          continuityReportsUnmatched = continuityRes.unmatchedFilenames;
-        }
-
         let keyImagesAttached = 0;
-        let keyImagesUnmatched: string[] = [];
-        if (keyImageFiles.length > 0) {
-          const clearCaseIds = keyImagesPreview.matched.map((row) => row.caseId);
-          const uploadRes = await uploadKeyImagesInChunks({
-            files: keyImageFiles,
-            caseIds: batchCaseIds,
-            clearCaseIds,
-            scopeOfWork: details.scopeOfWork.trim(),
-            redbrickProject: details.redbrickProject.trim(),
-            onProgress: setKeyImageProgress,
-            uploadChunk: async (chunkFd, meta) =>
-              uploadKeyImagesChunkAction(
-                {
-                  caseIds: meta.caseIds,
-                  clearCaseIds: meta.clearCaseIds,
-                  scopeOfWork: meta.scopeOfWork,
-                  redbrickProject: meta.redbrickProject,
-                },
-                chunkFd,
+        let keyImagesUnmatched: string[] = keyImageAnalysis?.unmatchedPaths ?? [];
+        try {
+          if (continuityFiles.length > 0) {
+            const continuityRes = await uploadContinuityReportsInChunks({
+              files: continuityFiles,
+              caseIds: batchCaseIds,
+              scopeOfWork: details.scopeOfWork.trim(),
+              redbrickProject: details.redbrickProject.trim(),
+              onProgress: setKeyImageProgress,
+              uploadChunk: async (chunkFd, meta) =>
+                uploadContinuityReportsChunkAction(
+                  {
+                    caseIds: meta.caseIds,
+                    scopeOfWork: meta.scopeOfWork,
+                    redbrickProject: meta.redbrickProject,
+                  },
+                  chunkFd,
+                ),
+            });
+            continuityReportsAttached = continuityRes.matchedCaseCount;
+            continuityReportsUnmatched = continuityRes.unmatchedFilenames;
+          }
+
+          if (keyImageAnalysis && keyImageAnalysis.matchedFiles.length > 0) {
+            const clearCaseIds = keyImageAnalysis.matchedCaseIds;
+            const uploadRes = await uploadKeyImagesInChunks({
+              files: keyImageAnalysis.matchedFiles,
+              caseIds: batchCaseIds,
+              clearCaseIds,
+              scopeOfWork: details.scopeOfWork.trim(),
+              redbrickProject: details.redbrickProject.trim(),
+              onProgress: setKeyImageProgress,
+              uploadChunk: async (chunkFd, meta) =>
+                uploadKeyImagesChunkAction(
+                  {
+                    caseIds: meta.caseIds,
+                    clearCaseIds: meta.clearCaseIds,
+                    scopeOfWork: meta.scopeOfWork,
+                    redbrickProject: meta.redbrickProject,
+                  },
+                  chunkFd,
+                ),
+            });
+            keyImagesAttached = uploadRes.matchedCaseCount;
+            keyImagesUnmatched = [
+              ...keyImageAnalysis.unmatchedPaths,
+              ...uploadRes.unmatchedPaths.filter(
+                (path) => !keyImageAnalysis.unmatchedPaths.includes(path),
               ),
-          });
-          keyImagesAttached = uploadRes.matchedCaseCount;
-          keyImagesUnmatched = uploadRes.unmatchedPaths;
+            ];
+          }
+        } catch (uploadError) {
+          setKeyImageProgress(null);
+          const mapped = uploadErrorToCreateResult(uploadError);
+          return {
+            ok: false,
+            error: mapped.error === "network" || mapped.error === "server" ? "attachments" : mapped.error,
+            ...(mapped.referenceId ? { referenceId: mapped.referenceId } : {}),
+          };
         }
         setKeyImageProgress(null);
         return {

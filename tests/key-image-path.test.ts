@@ -39,6 +39,17 @@ describe("key-image-path", () => {
     );
   });
 
+  it("matches flat files named as the study id", () => {
+    assert.equal(
+      matchKeyImagePathToCaseId("ABC-001.png", caseIds),
+      "ABC-001",
+    );
+    assert.equal(
+      matchKeyImagePathToCaseId("708cbd32-1111-2222-3333-444444444444.jpg", caseIds),
+      "asi-708cbd32-1111-2222-3333-444444444444",
+    );
+  });
+
   it("returns null when no segment matches", () => {
     assert.equal(
       matchKeyImagePathToCaseId("batch/other/img.png", caseIds),

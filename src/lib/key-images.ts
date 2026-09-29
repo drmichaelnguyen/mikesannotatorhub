@@ -32,13 +32,18 @@ export type ParsedKeyImageUpload = {
 };
 
 /**
- * Parse folder uploads. Prefer `file.name` when it carries a relative path
- * (set via FormData append third arg); fall back to webkitRelativePath.
+ * Parse folder uploads. Prefer explicit relative paths / case IDs from FormData
+ * (browsers strip folder paths from File.name). Fall back to webkitRelativePath,
+ * then file.name.
  */
 export async function parseKeyImageUploads(
   files: File[],
   caseIds: string[],
   existingNamesByCase?: Map<string, Set<string>>,
+  hints?: {
+    relativePaths?: string[];
+    caseIdsPerFile?: string[];
+  },
 ): Promise<{
   matched: ParsedKeyImageUpload[];
   unmatchedPaths: string[];
@@ -52,12 +57,32 @@ export async function parseKeyImageUploads(
     }
   }
 
-  for (const file of files) {
-    const webkitPath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
-    const relativePath =
-      (typeof webkitPath === "string" && webkitPath.trim() ? webkitPath : file.name) || file.name;
+  const allowed = new Set(caseIds);
+  const byNorm = new Map<string, string>();
+  for (const caseId of caseIds) {
+    const norm = caseId.trim().toLowerCase().replace(/^asi-/, "");
+    if (!byNorm.has(norm)) byNorm.set(norm, caseId);
+  }
 
-    if (!isKeyImageFilename(relativePath)) {
+  function resolveHintedCaseId(raw: string | undefined): string | null {
+    const hinted = raw?.trim() || "";
+    if (!hinted) return null;
+    if (allowed.has(hinted)) return hinted;
+    const viaNorm = byNorm.get(hinted.toLowerCase().replace(/^asi-/, ""));
+    return viaNorm && allowed.has(viaNorm) ? viaNorm : null;
+  }
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i]!;
+    const webkitPath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+    const hintedPath = hints?.relativePaths?.[i]?.trim() || "";
+    const relativePath =
+      hintedPath ||
+      (typeof webkitPath === "string" && webkitPath.trim() ? webkitPath : "") ||
+      file.name ||
+      `file-${i}`;
+
+    if (!isKeyImageFilename(relativePath) && !isKeyImageFilename(file.name)) {
       unmatchedPaths.push(relativePath);
       continue;
     }
@@ -67,7 +92,10 @@ export async function parseKeyImageUploads(
       continue;
     }
 
-    const caseId = matchKeyImagePathToCaseId(relativePath, caseIds);
+    const caseId =
+      resolveHintedCaseId(hints?.caseIdsPerFile?.[i]) ||
+      matchKeyImagePathToCaseId(relativePath, caseIds) ||
+      matchKeyImagePathToCaseId(file.name, caseIds);
     if (!caseId) {
       unmatchedPaths.push(relativePath);
       continue;
@@ -79,14 +107,14 @@ export async function parseKeyImageUploads(
       continue;
     }
 
-    let basename = sanitizeKeyImageBasename(relativePath);
+    let basename = sanitizeKeyImageBasename(relativePath || file.name);
     const used = usedNamesByCase.get(caseId) ?? new Set<string>();
     if (used.has(basename.toLowerCase())) {
       const ext = path.extname(basename);
       const stem = basename.slice(0, basename.length - ext.length) || "image";
-      let i = 2;
-      while (used.has(`${stem}_${i}${ext}`.toLowerCase())) i += 1;
-      basename = `${stem}_${i}${ext}`;
+      let n = 2;
+      while (used.has(`${stem}_${n}${ext}`.toLowerCase())) n += 1;
+      basename = `${stem}_${n}${ext}`;
     }
     used.add(basename.toLowerCase());
     usedNamesByCase.set(caseId, used);
@@ -161,10 +189,16 @@ export async function readKeyImagesFromFormData(
   const files = formData
     .getAll("keyImages")
     .filter((entry): entry is File => entry instanceof File && entry.size > 0);
+  const relativePaths = formData.getAll("keyImagePaths").map((entry) => String(entry ?? ""));
+  const caseIdsPerFile = formData.getAll("keyImageCaseIds").map((entry) => String(entry ?? ""));
   const { matched, unmatchedPaths } = await parseKeyImageUploads(
     files,
     caseIds,
     existingNamesByCase,
+    {
+      relativePaths: relativePaths.length > 0 ? relativePaths : undefined,
+      caseIdsPerFile: caseIdsPerFile.length > 0 ? caseIdsPerFile : undefined,
+    },
   );
   const byCaseId = new Map<string, { filename: string; bytes: Buffer }[]>();
   for (const row of matched) {

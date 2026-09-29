@@ -956,7 +956,18 @@ export async function uploadKeyImagesChunkAction(
         return { ok: false as const, error: "no_cases" };
       }
 
-      const rowCaseIds = rows.map((r) => r.caseId);
+      const hintedCaseIds = formData
+        .getAll("keyImageCaseIds")
+        .map((entry) => String(entry ?? "").trim())
+        .filter(Boolean);
+      const relevantCaseIds = new Set<string>([...clearCaseIds, ...hintedCaseIds]);
+      const activeRows =
+        relevantCaseIds.size > 0
+          ? rows.filter((row) => relevantCaseIds.has(row.caseId))
+          : rows;
+      const rowsForWork = activeRows.length > 0 ? activeRows : rows;
+
+      const rowCaseIds = rowsForWork.map((r) => r.caseId);
       const byCaseId = new Map(rows.map((r) => [r.caseId, r]));
 
       if (clearCaseIds.length > 0) {
@@ -972,7 +983,7 @@ export async function uploadKeyImagesChunkAction(
       }
 
       const existingNamesByCase = new Map<string, Set<string>>();
-      for (const row of rows) {
+      for (const row of rowsForWork) {
         const names = await listKeyImages(row.id);
         if (names.length > 0) existingNamesByCase.set(row.caseId, new Set(names.map((n) => n.toLowerCase())));
       }

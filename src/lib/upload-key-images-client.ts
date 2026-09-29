@@ -3,13 +3,14 @@ import {
   isKeyImageFilename,
   KEY_IMAGE_MAX_FILE_BYTES,
   matchKeyImagePathToCaseId,
+  sanitizeKeyImageBasename,
 } from "@/lib/key-image-path";
 
 /** Target size per chunk request (keeps server memory and body limit safe). */
-export const KEY_IMAGE_CHUNK_BYTES = 8 * 1024 * 1024;
-export const KEY_IMAGE_CHUNK_MAX_FILES = 16;
+export const KEY_IMAGE_CHUNK_BYTES = 4 * 1024 * 1024;
+export const KEY_IMAGE_CHUNK_MAX_FILES = 8;
 /** Prefer at most this many study IDs per chunk when packing folders. */
-export const KEY_IMAGE_CHUNK_MAX_STUDIES = 4;
+export const KEY_IMAGE_CHUNK_MAX_STUDIES = 2;
 /** Overall folder cap across all chunks. */
 export const KEY_IMAGE_MAX_TOTAL_BYTES = 10 * 1024 * 1024 * 1024;
 /** Continuity reports also upload in chunks (same request budget as key images). */
@@ -107,6 +108,47 @@ export function filterKeyImageFiles(files: File[]): {
     totalBytes += file.size;
   }
   return { accepted, skipped, totalBytes };
+}
+
+/**
+ * Client-side study-ID matching before any upload. Only matched image files
+ * should be sent to the server.
+ */
+export function analyzeKeyImageMatches(
+  files: File[],
+  caseIds: string[],
+): {
+  matchedFiles: File[];
+  matchedByCaseId: Map<string, File[]>;
+  unmatchedPaths: string[];
+  matchedCaseIds: string[];
+  totalMatchedBytes: number;
+} {
+  const { accepted, skipped } = filterKeyImageFiles(files);
+  const matchedByCaseId = new Map<string, File[]>();
+  const unmatchedPaths: string[] = [...skipped];
+  let totalMatchedBytes = 0;
+
+  for (const file of accepted) {
+    const relativePath = fileRelativePath(file);
+    const caseId = matchKeyImagePathToCaseId(relativePath, caseIds);
+    if (!caseId) {
+      unmatchedPaths.push(relativePath);
+      continue;
+    }
+    const list = matchedByCaseId.get(caseId) ?? [];
+    list.push(file);
+    matchedByCaseId.set(caseId, list);
+    totalMatchedBytes += file.size;
+  }
+
+  return {
+    matchedFiles: [...matchedByCaseId.values()].flat(),
+    matchedByCaseId,
+    unmatchedPaths,
+    matchedCaseIds: [...matchedByCaseId.keys()],
+    totalMatchedBytes,
+  };
 }
 
 export function filterContinuityFiles(files: File[]): {
@@ -265,17 +307,6 @@ export function chunkContinuityFiles(files: File[], caseIds: string[] = []): Fil
   );
 }
 
-function studyIdsInChunk(files: File[], caseIds: string[], clearCaseIds: string[]): string[] {
-  const clearSet = new Set(clearCaseIds);
-  const found = new Set<string>();
-  for (const file of files) {
-    const relativePath = fileRelativePath(file);
-    const studyId = matchKeyImagePathToCaseId(relativePath, caseIds);
-    if (studyId && clearSet.has(studyId)) found.add(studyId);
-  }
-  return [...found];
-}
-
 function yieldToUi() {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, 0);
@@ -301,7 +332,12 @@ export async function uploadKeyImagesInChunks(input: {
   matchedFileCount: number;
   unmatchedPaths: string[];
 }> {
-  const { accepted, skipped, totalBytes } = filterKeyImageFiles(input.files);
+  // Match study IDs locally first — never upload unmatched files.
+  const analysis = analyzeKeyImageMatches(input.files, input.caseIds);
+  const accepted = analysis.matchedFiles;
+  const skipped = analysis.unmatchedPaths;
+  const totalBytes = analysis.totalMatchedBytes;
+
   if (accepted.length === 0) {
     input.onProgress?.({
       percent: 100,
@@ -330,17 +366,29 @@ export async function uploadKeyImagesInChunks(input: {
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i]!;
     const fd = new FormData();
+    const chunkCaseIds = new Set<string>();
     for (const file of chunk) {
-      fd.append("keyImages", file, fileRelativePath(file));
+      const relativePath = fileRelativePath(file);
+      const caseId = matchKeyImagePathToCaseId(relativePath, input.caseIds);
+      // Browsers strip folder paths from File.name — send path + study ID explicitly.
+      fd.append("keyImages", file, sanitizeKeyImageBasename(relativePath));
+      fd.append("keyImagePaths", relativePath);
+      fd.append("keyImageCaseIds", caseId ?? "");
+      if (caseId) chunkCaseIds.add(caseId);
     }
 
-    const studiesHere = studyIdsInChunk(chunk, input.caseIds, input.clearCaseIds);
+    const studiesHere = [...chunkCaseIds].filter((id) =>
+      input.clearCaseIds.includes(id),
+    );
     const clearCaseIds = studiesHere.filter((id) => !clearedStudies.has(id));
     for (const id of clearCaseIds) clearedStudies.add(id);
 
+    const scopedCaseIds =
+      chunkCaseIds.size > 0 ? [...chunkCaseIds] : input.caseIds;
+
     const res = await input.uploadChunk(fd, {
       clearCaseIds,
-      caseIds: input.caseIds,
+      caseIds: scopedCaseIds,
       caseDbIds: input.caseDbIds,
       scopeOfWork: input.scopeOfWork,
       redbrickProject: input.redbrickProject,

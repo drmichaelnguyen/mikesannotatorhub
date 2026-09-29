@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  analyzeKeyImageMatches,
   chunkContinuityFiles,
   chunkKeyImageFiles,
   filterKeyImageFiles,
@@ -64,5 +65,21 @@ describe("upload-key-images-client", () => {
     const chunks = chunkContinuityFiles(files, caseIds);
     assert.ok(chunks.length >= 2);
     assert.ok(chunks.every((c) => c.length <= 20));
+  });
+
+  it("analyzes study-id matches before upload", () => {
+    const caseIds = ["study-a", "study-b"];
+    const analysis = analyzeKeyImageMatches(
+      [
+        fakeFile("1.jpg", 1000, "study-a/1.jpg"),
+        fakeFile("2.jpg", 1000, "other/2.jpg"),
+        fakeFile("note.txt", 10, "study-a/note.txt"),
+      ],
+      caseIds,
+    );
+    assert.equal(analysis.matchedFiles.length, 1);
+    assert.deepEqual(analysis.matchedCaseIds, ["study-a"]);
+    assert.ok(analysis.unmatchedPaths.some((p) => p.includes("other/2.jpg")));
+    assert.ok(analysis.unmatchedPaths.some((p) => p.includes("note.txt")));
   });
 });

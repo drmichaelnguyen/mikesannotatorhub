@@ -18,6 +18,7 @@ export function isKeyImageFilename(filename: string): boolean {
  * Match a folder-upload relative path to a case/study ID.
  * Prefers the immediate parent folder of the file, then other path segments
  * (deepest first). Supports optional `asi-` prefix and embedded UUIDs.
+ * Also matches when the image filename itself is the study ID (flat folders).
  */
 export function matchKeyImagePathToCaseId(
   relativePath: string,
@@ -30,9 +31,12 @@ export function matchKeyImagePathToCaseId(
     .filter(Boolean);
   if (parts.length === 0) return null;
 
-  // Prefer parent folders over the filename itself.
-  const candidates =
-    parts.length >= 2 ? [...parts.slice(0, -1)].reverse() : [parts[0]!];
+  // Prefer parent folders over the filename itself; then try the filename
+  // (flat uploads named like `{studyId}.jpg`).
+  const folderCandidates =
+    parts.length >= 2 ? [...parts.slice(0, -1)].reverse() : [];
+  const fileCandidate = parts[parts.length - 1]!;
+  const candidates = [...folderCandidates, fileCandidate];
 
   for (const segment of candidates) {
     const match = matchSegmentToCaseId(segment, caseIds);
@@ -54,19 +58,25 @@ function matchSegmentToCaseId(
     if (!byNorm.has(norm)) byNorm.set(norm, caseId);
   }
 
-  const trimmed = segment.trim();
-  if (!trimmed) return null;
+  const variants = [segment.trim()];
+  // Flat files: `asi-xxx.jpg` / `uuid.png`
+  const withoutExt = segment.replace(IMAGE_EXT_RE, "").trim();
+  if (withoutExt && withoutExt !== segment.trim()) variants.push(withoutExt);
 
-  const exact = byExact.get(trimmed) ?? byExact.get(trimmed.toLowerCase());
-  if (exact) return exact;
+  for (const trimmed of variants) {
+    if (!trimmed) continue;
 
-  const viaNorm = byNorm.get(normalizeStudyId(trimmed));
-  if (viaNorm) return viaNorm;
+    const exact = byExact.get(trimmed) ?? byExact.get(trimmed.toLowerCase());
+    if (exact) return exact;
 
-  const uuidMatch = trimmed.match(UUID_RE);
-  if (uuidMatch?.[0]) {
-    const viaUuid = byNorm.get(normalizeStudyId(uuidMatch[0]));
-    if (viaUuid) return viaUuid;
+    const viaNorm = byNorm.get(normalizeStudyId(trimmed));
+    if (viaNorm) return viaNorm;
+
+    const uuidMatch = trimmed.match(UUID_RE);
+    if (uuidMatch?.[0]) {
+      const viaUuid = byNorm.get(normalizeStudyId(uuidMatch[0]));
+      if (viaUuid) return viaUuid;
+    }
   }
 
   return null;
