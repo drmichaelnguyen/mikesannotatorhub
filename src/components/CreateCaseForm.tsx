@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from "react";
 import {
   createCaseAction,
+  uploadContinuityReportsChunkAction,
   uploadKeyImagesChunkAction,
   type CreateCaseActionResult,
 } from "@/app/actions/cases";
@@ -30,6 +31,7 @@ import {
 import {
   CONTINUITY_MAX_TOTAL_BYTES,
   KEY_IMAGE_MAX_TOTAL_BYTES,
+  uploadContinuityReportsInChunks,
   uploadKeyImagesInChunks,
   type KeyImageUploadProgress,
 } from "@/lib/upload-key-images-client";
@@ -43,7 +45,31 @@ type CreateFormResult =
       keyImagesAttached: number;
       keyImagesUnmatched: string[];
     })
-  | Extract<CreateCaseActionResult, { ok: false }>;
+  | (Extract<CreateCaseActionResult, { ok: false }> & { referenceId?: string });
+
+function uploadErrorToCreateResult(error: unknown): Extract<CreateFormResult, { ok: false }> {
+  const message = error instanceof Error ? error.message : "";
+  const referenceId =
+    error && typeof error === "object" && "referenceId" in error
+      ? String((error as { referenceId?: string }).referenceId ?? "")
+      : undefined;
+  const known = [
+    "auth",
+    "forbidden",
+    "no_cases",
+    "scope",
+    "server",
+    "upload_size",
+  ] as const;
+  if ((known as readonly string[]).includes(message)) {
+    return {
+      ok: false,
+      error: message === "no_cases" || message === "scope" ? "server" : (message as "auth" | "forbidden" | "server" | "upload_size"),
+      ...(referenceId ? { referenceId } : {}),
+    };
+  }
+  return { ok: false, error: "network", ...(referenceId ? { referenceId } : {}) };
+}
 
 function formatIdList(ids: string[], max = 40) {
   if (ids.length === 0) return "";
@@ -187,9 +213,9 @@ export function CreateCaseForm({
     async (_: CreateFormResult | null, fd: FormData): Promise<CreateFormResult> => {
       setClientError(null);
       setKeyImageProgress(null);
+      // Create cases without large attachments — files upload afterward in study-ID chunks.
       fd.delete("continuityReports");
       fd.delete("keyImages");
-      for (const file of continuityFiles) fd.append("continuityReports", file);
       const continuitySize = continuityFiles.reduce((total, file) => total + file.size, 0);
       if (continuitySize > CONTINUITY_MAX_TOTAL_BYTES) return { ok: false, error: "upload_size" };
       const keyImageBytes = keyImageFiles.reduce((total, file) => total + file.size, 0);
@@ -197,6 +223,29 @@ export function CreateCaseForm({
       try {
         const createRes = await createCaseAction(fd);
         if (!createRes.ok) return createRes;
+
+        let continuityReportsAttached = createRes.continuityReportsAttached;
+        let continuityReportsUnmatched = [...createRes.continuityReportsUnmatched];
+        if (continuityFiles.length > 0) {
+          const continuityRes = await uploadContinuityReportsInChunks({
+            files: continuityFiles,
+            caseIds: batchCaseIds,
+            scopeOfWork: details.scopeOfWork.trim(),
+            redbrickProject: details.redbrickProject.trim(),
+            onProgress: setKeyImageProgress,
+            uploadChunk: async (chunkFd, meta) =>
+              uploadContinuityReportsChunkAction(
+                {
+                  caseIds: meta.caseIds,
+                  scopeOfWork: meta.scopeOfWork,
+                  redbrickProject: meta.redbrickProject,
+                },
+                chunkFd,
+              ),
+          });
+          continuityReportsAttached = continuityRes.matchedCaseCount;
+          continuityReportsUnmatched = continuityRes.unmatchedFilenames;
+        }
 
         let keyImagesAttached = 0;
         let keyImagesUnmatched: string[] = [];
@@ -224,10 +273,16 @@ export function CreateCaseForm({
           keyImagesUnmatched = uploadRes.unmatchedPaths;
         }
         setKeyImageProgress(null);
-        return { ...createRes, keyImagesAttached, keyImagesUnmatched };
-      } catch {
+        return {
+          ...createRes,
+          continuityReportsAttached,
+          continuityReportsUnmatched,
+          keyImagesAttached,
+          keyImagesUnmatched,
+        };
+      } catch (error) {
         setKeyImageProgress(null);
-        return { ok: false, error: "network" };
+        return uploadErrorToCreateResult(error);
       }
     },
     null as CreateFormResult | null,
@@ -341,7 +396,7 @@ export function CreateCaseForm({
           <div className="mt-2">
             <KeyImageUploadProgressBar
               progress={keyImageProgress}
-              label={tk("case_key_images_uploading")}
+              label={tk("case_attachments_uploading")}
             />
           </div>
         )}
@@ -549,7 +604,7 @@ export function CreateCaseForm({
         >
           {pending ? (
             keyImageProgress
-              ? tk("case_key_images_uploading")
+              ? tk("case_attachments_uploading")
               : lang === "vi"
                 ? "Đang tạo ca…"
                 : "Creating cases…"

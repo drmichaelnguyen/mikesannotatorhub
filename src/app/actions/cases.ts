@@ -1013,6 +1013,98 @@ export async function uploadKeyImagesChunkAction(
   });
 }
 
+/**
+ * Upload one chunk of continuity HTML reports (matched by filename to study/case IDs).
+ */
+export async function uploadContinuityReportsChunkAction(
+  input: {
+    caseIds: string[];
+    caseDbIds?: string[];
+    scopeOfWork?: string;
+    redbrickProject?: string;
+  },
+  formData: FormData,
+): Promise<
+  | {
+      ok: true;
+      matchedCaseIds: string[];
+      unmatchedFilenames: string[];
+    }
+  | { ok: false; error: string; referenceId?: string }
+> {
+  return withActionLog("uploadContinuityReportsChunkAction", {
+    caseIds: input.caseIds.length,
+    caseDbIds: input.caseDbIds?.length ?? 0,
+  }, async () => {
+    try {
+      await requireRole("REVIEWER");
+      const caseIds = [...new Set(input.caseIds.map((id) => id.trim()).filter(Boolean))];
+      const caseDbIds = [...new Set((input.caseDbIds ?? []).map((id) => id.trim()).filter(Boolean))];
+      const scopeOfWork = input.scopeOfWork?.trim() || "";
+      const redbrickProject = input.redbrickProject?.trim() || "";
+
+      if (caseIds.length === 0) {
+        return { ok: false as const, error: "no_cases" };
+      }
+
+      let rows: { id: string; caseId: string }[];
+      if (caseDbIds.length > 0) {
+        rows = await prisma.annotationCase.findMany({
+          where: { id: { in: caseDbIds } },
+          select: { id: true, caseId: true },
+        });
+      } else if (scopeOfWork && redbrickProject) {
+        rows = await prisma.annotationCase.findMany({
+          where: {
+            caseId: { in: caseIds },
+            scopeOfWork,
+            redbrickProject,
+          },
+          select: { id: true, caseId: true },
+        });
+      } else {
+        return { ok: false as const, error: "scope" };
+      }
+
+      if (rows.length === 0) {
+        return { ok: false as const, error: "no_cases" };
+      }
+
+      const rowCaseIds = rows.map((r) => r.caseId);
+      const byCaseId = new Map(rows.map((r) => [r.caseId, r]));
+      const parsed = await readContinuityReportsFromFormData(formData, rowCaseIds);
+      const matchedCaseIds: string[] = [];
+
+      for (const [caseId, content] of parsed.byCaseId) {
+        const row = byCaseId.get(caseId);
+        if (!row || !content) continue;
+        await saveContinuityReport(row.id, content);
+        await prisma.annotationCase.update({
+          where: { id: row.id },
+          data: { hasContinuityReport: true },
+        });
+        matchedCaseIds.push(caseId);
+      }
+
+      revalidatePath("/reviewer");
+      revalidatePath("/annotator");
+      return {
+        ok: true as const,
+        matchedCaseIds,
+        unmatchedFilenames: parsed.unmatchedFilenames,
+      };
+    } catch (error) {
+      const reason = errorCode(error);
+      await writeActionLog({ action: "uploadContinuityReportsChunkAction", outcome: "failed", reason });
+      return {
+        ok: false as const,
+        error: reason === "Unauthorized" ? "auth" : reason === "Forbidden" ? "forbidden" : "server",
+        referenceId: actionContext.getStore()?.referenceId,
+      };
+    }
+  });
+}
+
 async function annotatorHasPendingReviewAcknowledgment(annotatorUserId: string): Promise<boolean> {
   const rows = await prisma.annotationCase.findMany({
     where: {

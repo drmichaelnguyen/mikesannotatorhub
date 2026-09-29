@@ -27,6 +27,7 @@ import {
   deleteCaseAction,
   reviewCaseAction,
   reviewerAssignCaseAction,
+  uploadContinuityReportsChunkAction,
   uploadKeyImagesChunkAction,
 } from "@/app/actions/cases";
 import { MentionTextarea } from "@/components/MentionTextarea";
@@ -67,6 +68,7 @@ import {
 import {
   CONTINUITY_MAX_TOTAL_BYTES,
   KEY_IMAGE_MAX_TOTAL_BYTES,
+  uploadContinuityReportsInChunks,
   uploadKeyImagesInChunks,
   type KeyImageUploadProgress,
 } from "@/lib/upload-key-images-client";
@@ -1407,10 +1409,6 @@ export function ReviewerWorkboard({
           setErr(createCaseErrorMessage("upload_size", lang));
           return;
         }
-        const continuityReportFormData = new FormData();
-        for (const file of batchContinuityFiles) {
-          continuityReportFormData.append("continuityReports", file);
-        }
         setKeyImageProgress(null);
         const findingsParsed = parseRadiologistFindingsTable(batchFindingsPaste);
         const batchTargetIds = batchTargetRows.map((row) => row.id);
@@ -1420,30 +1418,28 @@ export function ReviewerWorkboard({
             batchTargetRows.map((row) => row.caseId),
           ).matched.map((m) => [m.caseId, m.finding]),
         );
-        const res = await batchUpdateCasesAction(
-          {
-            caseDbIds: batchTargetIds,
-            project: batchDetails.project,
-            redbrickProject: batchDetails.redbrickProject,
-            guideId: batchDetails.guideId,
-            topicIds: batchDetails.topicIds,
-            guideline: batchDetails.guideline,
-            radiologistFinding: batchDetails.radiologistFinding,
-            findingsByCaseId,
-            videoGuideUrls: parseVideoGuideUrlsInput(batchDetails.videoGuideUrls),
-            scopeOfWork: batchDetails.scopeOfWork,
-            minMinutesPerCase,
-            maxMinutesPerCase,
-            compensationType: batchDetails.compensationType,
-            compensationAmount,
-            annotatorBonus,
-            fiveStarBonusPercent,
-            deadline: batchUpdateTiming ? deadline.toISOString() : null,
-            expiresAt: batchUpdateTiming ? expiresAt.toISOString() : null,
-            assignment: batchAssignment,
-          },
-          continuityReportFormData,
-        );
+        // Update metadata without large attachments — files upload afterward in study-ID chunks.
+        const res = await batchUpdateCasesAction({
+          caseDbIds: batchTargetIds,
+          project: batchDetails.project,
+          redbrickProject: batchDetails.redbrickProject,
+          guideId: batchDetails.guideId,
+          topicIds: batchDetails.topicIds,
+          guideline: batchDetails.guideline,
+          radiologistFinding: batchDetails.radiologistFinding,
+          findingsByCaseId,
+          videoGuideUrls: parseVideoGuideUrlsInput(batchDetails.videoGuideUrls),
+          scopeOfWork: batchDetails.scopeOfWork,
+          minMinutesPerCase,
+          maxMinutesPerCase,
+          compensationType: batchDetails.compensationType,
+          compensationAmount,
+          annotatorBonus,
+          fiveStarBonusPercent,
+          deadline: batchUpdateTiming ? deadline.toISOString() : null,
+          expiresAt: batchUpdateTiming ? expiresAt.toISOString() : null,
+          assignment: batchAssignment,
+        });
         if (!res.ok) {
           const message = res.error === "assignment_state" ? tk("reviewer_assign_taken")
             : res.error === "invalid_annotator" ? tk("reviewer_assign_invalid")
@@ -1452,6 +1448,27 @@ export function ReviewerWorkboard({
             : createCaseErrorMessage(res.error, lang);
           setErr(message + ("referenceId" in res && res.referenceId ? ` (${res.referenceId})` : ""));
           return;
+        }
+
+        let continuityReportsAttached = res.continuityReportsAttached;
+        let continuityReportsUnmatched = [...res.continuityReportsUnmatched];
+        if (batchContinuityFiles.length > 0) {
+          const continuityRes = await uploadContinuityReportsInChunks({
+            files: batchContinuityFiles,
+            caseIds: batchTargetRows.map((row) => row.caseId),
+            caseDbIds: batchTargetIds,
+            onProgress: setKeyImageProgress,
+            uploadChunk: async (chunkFd, meta) =>
+              uploadContinuityReportsChunkAction(
+                {
+                  caseIds: meta.caseIds,
+                  caseDbIds: meta.caseDbIds,
+                },
+                chunkFd,
+              ),
+          });
+          continuityReportsAttached = continuityRes.matchedCaseCount;
+          continuityReportsUnmatched = continuityRes.unmatchedFilenames;
         }
 
         let keyImagesAttached = 0;
@@ -1479,7 +1496,7 @@ export function ReviewerWorkboard({
         }
         setKeyImageProgress(null);
 
-        setBatchSuccess(`${lang === "vi" ? "Đã cập nhật" : "Updated"} ${res.updated} ${lang === "vi" ? "ca" : "cases"}. ${lang === "vi" ? "Báo cáo đính kèm" : "Reports attached"}: ${res.continuityReportsAttached}.${res.continuityReportsUnmatched.length ? ` ${tk("case_continuity_report_preview_unmatched")}: ${res.continuityReportsUnmatched.join(", ")}` : ""}${keyImagesAttached ? ` ${tk("batch_result_key_images_attached")}: ${keyImagesAttached}.` : ""}${keyImagesUnmatched.length ? ` ${tk("case_key_images_preview_unmatched")}: ${keyImagesUnmatched.slice(0, 8).join(", ")}` : ""}`);
+        setBatchSuccess(`${lang === "vi" ? "Đã cập nhật" : "Updated"} ${res.updated} ${lang === "vi" ? "ca" : "cases"}. ${lang === "vi" ? "Báo cáo đính kèm" : "Reports attached"}: ${continuityReportsAttached}.${continuityReportsUnmatched.length ? ` ${tk("case_continuity_report_preview_unmatched")}: ${continuityReportsUnmatched.join(", ")}` : ""}${keyImagesAttached ? ` ${tk("batch_result_key_images_attached")}: ${keyImagesAttached}.` : ""}${keyImagesUnmatched.length ? ` ${tk("case_key_images_preview_unmatched")}: ${keyImagesUnmatched.slice(0, 8).join(", ")}` : ""}`);
         setBatchEditOpen(false);
         clearSelection();
         refresh();
@@ -2258,7 +2275,7 @@ export function ReviewerWorkboard({
                   <div className="mt-2">
                     <KeyImageUploadProgressBar
                       progress={keyImageProgress}
-                      label={tk("case_key_images_uploading")}
+                      label={tk("case_attachments_uploading")}
                     />
                   </div>
                 )}
