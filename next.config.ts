@@ -4,8 +4,9 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: process.cwd(),
   experimental: {
     serverActions: {
-      bodySizeLimit: "20mb",
+      bodySizeLimit: "120mb",
     },
+    middlewareClientMaxBodySize: "120mb",
   },
 };
 

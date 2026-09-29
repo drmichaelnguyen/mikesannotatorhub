@@ -64,7 +64,7 @@ export const dict = {
     case_key_images_load_error: "Could not load key images.",
     case_key_images_upload: "Radiologist key images (folder)",
     case_key_images_upload_hint:
-      "Upload a folder whose subfolders are named by study/case ID. Large folders upload in small chunks with a progress bar (up to 500 MB).",
+      "Upload a folder whose subfolders are named by study/case ID. Large folders upload in small chunks with a progress bar (up to 10 GB).",
     case_key_images_preview_matched: "Matched image folders",
     case_key_images_preview_unmatched: "Unmatched files",
     case_key_images_uploading: "Uploading key images…",
@@ -663,7 +663,7 @@ export const dict = {
     case_key_images_load_error: "Không tải được ảnh key.",
     case_key_images_upload: "Ảnh key radiologist (thư mục)",
     case_key_images_upload_hint:
-      "Tải thư mục có các thư mục con đặt tên theo study/case ID. Thư mục lớn được tải theo từng phần nhỏ kèm thanh tiến trình (tối đa 500 MB).",
+      "Tải thư mục có các thư mục con đặt tên theo study/case ID. Thư mục lớn được tải theo từng phần nhỏ kèm thanh tiến trình (tối đa 10 GB).",
     case_key_images_preview_matched: "Thư mục ảnh đã khớp",
     case_key_images_preview_unmatched: "File chưa khớp",
     case_key_images_uploading: "Đang tải ảnh key…",

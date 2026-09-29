@@ -7,7 +7,9 @@ import {
 export const KEY_IMAGE_CHUNK_BYTES = 8 * 1024 * 1024;
 export const KEY_IMAGE_CHUNK_MAX_FILES = 16;
 /** Overall folder cap across all chunks. */
-export const KEY_IMAGE_MAX_TOTAL_BYTES = 500 * 1024 * 1024;
+export const KEY_IMAGE_MAX_TOTAL_BYTES = 10 * 1024 * 1024 * 1024;
+/** Continuity reports go in a single request; must stay under `bodySizeLimit` in next.config.ts. */
+export const CONTINUITY_MAX_TOTAL_BYTES = 100 * 1024 * 1024;
 
 export type KeyImageUploadProgress = {
   percent: number;

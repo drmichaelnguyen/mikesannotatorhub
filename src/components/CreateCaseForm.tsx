@@ -28,6 +28,7 @@ import {
   parseRadiologistFindingsTable,
 } from "@/lib/radiologist-findings";
 import {
+  CONTINUITY_MAX_TOTAL_BYTES,
   KEY_IMAGE_MAX_TOTAL_BYTES,
   uploadKeyImagesInChunks,
   type KeyImageUploadProgress,
@@ -190,7 +191,7 @@ export function CreateCaseForm({
       fd.delete("keyImages");
       for (const file of continuityFiles) fd.append("continuityReports", file);
       const continuitySize = continuityFiles.reduce((total, file) => total + file.size, 0);
-      if (continuitySize > 20 * 1024 * 1024) return { ok: false, error: "upload_size" };
+      if (continuitySize > CONTINUITY_MAX_TOTAL_BYTES) return { ok: false, error: "upload_size" };
       const keyImageBytes = keyImageFiles.reduce((total, file) => total + file.size, 0);
       if (keyImageBytes > KEY_IMAGE_MAX_TOTAL_BYTES) return { ok: false, error: "upload_size" };
       try {
