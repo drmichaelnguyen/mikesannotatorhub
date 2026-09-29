@@ -9,7 +9,6 @@ import { useActionState, useEffect, useMemo, useRef, useState, type InputHTMLAtt
 import {
   createCaseAction,
   uploadContinuityReportsChunkAction,
-  uploadKeyImagesChunkAction,
   type CreateCaseActionResult,
 } from "@/app/actions/cases";
 import {
@@ -28,6 +27,7 @@ import {
   analyzeKeyImageMatches,
   CONTINUITY_MAX_TOTAL_BYTES,
   KEY_IMAGE_MAX_TOTAL_BYTES,
+  postKeyImagesChunk,
   uploadContinuityReportsInChunks,
   uploadKeyImagesInChunks,
   type KeyImageUploadProgress,
@@ -247,23 +247,16 @@ export function CreateCaseForm({
 
           if (keyImageAnalysis && keyImageAnalysis.matchedFiles.length > 0) {
             const clearCaseIds = keyImageAnalysis.matchedCaseIds;
+            const caseDbIds = createRes.cases.map((row) => row.id);
             const uploadRes = await uploadKeyImagesInChunks({
               files: keyImageAnalysis.matchedFiles,
               caseIds: batchCaseIds,
               clearCaseIds,
+              caseDbIds,
               scopeOfWork: details.scopeOfWork.trim(),
               redbrickProject: details.redbrickProject.trim(),
               onProgress: setKeyImageProgress,
-              uploadChunk: async (chunkFd, meta) =>
-                uploadKeyImagesChunkAction(
-                  {
-                    caseIds: meta.caseIds,
-                    clearCaseIds: meta.clearCaseIds,
-                    scopeOfWork: meta.scopeOfWork,
-                    redbrickProject: meta.redbrickProject,
-                  },
-                  chunkFd,
-                ),
+              uploadChunk: postKeyImagesChunk,
             });
             keyImagesAttached = uploadRes.matchedCaseCount;
             keyImagesUnmatched = [

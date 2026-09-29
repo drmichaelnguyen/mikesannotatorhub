@@ -28,7 +28,6 @@ import {
   reviewCaseAction,
   reviewerAssignCaseAction,
   uploadContinuityReportsChunkAction,
-  uploadKeyImagesChunkAction,
 } from "@/app/actions/cases";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
@@ -65,6 +64,7 @@ import {
   analyzeKeyImageMatches,
   CONTINUITY_MAX_TOTAL_BYTES,
   KEY_IMAGE_MAX_TOTAL_BYTES,
+  postKeyImagesChunk,
   uploadContinuityReportsInChunks,
   uploadKeyImagesInChunks,
   type KeyImageUploadProgress,
@@ -1486,19 +1486,13 @@ export function ReviewerWorkboard({
             onProgress: setKeyImageProgress,
             uploadChunk: async (chunkFd, meta) => {
               const allowed = new Set(meta.caseIds);
-              const scopedDbIds = (meta.caseDbIds ?? []).length
-                ? batchTargetRows
-                    .filter((row) => allowed.has(row.caseId))
-                    .map((row) => row.id)
-                : undefined;
-              return uploadKeyImagesChunkAction(
-                {
-                  caseIds: meta.caseIds,
-                  clearCaseIds: meta.clearCaseIds,
-                  caseDbIds: scopedDbIds && scopedDbIds.length > 0 ? scopedDbIds : meta.caseDbIds,
-                },
-                chunkFd,
-              );
+              const scopedDbIds = batchTargetRows
+                .filter((row) => allowed.has(row.caseId))
+                .map((row) => row.id);
+              return postKeyImagesChunk(chunkFd, {
+                ...meta,
+                caseDbIds: scopedDbIds.length > 0 ? scopedDbIds : meta.caseDbIds,
+              });
             },
           });
           keyImagesAttached = uploadRes.matchedCaseCount;

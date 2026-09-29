@@ -163,6 +163,8 @@ export type CreateCaseActionResult =
       duplicateInList: string[];
       continuityReportsAttached: number;
       continuityReportsUnmatched: string[];
+      /** DB rows for this batch (created + already-existing under same scope/project). */
+      cases: { id: string; caseId: string }[];
     }
   | { ok: false; error: CreateCaseError; referenceId?: string };
 
@@ -878,6 +880,14 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
 
       revalidatePath("/reviewer");
       revalidatePath("/annotator");
+      const cases = await prisma.annotationCase.findMany({
+        where: {
+          caseId: { in: unique },
+          scopeOfWork,
+          redbrickProject,
+        },
+        select: { id: true, caseId: true },
+      });
       return {
         ok: true as const,
         created,
@@ -885,6 +895,7 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
         duplicateInList,
         continuityReportsAttached,
         continuityReportsUnmatched,
+        cases,
       };
     } catch (error) {
       const reason = errorCode(error);

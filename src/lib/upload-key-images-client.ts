@@ -9,10 +9,10 @@ import {
 } from "@/lib/key-image-path";
 
 /** Target size per chunk request (keeps server memory and body limit safe). */
-export const KEY_IMAGE_CHUNK_BYTES = 4 * 1024 * 1024;
-export const KEY_IMAGE_CHUNK_MAX_FILES = 8;
+export const KEY_IMAGE_CHUNK_BYTES = 2 * 1024 * 1024;
+export const KEY_IMAGE_CHUNK_MAX_FILES = 4;
 /** Prefer at most this many study IDs per chunk when packing folders. */
-export const KEY_IMAGE_CHUNK_MAX_STUDIES = 2;
+export const KEY_IMAGE_CHUNK_MAX_STUDIES = 1;
 /** Overall folder cap across all chunks. */
 export const KEY_IMAGE_MAX_TOTAL_BYTES = 10 * 1024 * 1024 * 1024;
 /** Continuity reports also upload in chunks (same request budget as key images). */
@@ -349,6 +349,72 @@ function yieldToUi() {
   });
 }
 
+/** Upload one key-image chunk via the dedicated API route (reliable for large DICOM). */
+export async function postKeyImagesChunk(
+  formData: FormData,
+  meta: {
+    clearCaseIds: string[];
+    caseIds: string[];
+    caseDbIds?: string[];
+    scopeOfWork?: string;
+    redbrickProject?: string;
+  },
+): Promise<KeyImageChunkUploadResult> {
+  formData.set(
+    "meta",
+    JSON.stringify({
+      caseIds: meta.caseIds,
+      clearCaseIds: meta.clearCaseIds,
+      caseDbIds: meta.caseDbIds ?? [],
+      scopeOfWork: meta.scopeOfWork ?? "",
+      redbrickProject: meta.redbrickProject ?? "",
+    }),
+  );
+  const res = await fetch("/api/reviewer/key-images/chunk", {
+    method: "POST",
+    body: formData,
+    credentials: "same-origin",
+  });
+  let body: KeyImageChunkUploadResult | null = null;
+  try {
+    body = (await res.json()) as KeyImageChunkUploadResult;
+  } catch {
+    body = null;
+  }
+  if (!res.ok || !body) {
+    return {
+      ok: false,
+      error: body && !body.ok ? body.error : res.status === 413 ? "upload_size" : "network",
+    };
+  }
+  return body;
+}
+
+async function uploadChunkWithRetry(
+  uploadChunk: KeyImageChunkUploader,
+  formData: FormData,
+  meta: {
+    clearCaseIds: string[];
+    caseIds: string[];
+    caseDbIds?: string[];
+    scopeOfWork?: string;
+    redbrickProject?: string;
+  },
+): Promise<KeyImageChunkUploadResult> {
+  let last: KeyImageChunkUploadResult | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    // Rebuild FormData on retry — a consumed body cannot be resent.
+    const fd = new FormData();
+    for (const [key, value] of formData.entries()) {
+      fd.append(key, value);
+    }
+    last = await uploadChunk(fd, meta);
+    if (last.ok) return last;
+    if (attempt === 0) await yieldToUi();
+  }
+  return last ?? { ok: false, error: "network" };
+}
+
 /**
  * Upload key images in small study-aware chunks with progress callbacks.
  * Clears existing images for a study the first time that study appears in a chunk.
@@ -422,7 +488,7 @@ export async function uploadKeyImagesInChunks(input: {
     const scopedCaseIds =
       chunkCaseIds.size > 0 ? [...chunkCaseIds] : input.caseIds;
 
-    const res = await input.uploadChunk(fd, {
+    const res = await uploadChunkWithRetry(input.uploadChunk, fd, {
       clearCaseIds,
       caseIds: scopedCaseIds,
       caseDbIds: input.caseDbIds,
