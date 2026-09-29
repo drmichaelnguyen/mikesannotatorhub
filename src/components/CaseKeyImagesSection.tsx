@@ -24,7 +24,7 @@ export function CaseKeyImagesSection({
   const [active, setActive] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open || files !== null || loading) return;
+    if (!open || files !== null) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -47,7 +47,7 @@ export function CaseKeyImagesSection({
     return () => {
       cancelled = true;
     };
-  }, [open, files, loading, caseDbId, lang]);
+  }, [open, files, caseDbId, lang]);
 
   if (!hasKeyImages) return null;
 
@@ -77,7 +77,12 @@ export function CaseKeyImagesSection({
           role="dialog"
           aria-modal="true"
           aria-label={tk("case_key_images")}
-          onClick={() => setOpen(false)}
+          onClick={() => {
+            setOpen(false);
+            setFiles(null);
+            setActive(null);
+            setError(null);
+          }}
         >
           <div
             className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-xl"
@@ -87,7 +92,12 @@ export function CaseKeyImagesSection({
               <h3 className="text-sm font-semibold">{tk("case_key_images")}</h3>
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={() => {
+                  setOpen(false);
+                  setFiles(null);
+                  setActive(null);
+                  setError(null);
+                }}
                 className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs hover:bg-[var(--bg)]"
               >
                 {tk("drawer_close")}

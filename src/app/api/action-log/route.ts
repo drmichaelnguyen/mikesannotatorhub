@@ -2,7 +2,11 @@ import { getCurrentUser } from "@/lib/auth";
 import { writeActionLog } from "@/lib/action-log";
 
 export async function POST(request: Request) {
-  if (request.headers.get("origin") !== new URL(request.url).origin) return new Response(null, { status: 403 });
+  const requestOrigin = request.headers.get("origin");
+  // Same-origin fetches may omit Origin; only reject an explicit cross-origin value.
+  if (requestOrigin && requestOrigin !== new URL(request.url).origin) {
+    return new Response(null, { status: 403 });
+  }
   const user = await getCurrentUser();
   if (!user) return new Response(null, { status: 401 });
   // Bound the body even if Content-Length is absent or incorrect.

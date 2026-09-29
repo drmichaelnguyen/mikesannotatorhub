@@ -39,27 +39,48 @@ function DicomCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pngUrl, setPngUrl] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    let objectUrl: string | null = null;
     setLoading(true);
     setError(null);
+    setPngUrl(null);
 
-    fetch(src)
+    fetch(src, { credentials: "same-origin" })
       .then(async (res) => {
         if (!res.ok) throw new Error(String(res.status));
         return res.arrayBuffer();
       })
-      .then((buffer) => {
+      .then(async (buffer) => {
         if (cancelled) return;
         const result = renderDicomToImageData(buffer);
         if (!result.ok) {
           setError(result.error);
           return;
         }
-        const canvas = canvasRef.current;
-        if (!canvas) return;
+
+        // Prefer an <img> data URL so thumbs/full view paint reliably without canvas timing issues.
+        const canvas = canvasRef.current ?? document.createElement("canvas");
         paintDicomOnCanvas(canvas, result.imageData);
+        objectUrl = await new Promise<string>((resolve, reject) => {
+          canvas.toBlob(
+            (blob) => {
+              if (!blob) {
+                reject(new Error("blob"));
+                return;
+              }
+              resolve(URL.createObjectURL(blob));
+            },
+            "image/png",
+          );
+        });
+        if (cancelled) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        setPngUrl(objectUrl);
       })
       .catch(() => {
         if (!cancelled) setError("Could not load DICOM image.");
@@ -70,8 +91,15 @@ function DicomCanvas({
 
     return () => {
       cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [src]);
+
+  useEffect(() => {
+    return () => {
+      if (pngUrl) URL.revokeObjectURL(pngUrl);
+    };
+  }, [pngUrl]);
 
   if (error) {
     return (
@@ -86,21 +114,25 @@ function DicomCanvas({
 
   return (
     <div className={`relative flex items-center justify-center ${className ?? ""}`}>
+      {/* Hidden canvas used only for DICOM → PNG conversion. */}
+      <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
       {loading && (
         <span className="absolute text-xs text-[var(--muted)]">
-          {mode === "thumb" ? "\u2026" : "Loading DICOM\u2026"}
+          {mode === "thumb" ? "…" : "Loading DICOM…"}
         </span>
       )}
-      <canvas
-        ref={canvasRef}
-        aria-label={alt}
-        className={
-          mode === "thumb"
-            ? "h-16 w-16 object-cover"
-            : "max-h-[60vh] max-w-full object-contain"
-        }
-        style={{ display: loading ? "none" : "block", maxWidth: "100%", height: "auto" }}
-      />
+      {pngUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={pngUrl}
+          alt={alt}
+          className={
+            mode === "thumb"
+              ? "h-16 w-16 object-cover"
+              : "max-h-[60vh] max-w-full object-contain"
+          }
+        />
+      )}
     </div>
   );
 }
