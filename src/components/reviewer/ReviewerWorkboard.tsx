@@ -2276,7 +2276,7 @@ export function ReviewerWorkboard({
                   id="batch-case-key-images"
                   type="file"
                   multiple
-                  accept="image/*"
+                  accept="image/*,.dcm,.dicom,application/dicom"
                   className="mt-2 block w-full text-sm"
                   onChange={(e) =>
                     setBatchKeyImageFiles(Array.from(e.target.files ?? []))

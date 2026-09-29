@@ -2,6 +2,8 @@ import { mkdir, readdir, readFile, rm, writeFile } from "fs/promises";
 import path from "path";
 import {
   isKeyImageFilename,
+  isPlausibleKeyImageFile,
+  isRejectedKeyImageFilename,
   matchKeyImagePathToCaseId,
   sanitizeKeyImageBasename,
   KEY_IMAGE_MAX_FILE_BYTES,
@@ -82,7 +84,7 @@ export async function parseKeyImageUploads(
       file.name ||
       `file-${i}`;
 
-    if (!isKeyImageFilename(relativePath) && !isKeyImageFilename(file.name)) {
+    if (isRejectedKeyImageFilename(relativePath) || isRejectedKeyImageFilename(file.name)) {
       unmatchedPaths.push(relativePath);
       continue;
     }
@@ -101,6 +103,16 @@ export async function parseKeyImageUploads(
       continue;
     }
 
+    // Under a matched study folder, allow known images and extensionless DICOM-style files.
+    if (
+      !isKeyImageFilename(relativePath) &&
+      !isKeyImageFilename(file.name) &&
+      !isPlausibleKeyImageFile(relativePath)
+    ) {
+      unmatchedPaths.push(relativePath);
+      continue;
+    }
+
     const bytes = Buffer.from(await file.arrayBuffer());
     if (bytes.length === 0) {
       unmatchedPaths.push(relativePath);
@@ -108,6 +120,12 @@ export async function parseKeyImageUploads(
     }
 
     let basename = sanitizeKeyImageBasename(relativePath || file.name);
+    const hasKnownExt = isKeyImageFilename(basename);
+    if (!hasKnownExt) {
+      // Extensionless / unknown: store as .dcm so the viewer can render DICOM.
+      const stem = basename.replace(/\.[^.]+$/, "") || "image";
+      basename = `${stem}.dcm`;
+    }
     const used = usedNamesByCase.get(caseId) ?? new Set<string>();
     if (used.has(basename.toLowerCase())) {
       const ext = path.extname(basename);
@@ -231,6 +249,9 @@ export function keyImageContentType(filename: string): string {
     case ".tif":
     case ".tiff":
       return "image/tiff";
+    case ".dcm":
+    case ".dicom":
+      return "application/dicom";
     default:
       return "application/octet-stream";
   }

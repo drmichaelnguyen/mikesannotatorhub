@@ -1,6 +1,8 @@
 import { matchContinuityReportFileToCaseId } from "@/lib/continuity-report-filename";
 import {
   isKeyImageFilename,
+  isPlausibleKeyImageFile,
+  isRejectedKeyImageFilename,
   KEY_IMAGE_MAX_FILE_BYTES,
   matchKeyImagePathToCaseId,
   sanitizeKeyImageBasename,
@@ -88,7 +90,14 @@ export function filterKeyImageFiles(files: File[]): {
   let totalBytes = 0;
   for (const file of files) {
     const relativePath = fileRelativePath(file);
-    if (!isKeyImageFilename(relativePath)) {
+    const base = relativePath.split(/[/\\]/).pop() ?? relativePath;
+    const extensionless = !/\.[a-z0-9]{1,8}$/i.test(base);
+    // Strict prefilter: known image/DICOM extensions, or extensionless (common DICOM).
+    if (!isKeyImageFilename(relativePath) && !extensionless) {
+      skipped.push(relativePath);
+      continue;
+    }
+    if (isRejectedKeyImageFilename(relativePath)) {
       skipped.push(relativePath);
       continue;
     }
@@ -111,8 +120,9 @@ export function filterKeyImageFiles(files: File[]): {
 }
 
 /**
- * Client-side study-ID matching before any upload. Only matched image files
- * should be sent to the server.
+ * Client-side study-ID matching before any upload.
+ * Matches nested folder names first, then accepts images/DICOM (including
+ * extensionless DICOM files) only under those matched study folders.
  */
 export function analyzeKeyImageMatches(
   files: File[],
@@ -124,22 +134,48 @@ export function analyzeKeyImageMatches(
   matchedCaseIds: string[];
   totalMatchedBytes: number;
 } {
-  const { accepted, skipped } = filterKeyImageFiles(files);
   const matchedByCaseId = new Map<string, File[]>();
-  const unmatchedPaths: string[] = [...skipped];
+  const unmatchedPaths: string[] = [];
   let totalMatchedBytes = 0;
+  let runningBytes = 0;
 
-  for (const file of accepted) {
+  for (const file of files) {
     const relativePath = fileRelativePath(file);
+    if (file.size <= 0) {
+      unmatchedPaths.push(relativePath);
+      continue;
+    }
+    if (isRejectedKeyImageFilename(relativePath)) {
+      unmatchedPaths.push(relativePath);
+      continue;
+    }
+    if (file.size > KEY_IMAGE_MAX_FILE_BYTES) {
+      unmatchedPaths.push(`${relativePath} (too large)`);
+      continue;
+    }
+
     const caseId = matchKeyImagePathToCaseId(relativePath, caseIds);
     if (!caseId) {
       unmatchedPaths.push(relativePath);
       continue;
     }
+
+    // Path matched a study ID — accept known images and extensionless DICOM-style files.
+    if (!isPlausibleKeyImageFile(relativePath)) {
+      unmatchedPaths.push(relativePath);
+      continue;
+    }
+
+    if (runningBytes + file.size > KEY_IMAGE_MAX_TOTAL_BYTES) {
+      unmatchedPaths.push(`${relativePath} (folder over limit)`);
+      continue;
+    }
+
     const list = matchedByCaseId.get(caseId) ?? [];
     list.push(file);
     matchedByCaseId.set(caseId, list);
     totalMatchedBytes += file.size;
+    runningBytes += file.size;
   }
 
   return {

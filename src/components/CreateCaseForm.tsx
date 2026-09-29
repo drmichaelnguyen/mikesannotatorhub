@@ -397,7 +397,7 @@ export function CreateCaseForm({
           type="file"
           name="keyImages"
           multiple
-          accept="image/*"
+          accept="image/*,.dcm,.dicom,application/dicom"
           className="mt-2 block w-full text-sm"
           onChange={(e) => setKeyImageFiles(Array.from(e.target.files ?? []))}
           {...({ webkitdirectory: "", directory: "" } as InputHTMLAttributes<HTMLInputElement>)}

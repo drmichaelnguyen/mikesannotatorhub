@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { KeyImageView } from "@/components/KeyImageView";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 
@@ -102,11 +103,11 @@ export function CaseKeyImagesSection({
                 <>
                   {active && (
                     <div className="flex min-h-[40vh] items-center justify-center rounded-md border border-[var(--border)] bg-[var(--bg)] p-2">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
+                      <KeyImageView
                         src={`/api/cases/${caseDbId}/key-images/${encodeURIComponent(active)}`}
                         alt={active}
-                        className="max-h-[60vh] max-w-full object-contain"
+                        className="max-h-[60vh] max-w-full"
+                        mode="full"
                       />
                     </div>
                   )}
@@ -123,11 +124,11 @@ export function CaseKeyImagesSection({
                         }`}
                         title={name}
                       >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
+                        <KeyImageView
                           src={`/api/cases/${caseDbId}/key-images/${encodeURIComponent(name)}`}
                           alt={name}
-                          className="h-16 w-16 object-cover"
+                          className="h-16 w-16"
+                          mode="thumb"
                         />
                       </button>
                     ))}
