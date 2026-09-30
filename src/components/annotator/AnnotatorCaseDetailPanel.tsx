@@ -4,6 +4,7 @@ import { AnnotatorTakeCaseButton } from "@/components/annotator/AnnotatorTakeCas
 import { AnnotatorRedbrickFlagButton } from "@/components/annotator/AnnotatorRedbrickFlagButton";
 import { CaseKeyImagesSection } from "@/components/CaseKeyImagesSection";
 import { CaseStudyHistorySection } from "@/components/CaseStudyHistorySection";
+import { RadiologistFindingSection } from "@/components/RadiologistFindingSection";
 import { CaseContinuityReportSection } from "@/components/CaseContinuityReportSection";
 import { CaseDiscussion } from "@/components/CaseDiscussion";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
@@ -270,19 +271,11 @@ export function AnnotatorCaseDetailPanel({
         />
         <CaseStudyHistorySection lang={lang} caseDbId={row.id} />
         {row.radiologistFinding.trim() !== "" && (
-          <div className="md:col-span-2">
-            <dt className="sr-only">{tk("case_radiologist_finding")}</dt>
-            <dd className="m-0">
-              <details className="rounded-md border border-[var(--border)] bg-[var(--bg)]">
-                <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-[var(--muted)] hover:bg-[var(--surface)]">
-                  {tk("case_radiologist_finding")}
-                </summary>
-                <div className="border-t border-[var(--border)] px-3 py-2 text-sm whitespace-pre-wrap text-[var(--text)]">
-                  {row.radiologistFinding}
-                </div>
-              </details>
-            </dd>
-          </div>
+          <RadiologistFindingSection
+            lang={lang}
+            caseDbId={row.id}
+            text={row.radiologistFinding}
+          />
         )}
         {row.topics.length > 0 && (
           <div className="md:col-span-2">
