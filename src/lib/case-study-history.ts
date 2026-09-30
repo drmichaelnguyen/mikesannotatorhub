@@ -18,6 +18,11 @@ export type ParsedCaseStudyHistoryRow = {
   stages: CaseStudyHistoryStage[];
 };
 
+export type MatchedCaseStudyHistory = {
+  caseId: string;
+  row: ParsedCaseStudyHistoryRow;
+};
+
 const DEFAULT_STAGE_NAMES = ["PreLabeling Stage", "Label Stage", "Review 1"];
 
 type ColumnKind =
@@ -98,6 +103,46 @@ export function parseCaseStudyHistoryTable(text: string): ParsedCaseStudyHistory
   }
 
   return out;
+}
+
+/** Match parsed history rows to case IDs (exact, then normalized). */
+export function matchHistoryToCaseIds(
+  rows: ParsedCaseStudyHistoryRow[],
+  caseIds: string[],
+): {
+  matched: MatchedCaseStudyHistory[];
+  unmatchedStudyIds: string[];
+  unmatchedCaseIds: string[];
+} {
+  const byExact = new Map<string, string>();
+  const byNorm = new Map<string, string>();
+  for (const caseId of caseIds) {
+    byExact.set(caseId, caseId);
+    const norm = normalizeStudyId(caseId);
+    if (!byNorm.has(norm)) byNorm.set(norm, caseId);
+  }
+
+  const matched: MatchedCaseStudyHistory[] = [];
+  const unmatchedStudyIds: string[] = [];
+  const usedCaseIds = new Set<string>();
+
+  for (const row of rows) {
+    const exact = byExact.get(row.studyId) ?? byExact.get(row.studyId.trim());
+    const viaNorm = byNorm.get(row.studyIdNorm);
+    const caseId = exact ?? viaNorm;
+    if (caseId && !usedCaseIds.has(caseId)) {
+      matched.push({ caseId, row });
+      usedCaseIds.add(caseId);
+    } else if (!caseId) {
+      unmatchedStudyIds.push(row.studyId);
+    }
+  }
+
+  return {
+    matched,
+    unmatchedStudyIds,
+    unmatchedCaseIds: caseIds.filter((id) => !usedCaseIds.has(id)),
+  };
 }
 
 export function stagesToJson(stages: CaseStudyHistoryStage[]): string {

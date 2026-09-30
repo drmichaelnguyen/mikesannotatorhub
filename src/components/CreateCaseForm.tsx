@@ -5,7 +5,7 @@ import { CaseTimingFields } from "@/components/CaseTimingFields";
 import { suggestedCaseBonusPercent, type CaseBonusDefault } from "@/lib/project-quality-bonus";
 import { createCaseErrorMessage } from "@/lib/create-case-errors";
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import {
   createCaseAction,
   uploadContinuityReportsChunkAction,
@@ -15,8 +15,13 @@ import {
   CaseDetailsFields,
   type CaseDetailsFieldsValue,
 } from "@/components/CaseDetailsFields";
+import { FileUploadButton } from "@/components/FileUploadButton";
 import { KeyImageUploadProgressBar } from "@/components/KeyImageUploadProgressBar";
 import { matchContinuityReportFileToCaseId } from "@/lib/continuity-report-filename";
+import {
+  matchHistoryToCaseIds,
+  parseCaseStudyHistoryTable,
+} from "@/lib/case-study-history";
 import {
   findingsMapToJson,
   looksLikeRadiologistFindingsTable,
@@ -128,6 +133,7 @@ export function CreateCaseForm({
   const [caseIdsText, setCaseIdsText] = useState("");
   const [continuityFiles, setContinuityFiles] = useState<File[]>([]);
   const [keyImageFiles, setKeyImageFiles] = useState<File[]>([]);
+  const [historyPasteText, setHistoryPasteText] = useState("");
   const [findingsPasteText, setFindingsPasteText] = useState("");
   const [keyImageProgress, setKeyImageProgress] = useState<KeyImageUploadProgress | null>(null);
 
@@ -179,6 +185,11 @@ export function CreateCaseForm({
     () => findingsMapToJson(new Map(findingsPreview.matched.map((m) => [m.caseId, m.finding]))),
     [findingsPreview.matched],
   );
+
+  const historyPreview = useMemo(() => {
+    const parsed = parseCaseStudyHistoryTable(historyPasteText);
+    return matchHistoryToCaseIds(parsed, batchCaseIds);
+  }, [historyPasteText, batchCaseIds]);
 
   function patchDetails(patch: Partial<CaseDetailsFieldsValue>) {
     if ((patch.project !== undefined && patch.project !== details.project) ||
@@ -341,19 +352,74 @@ export function CreateCaseForm({
         />
       </div>
       <div className="md:col-span-2">
+        <label htmlFor="create-case-study-history" className="text-sm text-[var(--muted)]">
+          {tk("case_study_history_with_ids")}
+        </label>
+        <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("case_study_history_with_ids_hint")}</p>
+        <textarea
+          id="create-case-study-history"
+          name="caseStudyHistoryTable"
+          rows={6}
+          value={historyPasteText}
+          onChange={(e) => setHistoryPasteText(e.target.value)}
+          placeholder={tk("case_study_history_import_placeholder")}
+          className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono text-sm"
+        />
+        <FileUploadButton
+          lang={lang}
+          id="create-case-study-history-csv"
+          label={tk("upload_choose_csv")}
+          accept=".csv,text/csv,text/tab-separated-values,text/plain,.tsv"
+          onInputChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            setHistoryPasteText(await file.text());
+            e.target.value = "";
+          }}
+        />
+        {(historyPreview.matched.length > 0 ||
+          historyPreview.unmatchedStudyIds.length > 0 ||
+          (batchCaseIds.length > 0 && historyPasteText.trim() !== "")) && (
+          <div className="mt-2 space-y-2 rounded-md border border-[var(--border)] bg-[var(--bg)] p-3 text-xs">
+            {historyPreview.matched.length > 0 && (
+              <div>
+                <p className="font-medium text-[var(--text)]">
+                  {tk("case_study_history_preview_matched")} ({historyPreview.matched.length})
+                </p>
+                <p className="mt-1 font-mono text-[var(--muted)]">
+                  {formatIdList(
+                    historyPreview.matched.map((m) => m.caseId),
+                    12,
+                  )}
+                </p>
+              </div>
+            )}
+            {historyPreview.unmatchedStudyIds.length > 0 && (
+              <div>
+                <p className="font-medium text-[var(--warn)]">
+                  {tk("case_study_history_preview_unmatched")}
+                </p>
+                <p className="mt-1 text-[var(--muted)]">
+                  {formatIdList(historyPreview.unmatchedStudyIds, 8)}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="md:col-span-2">
         <label htmlFor="create-case-continuity-reports" className="text-sm text-[var(--muted)]">
           {tk("case_continuity_report_upload")}
         </label>
         <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("case_continuity_report_upload_hint")}</p>
-        <input
+        <FileUploadButton
+          lang={lang}
           id="create-case-continuity-reports"
-          type="file"
+          label={tk("upload_choose_folder")}
           name="continuityReports"
-          multiple
           accept=".html,text/html"
-          className="mt-2 block w-full text-sm"
-          onChange={(e) => setContinuityFiles(Array.from(e.target.files ?? []))}
-          {...({ webkitdirectory: "", directory: "" } as InputHTMLAttributes<HTMLInputElement>)}
+          directory
+          onFiles={setContinuityFiles}
         />
         {(continuityPreview.matched.length > 0 || continuityPreview.unmatched.length > 0) && (
           <div className="mt-2 space-y-2 rounded-md border border-[var(--border)] bg-[var(--bg)] p-3 text-xs">
@@ -385,15 +451,14 @@ export function CreateCaseForm({
           {tk("case_key_images_upload")}
         </label>
         <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("case_key_images_upload_hint")}</p>
-        <input
+        <FileUploadButton
+          lang={lang}
           id="create-case-key-images"
-          type="file"
+          label={tk("upload_choose_folder")}
           name="keyImages"
-          multiple
           accept="image/*,.dcm,.dicom,application/dicom"
-          className="mt-2 block w-full text-sm"
-          onChange={(e) => setKeyImageFiles(Array.from(e.target.files ?? []))}
-          {...({ webkitdirectory: "", directory: "" } as InputHTMLAttributes<HTMLInputElement>)}
+          directory
+          onFiles={setKeyImageFiles}
         />
         {keyImageProgress && (
           <div className="mt-2">
@@ -441,20 +506,16 @@ export function CreateCaseForm({
           placeholder={"study_id\tfinal_impressions\nasi-708cbd32-…\tThere is an indeterminate…"}
           className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono text-sm"
         />
-        <label htmlFor="create-case-rad-findings-csv" className="mt-2 block text-xs text-[var(--muted)]">
-          {tk("case_radiologist_findings_csv_upload")}
-        </label>
-        <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("case_radiologist_findings_csv_hint")}</p>
-        <input
+        <p className="mt-2 text-xs text-[var(--muted)]">{tk("case_radiologist_findings_csv_hint")}</p>
+        <FileUploadButton
+          lang={lang}
           id="create-case-rad-findings-csv"
-          type="file"
+          label={tk("upload_choose_csv")}
           accept=".csv,text/csv"
-          className="mt-1 block w-full text-sm"
-          onChange={async (e) => {
+          onInputChange={async (e) => {
             const file = e.target.files?.[0];
             if (!file) return;
-            const text = await file.text();
-            setFindingsPasteText(text);
+            setFindingsPasteText(await file.text());
             e.target.value = "";
           }}
         />
@@ -594,6 +655,16 @@ export function CreateCaseForm({
               <span className="text-[var(--muted)]">{tk("case_key_images_preview_unmatched")}: </span>
               <span className="text-[var(--warn)]">
                 {formatIdList(state.keyImagesUnmatched, 8)}
+              </span>
+            </p>
+          )}
+          {(state.studyHistoryImported > 0 || state.studyHistoryUpdated > 0) && (
+            <p>
+              <span className="text-[var(--muted)]">{tk("batch_result_study_history")}: </span>
+              <span className="font-medium text-[var(--text)]">
+                {tk("case_study_history_import_success")
+                  .replace("{imported}", String(state.studyHistoryImported))
+                  .replace("{updated}", String(state.studyHistoryUpdated))}
               </span>
             </p>
           )}

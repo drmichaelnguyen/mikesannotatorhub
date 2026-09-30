@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { reviewCaseAction } from "@/app/actions/cases";
+import { FileUploadButton } from "@/components/FileUploadButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
 import { StarRating } from "@/components/StarRating";
 import { getClipboardImageFile, readFileAsDataUrl } from "@/lib/client-image-data";
@@ -194,7 +195,12 @@ export function ReviewCasePanel({
       )}
       <div>
         <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
-        <input type="file" accept="image/*" onChange={onFile} className="mt-1 block text-sm" />
+        <FileUploadButton
+          lang={lang}
+          label={tk("upload_choose_file")}
+          accept="image/*"
+          onInputChange={onFile}
+        />
       </div>
       {(rawImage || markedImage) && (
         <ScreenshotDrawer

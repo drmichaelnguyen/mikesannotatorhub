@@ -16,7 +16,6 @@ import {
   useState,
   useTransition,
   type ReactElement,
-  type InputHTMLAttributes,
 } from "react";
 import {
   adminCompleteCaseAction,
@@ -29,12 +28,14 @@ import {
   reviewerAssignCaseAction,
   uploadContinuityReportsChunkAction,
 } from "@/app/actions/cases";
+import { importCaseStudyHistoryAction } from "@/app/actions/case-study-history";
 import { MentionTextarea } from "@/components/MentionTextarea";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
 import {
   CaseDetailsFields,
   type CaseDetailsFieldsValue,
 } from "@/components/CaseDetailsFields";
+import { FileUploadButton } from "@/components/FileUploadButton";
 import { KeyImageUploadProgressBar } from "@/components/KeyImageUploadProgressBar";
 import {
   readAnnotatorsPanelFromBrowser,
@@ -55,6 +56,10 @@ import {
 } from "@/components/annotator/AnnotatorCaseDetailPanel";
 import { createCaseNote } from "@/lib/case-note-api";
 import { matchContinuityReportFileToCaseId } from "@/lib/continuity-report-filename";
+import {
+  matchHistoryToCaseIds,
+  parseCaseStudyHistoryTable,
+} from "@/lib/case-study-history";
 import {
   looksLikeRadiologistFindingsTable,
   matchFindingsToCaseIds,
@@ -878,6 +883,7 @@ export function ReviewerWorkboard({
     compensationAmount: "",
   });
   const [batchFindingsPaste, setBatchFindingsPaste] = useState("");
+  const [batchHistoryPaste, setBatchHistoryPaste] = useState("");
   const [batchBonusAmount, setBatchBonusAmount] = useState("");
   const [batchQualityBonus, setBatchQualityBonus] = useState("");
   const [batchQualityChanged, setBatchQualityChanged] = useState(false);
@@ -976,6 +982,14 @@ export function ReviewerWorkboard({
       batchTargetRows.map((row) => row.caseId),
     );
   }, [batchFindingsPaste, batchTargetRows]);
+
+  const batchHistoryPreview = useMemo(() => {
+    const parsed = parseCaseStudyHistoryTable(batchHistoryPaste);
+    return matchHistoryToCaseIds(
+      parsed,
+      batchTargetRows.map((row) => row.caseId),
+    );
+  }, [batchHistoryPaste, batchTargetRows]);
 
   const detailAnnotatorRow = useMemo(() => {
     if (!detailCase) return null;
@@ -1197,7 +1211,9 @@ export function ReviewerWorkboard({
     setBatchSuccess(null);
     setBatchAssignment("KEEP");
     setBatchContinuityFiles([]);
+    setBatchKeyImageFiles([]);
     setBatchFindingsPaste(sharedIsTable ? sharedFinding : "");
+    setBatchHistoryPaste("");
     setErr(null);
     setBatchEditOpen(true);
   }
@@ -1451,6 +1467,12 @@ export function ReviewerWorkboard({
             : createCaseErrorMessage(res.error, lang);
           setErr(message + ("referenceId" in res && res.referenceId ? ` (${res.referenceId})` : ""));
           return;
+        }
+
+        if (batchHistoryPaste.trim()) {
+          const historyFd = new FormData();
+          historyFd.set("historyTable", batchHistoryPaste);
+          await importCaseStudyHistoryAction(historyFd);
         }
 
         let continuityReportsAttached = res.continuityReportsAttached;
@@ -2214,6 +2236,53 @@ export function ReviewerWorkboard({
                 </div>
               </div>
               <div className="md:col-span-2">
+                <label htmlFor="batch-case-study-history" className="text-sm text-[var(--muted)]">
+                  {tk("case_study_history_with_ids")}
+                </label>
+                <p className="mt-0.5 text-xs text-[var(--muted)]">
+                  {tk("case_study_history_with_ids_hint")}
+                </p>
+                <textarea
+                  id="batch-case-study-history"
+                  rows={5}
+                  value={batchHistoryPaste}
+                  onChange={(e) => setBatchHistoryPaste(e.target.value)}
+                  placeholder={tk("case_study_history_import_placeholder")}
+                  className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono text-sm"
+                />
+                <FileUploadButton
+                  lang={lang}
+                  id="batch-case-study-history-csv"
+                  label={tk("upload_choose_csv")}
+                  accept=".csv,text/csv,text/tab-separated-values,text/plain,.tsv"
+                  onInputChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setBatchHistoryPaste(await file.text());
+                    e.target.value = "";
+                  }}
+                />
+                {(batchHistoryPreview.matched.length > 0 ||
+                  batchHistoryPreview.unmatchedStudyIds.length > 0) && (
+                  <div className="mt-2 space-y-2 rounded-md border border-[var(--border)] bg-[var(--bg)] p-3 text-xs">
+                    {batchHistoryPreview.matched.length > 0 && (
+                      <p>
+                        <span className="font-medium">
+                          {tk("case_study_history_preview_matched")}:
+                        </span>{" "}
+                        {batchHistoryPreview.matched.map((m) => m.caseId).join(", ")}
+                      </p>
+                    )}
+                    {batchHistoryPreview.unmatchedStudyIds.length > 0 && (
+                      <p className="text-[var(--warn)]">
+                        {tk("case_study_history_preview_unmatched")}:{" "}
+                        {batchHistoryPreview.unmatchedStudyIds.slice(0, 8).join(", ")}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="md:col-span-2">
                 <label
                   htmlFor="batch-case-continuity-reports"
                   className="text-sm text-[var(--muted)]"
@@ -2223,19 +2292,13 @@ export function ReviewerWorkboard({
                 <p className="mt-0.5 text-xs text-[var(--muted)]">
                   {tk("case_continuity_report_upload_hint")}
                 </p>
-                <input
+                <FileUploadButton
+                  lang={lang}
                   id="batch-case-continuity-reports"
-                  type="file"
-                  multiple
+                  label={tk("upload_choose_folder")}
                   accept=".html,text/html"
-                  className="mt-2 block w-full text-sm"
-                  onChange={(e) =>
-                    setBatchContinuityFiles(Array.from(e.target.files ?? []))
-                  }
-                  {...({
-                    webkitdirectory: "",
-                    directory: "",
-                  } as InputHTMLAttributes<HTMLInputElement>)}
+                  directory
+                  onFiles={setBatchContinuityFiles}
                 />
                 {(batchContinuityPreview.matched.length > 0 ||
                   batchContinuityPreview.unmatched.length > 0) && (
@@ -2266,19 +2329,13 @@ export function ReviewerWorkboard({
                 <p className="mt-0.5 text-xs text-[var(--muted)]">
                   {tk("case_key_images_upload_hint")}
                 </p>
-                <input
+                <FileUploadButton
+                  lang={lang}
                   id="batch-case-key-images"
-                  type="file"
-                  multiple
+                  label={tk("upload_choose_folder")}
                   accept="image/*,.dcm,.dicom,application/dicom"
-                  className="mt-2 block w-full text-sm"
-                  onChange={(e) =>
-                    setBatchKeyImageFiles(Array.from(e.target.files ?? []))
-                  }
-                  {...({
-                    webkitdirectory: "",
-                    directory: "",
-                  } as InputHTMLAttributes<HTMLInputElement>)}
+                  directory
+                  onFiles={setBatchKeyImageFiles}
                 />
                 {keyImageProgress && (
                   <div className="mt-2">
@@ -2325,22 +2382,18 @@ export function ReviewerWorkboard({
                   placeholder={"study_id\tfinal_impressions\nasi-708cbd32-…\tThere is an indeterminate…"}
                   className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono text-sm"
                 />
-                <label htmlFor="batch-case-rad-findings-csv" className="mt-2 block text-xs text-[var(--muted)]">
-                  {tk("case_radiologist_findings_csv_upload")}
-                </label>
-                <p className="mt-0.5 text-xs text-[var(--muted)]">
+                <p className="mt-2 text-xs text-[var(--muted)]">
                   {tk("case_radiologist_findings_csv_hint")}
                 </p>
-                <input
+                <FileUploadButton
+                  lang={lang}
                   id="batch-case-rad-findings-csv"
-                  type="file"
+                  label={tk("upload_choose_csv")}
                   accept=".csv,text/csv"
-                  className="mt-1 block w-full text-sm"
-                  onChange={async (e) => {
+                  onInputChange={async (e) => {
                     const file = e.target.files?.[0];
                     if (!file) return;
-                    const text = await file.text();
-                    setBatchFindingsPaste(text);
+                    setBatchFindingsPaste(await file.text());
                     e.target.value = "";
                   }}
                 />
@@ -3286,7 +3339,13 @@ export function ReviewerWorkboard({
             <p className="mb-2 text-xs text-[var(--muted)]">{tk("discussion_hint")}</p>
             <div className="mb-2">
               <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
-              <input type="file" accept="image/*" multiple onChange={onNoteFile} className="mt-1 block text-sm" />
+              <FileUploadButton
+                lang={lang}
+                label={tk("upload_choose_file")}
+                accept="image/*"
+                multiple
+                onInputChange={onNoteFile}
+              />
             </div>
             {noteImages.length > 0 && (
               <div className="mb-2 space-y-3">
@@ -3504,7 +3563,12 @@ export function ReviewerWorkboard({
             )}
             <div className="mb-2">
               <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
-              <input type="file" accept="image/*" onChange={onAuditFile} className="mt-1 block text-sm" />
+              <FileUploadButton
+                lang={lang}
+                label={tk("upload_choose_file")}
+                accept="image/*"
+                onInputChange={onAuditFile}
+              />
             </div>
             {(auditRawImage || auditMarkedImage) && (
               <div className="mb-2">

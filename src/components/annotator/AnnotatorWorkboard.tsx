@@ -24,6 +24,7 @@ import {
   useDeferredCaseDetailClose,
 } from "@/lib/use-case-detail-sync";
 import { CopyTextButton } from "@/components/CopyTextButton";
+import { FileUploadButton } from "@/components/FileUploadButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
 import { createCaseNote, fetchCaseNotes } from "@/lib/case-note-api";
 import { buildTemplateRowNote } from "@/lib/template-row-comment";
@@ -1474,7 +1475,13 @@ export function AnnotatorWorkboard({
             <p className="mb-2 text-xs text-[var(--muted)]">{tk("discussion_hint")}</p>
             <div className="mb-2">
               <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
-              <input type="file" accept="image/*" multiple onChange={onNoteFile} className="mt-1 block text-sm" />
+              <FileUploadButton
+                lang={lang}
+                label={tk("upload_choose_file")}
+                accept="image/*"
+                multiple
+                onInputChange={onNoteFile}
+              />
             </div>
             {noteImages.length > 0 && (
               <div className="mb-2 space-y-3">

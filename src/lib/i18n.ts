@@ -16,6 +16,10 @@ export const dict = {
     case_caseId: "Case ID",
     case_ids_batch: "Case IDs (batch)",
     batch_ids_hint: "One ID per line, or separate with commas or semicolons.",
+    upload_choose_file: "Choose file",
+    upload_choose_folder: "Choose folder",
+    upload_choose_csv: "Upload CSV",
+    upload_files_selected: "{count} files selected",
     batch_result_created: "Created",
     batch_result_skipped: "Skipped (already in database)",
     batch_result_dupes: "Duplicates removed from your list",
@@ -52,6 +56,14 @@ export const dict = {
     case_study_history_import_success: "Imported {imported} new, updated {updated}.",
     case_study_history_import_empty: "Paste or upload a history table first.",
     case_study_history_import_no_rows: "No study history rows found. Check the Study ID header.",
+    case_study_history_with_ids: "Prior case history (paste or CSV)",
+    case_study_history_with_ids_hint:
+      "Optional. Paste or upload the Study ID history spreadsheet (PreLabeling / Label / Review). Saved by study ID with these cases.",
+    case_study_history_edit_hint:
+      "Optional. Paste or upload history for this study ID (or a multi-row table). Saved when you save the case.",
+    case_study_history_preview_matched: "History matched to case IDs",
+    case_study_history_preview_unmatched: "History study IDs not in this batch",
+    batch_result_study_history: "Case history saved",
     case_radiologist_finding: "Radiologist finding",
     case_radiologist_finding_hint:
       "Shown in case details. For different findings per study_id, use “Radiologist findings (paste table)” on create/batch edit — do not paste a full study_id table into this box.",
@@ -639,6 +651,10 @@ export const dict = {
     case_caseId: "Mã ca",
     case_ids_batch: "Mã ca (hàng loạt)",
     batch_ids_hint: "Mỗi dòng một mã, hoặc phân tách bằng dấu phẩy/chấm phẩy.",
+    upload_choose_file: "Chọn file",
+    upload_choose_folder: "Chọn thư mục",
+    upload_choose_csv: "Tải CSV",
+    upload_files_selected: "Đã chọn {count} file",
     batch_result_created: "Đã tạo",
     batch_result_skipped: "Bỏ qua (đã có trong hệ thống)",
     batch_result_dupes: "Trùng trong danh sách của bạn (đã bỏ)",
@@ -675,6 +691,14 @@ export const dict = {
     case_study_history_import_success: "Đã nhập {imported} mới, cập nhật {updated}.",
     case_study_history_import_empty: "Hãy dán hoặc tải bảng lịch sử trước.",
     case_study_history_import_no_rows: "Không tìm thấy dòng lịch sử. Kiểm tra cột Study ID.",
+    case_study_history_with_ids: "Lịch sử ca trước (dán hoặc CSV)",
+    case_study_history_with_ids_hint:
+      "Tùy chọn. Dán hoặc tải bảng lịch sử theo Study ID (PreLabeling / Label / Review). Lưu theo study ID cùng các ca này.",
+    case_study_history_edit_hint:
+      "Tùy chọn. Dán hoặc tải lịch sử cho study ID này (hoặc cả bảng). Được lưu khi bạn lưu ca.",
+    case_study_history_preview_matched: "Lịch sử khớp mã ca",
+    case_study_history_preview_unmatched: "Study ID lịch sử không có trong batch",
+    batch_result_study_history: "Đã lưu lịch sử ca",
     case_radiologist_finding: "Radiologist finding",
     case_radiologist_finding_hint:
       "Hiển thị trong chi tiết ca. Finding khác nhau theo study_id: dùng “Radiologist findings (dán bảng)” khi tạo/sửa batch — không dán cả bảng study_id vào ô này.",

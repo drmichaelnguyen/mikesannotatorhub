@@ -1,11 +1,17 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { importCaseStudyHistoryAction } from "@/app/actions/case-study-history";
 import {
   CaseDetailsFields,
   type CaseDetailsFieldsValue,
 } from "@/components/CaseDetailsFields";
+import { FileUploadButton } from "@/components/FileUploadButton";
+import {
+  matchHistoryToCaseIds,
+  parseCaseStudyHistoryTable,
+} from "@/lib/case-study-history";
 import type { GuideOptionLite, TopicOptionLite } from "@/lib/guide-topic";
 import { createCaseErrorMessage, type CreateCaseError } from "@/lib/create-case-errors";
 import type { DictKey, Lang } from "@/lib/i18n";
@@ -130,9 +136,15 @@ export function ReviewerCaseEditor({
   const [deadline, setDeadline] = useState(() => toDatetimeLocalValue(c.deadline));
   const [expiresAt, setExpiresAt] = useState(() => toDatetimeLocalValue(c.expiresAt));
   const [isReference, setIsReference] = useState(c.isReference);
+  const [historyPasteText, setHistoryPasteText] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
+
+  const historyPreview = useMemo(() => {
+    const parsed = parseCaseStudyHistoryTable(historyPasteText);
+    return matchHistoryToCaseIds(parsed, [caseId]);
+  }, [historyPasteText, caseId]);
 
   useEffect(() => {
     setCaseId(c.caseId);
@@ -142,6 +154,7 @@ export function ReviewerCaseEditor({
     setDeadline(toDatetimeLocalValue(c.deadline));
     setExpiresAt(toDatetimeLocalValue(c.expiresAt));
     setIsReference(c.isReference);
+    setHistoryPasteText("");
     setMsg(null);
     setErr(null);
   }, [c]);
@@ -302,7 +315,28 @@ export function ReviewerCaseEditor({
         setErr(caseEditErrorMessage(res?.error, lang));
         return;
       }
-      setMsg(tk("reviewer_case_saved"));
+
+      if (historyPasteText.trim()) {
+        const historyFd = new FormData();
+        historyFd.set("historyTable", historyPasteText);
+        const historyRes = await importCaseStudyHistoryAction(historyFd);
+        if (!historyRes.ok) {
+          setErr(
+            historyRes.error === "no_rows"
+              ? tk("case_study_history_import_no_rows")
+              : tk("case_study_history_import_empty"),
+          );
+          return;
+        }
+        setHistoryPasteText("");
+        setMsg(
+          `${tk("reviewer_case_saved")} ${tk("case_study_history_import_success")
+            .replace("{imported}", String(historyRes.imported))
+            .replace("{updated}", String(historyRes.updated))}`,
+        );
+      } else {
+        setMsg(tk("reviewer_case_saved"));
+      }
       router.refresh();
     });
   }
@@ -320,6 +354,60 @@ export function ReviewerCaseEditor({
             className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono"
           />
         </label>
+        <div className="md:col-span-2">
+          <label htmlFor="edit-case-study-history" className="text-sm text-[var(--muted)]">
+            {tk("case_study_history_with_ids")}
+          </label>
+          <p className="mt-0.5 text-xs text-[var(--muted)]">{tk("case_study_history_edit_hint")}</p>
+          <textarea
+            id="edit-case-study-history"
+            rows={5}
+            value={historyPasteText}
+            onChange={(e) => setHistoryPasteText(e.target.value)}
+            placeholder={tk("case_study_history_import_placeholder")}
+            className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 font-mono text-sm"
+          />
+          <FileUploadButton
+            lang={lang}
+            id="edit-case-study-history-csv"
+            label={tk("upload_choose_csv")}
+            accept=".csv,text/csv,text/tab-separated-values,text/plain,.tsv"
+            onInputChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              setHistoryPasteText(await file.text());
+              e.target.value = "";
+            }}
+          />
+          {historyPasteText.trim() !== "" && (
+            <div className="mt-2 space-y-1 rounded-md border border-[var(--border)] bg-[var(--bg)] p-3 text-xs">
+              {historyPreview.matched.length > 0 ? (
+                <p className="font-medium text-[var(--text)]">
+                  {tk("case_study_history_preview_matched")}: {historyPreview.matched[0]!.caseId}
+                  {historyPreview.matched[0]!.row.stages.length > 0
+                    ? ` (${historyPreview.matched[0]!.row.stages.length} ${
+                        historyPreview.matched[0]!.row.stages.length === 1
+                          ? tk("case_study_history_stage")
+                          : tk("case_study_history_stages")
+                      })`
+                    : ""}
+                </p>
+              ) : (
+                <p className="font-medium text-[var(--warn)]">
+                  {tk("case_study_history_preview_unmatched")}
+                </p>
+              )}
+              {historyPreview.unmatchedStudyIds.length > 0 && (
+                <p className="text-[var(--muted)]">
+                  {historyPreview.unmatchedStudyIds.slice(0, 6).join(", ")}
+                  {historyPreview.unmatchedStudyIds.length > 6
+                    ? ` (+${historyPreview.unmatchedStudyIds.length - 6})`
+                    : ""}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
         <label className="md:col-span-2">
           <span className="text-sm text-[var(--muted)]">{tk("case_status")}</span>
           <select

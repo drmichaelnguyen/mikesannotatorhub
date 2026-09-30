@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import {
   translateDiscussionForExportAction,
 } from "@/app/actions/export";
+import { FileUploadButton } from "@/components/FileUploadButton";
 import { ScreenshotDrawer } from "@/components/ScreenshotDrawer";
 import { CommentChoiceInput } from "@/components/CommentChoiceInput";
 import { CommentBodyWithVideos } from "@/components/CommentBodyWithVideos";
@@ -648,7 +649,13 @@ function Composer({
             </label>
             <div>
               <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
-              <input type="file" accept="image/*" multiple onChange={state.onFile} className="mt-1 block text-sm" />
+              <FileUploadButton
+                lang={lang}
+                label={tk("upload_choose_file")}
+                accept="image/*"
+                multiple
+                onInputChange={state.onFile}
+              />
             </div>
             {state.images.length > 0 && (
               <div className="space-y-3">
@@ -732,7 +739,13 @@ function Composer({
         <>
           <div className="mt-2">
             <span className="text-sm text-[var(--muted)]">{tk("review_screenshot")}</span>
-            <input type="file" accept="image/*" multiple onChange={state.onFile} className="mt-1 block text-sm" />
+            <FileUploadButton
+              lang={lang}
+              label={tk("upload_choose_file")}
+              accept="image/*"
+              multiple
+              onInputChange={state.onFile}
+            />
           </div>
           {state.images.length > 0 && (
             <div className="mt-2 space-y-3">
@@ -961,7 +974,13 @@ function NoteItem({
             />
             <div>
               <span className="text-xs text-[var(--muted)]">{tk("review_screenshot")}</span>
-              <input type="file" accept="image/*" multiple onChange={onFileEdit} className="mt-1 block text-sm" />
+              <FileUploadButton
+                lang={lang}
+                label={tk("upload_choose_file")}
+                accept="image/*"
+                multiple
+                onInputChange={onFileEdit}
+              />
             </div>
             {editImages.length > 0 ? (
               <div className="space-y-2">

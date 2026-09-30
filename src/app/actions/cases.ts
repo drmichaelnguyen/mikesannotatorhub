@@ -43,6 +43,7 @@ import {
   findingsMapFromJson,
   resolvePerCaseRadiologistFindings,
 } from "@/lib/radiologist-findings";
+import { upsertCaseStudyHistoryFromTable } from "@/app/actions/case-study-history";
 import {
   expandFieldCommentConfigs,
   fieldIsMandatory,
@@ -163,6 +164,8 @@ export type CreateCaseActionResult =
       duplicateInList: string[];
       continuityReportsAttached: number;
       continuityReportsUnmatched: string[];
+      studyHistoryImported: number;
+      studyHistoryUpdated: number;
       /** DB rows for this batch (created + already-existing under same scope/project). */
       cases: { id: string; caseId: string }[];
     }
@@ -878,6 +881,10 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
         continuityReportsAttached += 1;
       }
 
+      const historyResult = await upsertCaseStudyHistoryFromTable(
+        String(formData.get("caseStudyHistoryTable") ?? ""),
+      );
+
       revalidatePath("/reviewer");
       revalidatePath("/annotator");
       const cases = await prisma.annotationCase.findMany({
@@ -895,6 +902,8 @@ export async function createCaseAction(formData: FormData): Promise<CreateCaseAc
         duplicateInList,
         continuityReportsAttached,
         continuityReportsUnmatched,
+        studyHistoryImported: historyResult.imported,
+        studyHistoryUpdated: historyResult.updated,
         cases,
       };
     } catch (error) {

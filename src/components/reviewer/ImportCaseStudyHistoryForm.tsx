@@ -2,6 +2,7 @@
 
 import { useActionState, useMemo, useState } from "react";
 import { importCaseStudyHistoryAction } from "@/app/actions/case-study-history";
+import { FileUploadButton } from "@/components/FileUploadButton";
 import { parseCaseStudyHistoryTable } from "@/lib/case-study-history";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -39,19 +40,15 @@ export function ImportCaseStudyHistoryForm({ lang }: { lang: Lang }) {
           className="w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-xs"
         />
 
-        <label htmlFor="case-study-history-csv" className="mt-1 block text-xs text-[var(--muted)]">
-          {tk("case_study_history_import_csv")}
-        </label>
-        <input
+        <FileUploadButton
+          lang={lang}
           id="case-study-history-csv"
-          type="file"
-          accept=".csv,text/csv,text/tab-separated-values,text/plain"
-          className="block w-full text-sm"
-          onChange={async (e) => {
+          label={tk("upload_choose_csv")}
+          accept=".csv,text/csv,text/tab-separated-values,text/plain,.tsv"
+          onInputChange={async (e) => {
             const file = e.target.files?.[0];
             if (!file) return;
-            const text = await file.text();
-            setPasteText(text);
+            setPasteText(await file.text());
             e.target.value = "";
           }}
         />
