@@ -4,14 +4,19 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createPortal } from "react-dom";
 import { isDicomFilename } from "@/lib/key-image-path";
 import { paintDicomOnCanvas, renderDicomToImageData } from "@/lib/dicom-render";
-import type { KeyImageMark } from "@/lib/key-image-annotations";
+import {
+  strokePathD,
+  type KeyImageMark,
+  type KeyImagePoint,
+} from "@/lib/key-image-annotations";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 8;
+const PEN_COLOR = "#ef4444";
 
-type Tool = "pan" | "mark";
+type Tool = "pan" | "draw";
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.min(hi, Math.max(lo, n));
@@ -39,6 +44,12 @@ function PenIcon({ className }: { className?: string }) {
       />
     </svg>
   );
+}
+
+function markPoints(m: KeyImageMark): KeyImagePoint[] {
+  if (Array.isArray(m.points) && m.points.length > 0) return m.points;
+  if (typeof m.x === "number" && typeof m.y === "number") return [{ x: m.x, y: m.y }];
+  return [];
 }
 
 export function KeyImageInteractiveViewer({
@@ -71,10 +82,10 @@ export function KeyImageInteractiveViewer({
   const [tool, setTool] = useState<Tool>("pan");
   const [dragging, setDragging] = useState(false);
   const dragOrigin = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
-  const [draft, setDraft] = useState<{ x: number; y: number } | null>(null);
-  const [draftNote, setDraftNote] = useState("");
+  const [drawing, setDrawing] = useState(false);
+  const [liveStroke, setLiveStroke] = useState<KeyImagePoint[]>([]);
+  const liveStrokeRef = useRef<KeyImagePoint[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [editNote, setEditNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -91,19 +102,17 @@ export function KeyImageInteractiveViewer({
     panRef.current = pan;
   }, [pan]);
 
-  // Reset view when switching images.
   useEffect(() => {
     setScale(1);
     setPan({ x: 0, y: 0 });
-    setDraft(null);
-    setDraftNote("");
+    setLiveStroke([]);
+    liveStrokeRef.current = [];
     setSelectedId(null);
-    setEditNote("");
     setActionError(null);
     setTool("pan");
+    setDrawing(false);
   }, [filename]);
 
-  // Resolve display URL (DICOM → PNG blob).
   useEffect(() => {
     let cancelled = false;
     let objectUrl: string | null = null;
@@ -163,7 +172,7 @@ export function KeyImageInteractiveViewer({
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- tk depends on lang; reload on src/filename
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageSrc, filename, lang]);
 
   const applyZoomAt = useCallback((nextScale: number, cursorX: number, cursorY: number) => {
@@ -200,7 +209,6 @@ export function KeyImageInteractiveViewer({
     [applyZoomAt],
   );
 
-  // Capture wheel on the viewport so parent drawers/lists cannot scroll.
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
@@ -217,39 +225,7 @@ export function KeyImageInteractiveViewer({
     }
   }
 
-  function onPointerDown(e: React.PointerEvent) {
-    if (tool !== "pan") return;
-    if (e.button !== 0) return;
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    e.preventDefault();
-    viewport.setPointerCapture(e.pointerId);
-    setDragging(true);
-    dragOrigin.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
-  }
-
-  function onPointerMove(e: React.PointerEvent) {
-    if (!dragging || !dragOrigin.current) return;
-    const dx = e.clientX - dragOrigin.current.x;
-    const dy = e.clientY - dragOrigin.current.y;
-    const next = {
-      x: dragOrigin.current.panX + dx,
-      y: dragOrigin.current.panY + dy,
-    };
-    panRef.current = next;
-    setPan(next);
-  }
-
-  function onPointerUp(e: React.PointerEvent) {
-    const viewport = viewportRef.current;
-    if (viewport?.hasPointerCapture(e.pointerId)) {
-      viewport.releasePointerCapture(e.pointerId);
-    }
-    setDragging(false);
-    dragOrigin.current = null;
-  }
-
-  function clientToNormalized(clientX: number, clientY: number): { x: number; y: number } | null {
+  function clientToNormalized(clientX: number, clientY: number): KeyImagePoint | null {
     const wrap = imageWrapRef.current;
     if (!wrap) return null;
     const rect = wrap.getBoundingClientRect();
@@ -260,19 +236,8 @@ export function KeyImageInteractiveViewer({
     };
   }
 
-  function onImageClick(e: React.MouseEvent) {
-    if (tool !== "mark") return;
-    if (dragging) return;
-    const coords = clientToNormalized(e.clientX, e.clientY);
-    if (!coords) return;
-    setSelectedId(null);
-    setDraft(coords);
-    setDraftNote("");
-    setActionError(null);
-  }
-
-  async function saveDraft() {
-    if (!draft || !draftNote.trim()) return;
+  async function saveStroke(points: KeyImagePoint[]) {
+    if (points.length < 2) return;
     setBusy(true);
     setActionError(null);
     try {
@@ -281,41 +246,9 @@ export function KeyImageInteractiveViewer({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           filename,
-          x: draft.x,
-          y: draft.y,
-          note: draftNote.trim(),
-        }),
-      });
-      const data = (await res.json()) as { ok?: boolean; marks?: KeyImageMark[]; error?: string };
-      if (!res.ok || !data.ok || !data.marks) {
-        setActionError(tk("case_key_image_mark_save_error"));
-        return;
-      }
-      onMarksChange(data.marks);
-      setDraft(null);
-      setDraftNote("");
-      setTool("pan");
-    } catch {
-      setActionError(tk("case_key_image_mark_save_error"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function saveEdit(mark: KeyImageMark) {
-    if (!editNote.trim()) return;
-    setBusy(true);
-    setActionError(null);
-    try {
-      const res = await fetch(`/api/cases/${caseDbId}/key-images/annotations`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: mark.id,
-          filename: mark.filename,
-          x: mark.x,
-          y: mark.y,
-          note: editNote.trim(),
+          points,
+          note: "",
+          color: PEN_COLOR,
         }),
       });
       const data = (await res.json()) as { ok?: boolean; marks?: KeyImageMark[] };
@@ -324,7 +257,6 @@ export function KeyImageInteractiveViewer({
         return;
       }
       onMarksChange(data.marks);
-      setSelectedId(null);
     } catch {
       setActionError(tk("case_key_image_mark_save_error"));
     } finally {
@@ -333,6 +265,9 @@ export function KeyImageInteractiveViewer({
   }
 
   async function removeMark(markId: string) {
+    const previous = marks;
+    onMarksChange(marks.filter((m) => m.id !== markId));
+    if (selectedId === markId) setSelectedId(null);
     setBusy(true);
     setActionError(null);
     try {
@@ -342,34 +277,101 @@ export function KeyImageInteractiveViewer({
       );
       const data = (await res.json()) as { ok?: boolean; marks?: KeyImageMark[] };
       if (!res.ok || !data.ok || !data.marks) {
+        onMarksChange(previous);
         setActionError(tk("case_key_image_mark_save_error"));
         return;
       }
       onMarksChange(data.marks);
-      if (selectedId === markId) setSelectedId(null);
     } catch {
+      onMarksChange(previous);
       setActionError(tk("case_key_image_mark_save_error"));
     } finally {
       setBusy(false);
     }
   }
 
-  const selected = fileMarks.find((m) => m.id === selectedId) ?? null;
+  function onPointerDown(e: React.PointerEvent) {
+    if (e.button !== 0) return;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    if (tool === "pan") {
+      e.preventDefault();
+      viewport.setPointerCapture(e.pointerId);
+      setDragging(true);
+      dragOrigin.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
+      return;
+    }
+
+    // Draw mode — capture on the image wrap / viewport.
+    const pt = clientToNormalized(e.clientX, e.clientY);
+    if (!pt) return;
+    e.preventDefault();
+    viewport.setPointerCapture(e.pointerId);
+    setDrawing(true);
+    setSelectedId(null);
+    liveStrokeRef.current = [pt];
+    setLiveStroke([pt]);
+  }
+
+  function onPointerMove(e: React.PointerEvent) {
+    if (tool === "pan") {
+      if (!dragging || !dragOrigin.current) return;
+      const next = {
+        x: dragOrigin.current.panX + (e.clientX - dragOrigin.current.x),
+        y: dragOrigin.current.panY + (e.clientY - dragOrigin.current.y),
+      };
+      panRef.current = next;
+      setPan(next);
+      return;
+    }
+
+    if (!drawing) return;
+    const pt = clientToNormalized(e.clientX, e.clientY);
+    if (!pt) return;
+    const prev = liveStrokeRef.current;
+    const last = prev[prev.length - 1];
+    // Skip tiny moves to keep strokes light.
+    if (last && Math.hypot(pt.x - last.x, pt.y - last.y) < 0.002) return;
+    const next = [...prev, pt];
+    liveStrokeRef.current = next;
+    setLiveStroke(next);
+  }
+
+  function onPointerUp(e: React.PointerEvent) {
+    const viewport = viewportRef.current;
+    if (viewport?.hasPointerCapture(e.pointerId)) {
+      viewport.releasePointerCapture(e.pointerId);
+    }
+
+    if (tool === "pan") {
+      setDragging(false);
+      dragOrigin.current = null;
+      return;
+    }
+
+    if (!drawing) return;
+    setDrawing(false);
+    const points = liveStrokeRef.current;
+    liveStrokeRef.current = [];
+    setLiveStroke([]);
+    if (points.length >= 2) {
+      void saveStroke(points);
+    }
+  }
+
+  const livePath = strokePathD(liveStroke);
 
   return (
     <div className="flex min-h-0 flex-col gap-3 lg:flex-row">
       <div className="flex min-w-0 flex-1 gap-2">
-        {/* Side tool rail */}
         <div className="flex shrink-0 flex-col gap-2 rounded-md border border-[var(--border)] bg-[var(--bg)] p-1.5">
           <button
             type="button"
             title={tk("case_key_image_tool_hand")}
             aria-label={tk("case_key_image_tool_hand")}
             aria-pressed={tool === "pan"}
-            onClick={() => {
-              setTool("pan");
-              setDraft(null);
-            }}
+            onClick={() => setTool("pan")}
             className={`flex h-10 w-10 items-center justify-center rounded-md ${
               tool === "pan"
                 ? "bg-[var(--accent)] text-white"
@@ -382,10 +384,10 @@ export function KeyImageInteractiveViewer({
             type="button"
             title={tk("case_key_image_tool_pen")}
             aria-label={tk("case_key_image_tool_pen")}
-            aria-pressed={tool === "mark"}
-            onClick={() => setTool("mark")}
+            aria-pressed={tool === "draw"}
+            onClick={() => setTool("draw")}
             className={`flex h-10 w-10 items-center justify-center rounded-md ${
-              tool === "mark"
+              tool === "draw"
                 ? "bg-[var(--accent)] text-white"
                 : "text-[var(--text)] hover:bg-[var(--surface)]"
             }`}
@@ -413,7 +415,7 @@ export function KeyImageInteractiveViewer({
           <div
             ref={viewportRef}
             className={`relative flex h-[min(55vh,520px)] touch-none items-center justify-center overflow-hidden overscroll-contain rounded-md border border-[var(--border)] bg-black/40 ${
-              tool === "mark" ? "cursor-crosshair" : dragging ? "cursor-grabbing" : "cursor-grab"
+              tool === "draw" ? "cursor-crosshair" : dragging ? "cursor-grabbing" : "cursor-grab"
             }`}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
@@ -434,7 +436,6 @@ export function KeyImageInteractiveViewer({
                   transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
                   transformOrigin: "center center",
                 }}
-                onClick={onImageClick}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -443,40 +444,67 @@ export function KeyImageInteractiveViewer({
                   className="block max-h-[min(55vh,520px)] max-w-full select-none object-contain"
                   draggable={false}
                 />
-                {fileMarks.map((m, i) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    title={m.note}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDraft(null);
-                      setSelectedId(m.id);
-                      setEditNote(m.note);
-                      setTool("pan");
-                    }}
-                    className={`absolute flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-[10px] font-bold text-white shadow ring-2 ring-white/80 ${
-                      selectedId === m.id ? "bg-[var(--accent)]" : "bg-[var(--danger)]"
-                    }`}
-                    style={{ left: `${m.x * 100}%`, top: `${m.y * 100}%` }}
-                  >
-                    {i + 1}
-                  </button>
-                ))}
-                {draft && (
-                  <span
-                    className="pointer-events-none absolute flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-[var(--warn)] text-[10px] font-bold text-black shadow ring-2 ring-white/80"
-                    style={{ left: `${draft.x * 100}%`, top: `${draft.y * 100}%` }}
-                  >
-                    +
-                  </span>
-                )}
+                <svg
+                  className="pointer-events-none absolute inset-0 h-full w-full"
+                  viewBox="0 0 100 100"
+                  preserveAspectRatio="none"
+                  aria-hidden
+                >
+                  {fileMarks.map((m) => {
+                    const pts = markPoints(m);
+                    const d = strokePathD(pts);
+                    if (!d) return null;
+                    const selected = selectedId === m.id;
+                    const canDelete = canDeleteOthers || m.authorId === currentUserId;
+                    return (
+                      <path
+                        key={m.id}
+                        d={d}
+                        fill="none"
+                        stroke={m.color || PEN_COLOR}
+                        strokeWidth={selected ? 2.5 : 2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        opacity={selected ? 1 : 0.85}
+                        vectorEffect="non-scaling-stroke"
+                        className={canDelete ? "pointer-events-auto cursor-pointer" : undefined}
+                        style={{ pointerEvents: canDelete ? "stroke" : "none" }}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedId(m.id);
+                        }}
+                        onDoubleClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (canDelete) void removeMark(m.id);
+                        }}
+                      >
+                        <title>
+                          {canDelete
+                            ? tk("case_key_image_stroke_dblclick_hint")
+                            : m.authorName}
+                        </title>
+                      </path>
+                    );
+                  })}
+                  {livePath && (
+                    <path
+                      d={livePath}
+                      fill="none"
+                      stroke={PEN_COLOR}
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      opacity={0.9}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )}
+                </svg>
               </div>
             )}
           </div>
 
-          {/* Bottom zoom slider */}
           <div className="flex items-center gap-3 rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2">
             <span className="shrink-0 text-xs text-[var(--muted)]">{tk("case_key_image_zoom")}</span>
             <button
@@ -514,97 +542,11 @@ export function KeyImageInteractiveViewer({
             {tool === "pan" ? tk("case_key_image_hand_hint") : tk("case_key_image_pen_hint")}
           </p>
 
-          {draft && (
-            <div className="rounded-md border border-[var(--accent)]/40 bg-[var(--surface)] p-3">
-              <p className="mb-2 text-xs font-medium text-[var(--text)]">
-                {tk("case_key_image_mark_new")}
-              </p>
-              <textarea
-                value={draftNote}
-                onChange={(e) => setDraftNote(e.target.value)}
-                rows={3}
-                placeholder={tk("case_key_image_mark_note_placeholder")}
-                className="w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm"
-                autoFocus
-              />
-              <div className="mt-2 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  disabled={busy || !draftNote.trim()}
-                  onClick={() => void saveDraft()}
-                  className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
-                >
-                  {tk("case_key_image_mark_save")}
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => {
-                    setDraft(null);
-                    setDraftNote("");
-                  }}
-                  className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs hover:bg-[var(--bg)]"
-                >
-                  {tk("discussion_cancel_edit")}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {selected && !draft && (
-            <div className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-3">
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <p className="text-xs font-medium">
-                  {tk("case_key_image_mark_label")} #
-                  {fileMarks.findIndex((m) => m.id === selected.id) + 1}
-                </p>
-                <p className="text-[10px] text-[var(--muted)]">{selected.authorName}</p>
-              </div>
-              {canDeleteOthers || selected.authorId === currentUserId ? (
-                <>
-                  <textarea
-                    value={editNote}
-                    onChange={(e) => setEditNote(e.target.value)}
-                    rows={3}
-                    className="w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm"
-                  />
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={busy || !editNote.trim() || editNote.trim() === selected.note}
-                      onClick={() => void saveEdit(selected)}
-                      className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs text-white hover:bg-[var(--accent-hover)] disabled:opacity-50"
-                    >
-                      {tk("case_key_image_mark_save")}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void removeMark(selected.id)}
-                      className="rounded-md border border-[var(--danger)]/40 px-3 py-1.5 text-xs text-[var(--danger)] hover:bg-[var(--danger)]/10 disabled:opacity-50"
-                    >
-                      {tk("case_key_image_mark_delete")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedId(null)}
-                      className="rounded-md border border-[var(--border)] px-3 py-1.5 text-xs hover:bg-[var(--bg)]"
-                    >
-                      {tk("drawer_close")}
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <p className="whitespace-pre-wrap text-sm text-[var(--text)]">{selected.note}</p>
-              )}
-            </div>
-          )}
-
           {actionError && <p className="text-sm text-[var(--danger)]">{actionError}</p>}
         </div>
       </div>
 
-      <aside className="w-full shrink-0 space-y-2 lg:w-64">
+      <aside className="w-full shrink-0 space-y-2 lg:w-56">
         <h4 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
           {tk("case_key_image_marks_title")} ({fileMarks.length})
         </h4>
@@ -612,31 +554,44 @@ export function KeyImageInteractiveViewer({
           <p className="text-xs text-[var(--muted)]">{tk("case_key_image_marks_empty")}</p>
         ) : (
           <ul className="m-0 max-h-[50vh] list-none space-y-2 overflow-auto p-0">
-            {fileMarks.map((m, i) => (
-              <li key={m.id}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDraft(null);
-                    setSelectedId(m.id);
-                    setEditNote(m.note);
-                  }}
-                  className={`w-full rounded-md border px-2.5 py-2 text-left text-xs ${
-                    selectedId === m.id
-                      ? "border-[var(--accent)] bg-[var(--accent)]/10"
-                      : "border-[var(--border)] hover:bg-[var(--bg)]"
-                  }`}
-                >
-                  <div className="mb-1 flex items-center gap-2">
-                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[var(--danger)] text-[10px] font-bold text-white">
-                      {i + 1}
-                    </span>
-                    <span className="truncate text-[var(--muted)]">{m.authorName}</span>
+            {fileMarks.map((m, i) => {
+              const canDelete = canDeleteOthers || m.authorId === currentUserId;
+              return (
+                <li key={m.id}>
+                  <div
+                    className={`rounded-md border px-2.5 py-2 text-xs ${
+                      selectedId === m.id
+                        ? "border-[var(--accent)] bg-[var(--accent)]/10"
+                        : "border-[var(--border)]"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 text-left"
+                      onClick={() => setSelectedId(m.id)}
+                    >
+                      <span
+                        className="inline-block h-2 w-6 rounded-full"
+                        style={{ background: m.color || PEN_COLOR }}
+                      />
+                      <span className="truncate text-[var(--muted)]">
+                        {tk("case_key_image_mark_label")} {i + 1} · {m.authorName}
+                      </span>
+                    </button>
+                    {canDelete && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void removeMark(m.id)}
+                        className="mt-1.5 text-[11px] text-[var(--danger)] hover:underline disabled:opacity-50"
+                      >
+                        {tk("case_key_image_mark_delete")}
+                      </button>
+                    )}
                   </div>
-                  <p className="line-clamp-3 whitespace-pre-wrap text-[var(--text)]">{m.note}</p>
-                </button>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
       </aside>
@@ -644,7 +599,6 @@ export function KeyImageInteractiveViewer({
   );
 }
 
-/** Optional helper: portal host for key-image modal (used by CaseKeyImagesSection). */
 export function KeyImageModalPortal({ children }: { children: ReactNode }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => {

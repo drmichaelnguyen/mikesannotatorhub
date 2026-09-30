@@ -82,7 +82,6 @@ export async function POST(
       ? (await readKeyImageAnnotations(caseDbId)).marks.find((m) => m.id === body.id) ?? null
       : null;
 
-  // Only author or reviewer can edit an existing mark.
   if (existing && auth.user.role !== "REVIEWER" && existing.authorId !== auth.user.id) {
     return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
   }
@@ -91,9 +90,11 @@ export async function POST(
     {
       id: body.id,
       filename,
-      x: Number(body.x),
-      y: Number(body.y),
+      points: body.points,
+      x: body.x,
+      y: body.y,
       note: String(body.note ?? ""),
+      color: body.color,
     },
     { id: auth.user.id, name: auth.user.name },
     existing,
