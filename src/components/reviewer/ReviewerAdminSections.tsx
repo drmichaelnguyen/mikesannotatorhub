@@ -21,6 +21,7 @@ import { ProjectQualityBonusSettings } from "@/components/reviewer/ProjectQualit
 import { getCreateCaseBonusDefaultsAction, getProjectQualityBonusSettingsAction, getDefaultCompensationSettingAction } from "@/app/actions/settings";
 import { listUnresolvedRedbrickFlagsAction } from "@/app/actions/redbrick-flags";
 import { DefaultCompensationSetting } from "@/components/reviewer/DefaultCompensationSetting";
+import { ImportCaseStudyHistoryForm } from "@/components/reviewer/ImportCaseStudyHistoryForm";
 import { ReviewerFlaggedCasesPanel } from "@/components/reviewer/ReviewerFlaggedCasesPanel";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -128,6 +129,11 @@ export function ReviewerAdminSections({
             <DefaultCompensationSetting lang={lang} perMinuteRate={setting.perMinuteRate} />
           )}
         </LazyCollapsibleSection>
+      </section>
+      <section>
+        <CollapsibleSection title={tk("case_study_history_import_title")}>
+          <ImportCaseStudyHistoryForm lang={lang} />
+        </CollapsibleSection>
       </section>
       <section>
         <LazyCollapsibleSection

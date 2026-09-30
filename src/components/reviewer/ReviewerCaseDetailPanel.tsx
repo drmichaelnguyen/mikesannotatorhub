@@ -4,6 +4,7 @@ import { memo, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { adminCompleteCaseAction, deleteCaseAction, unassignCaseAction } from "@/app/actions/cases";
 import { CaseKeyImagesSection } from "@/components/CaseKeyImagesSection";
+import { CaseStudyHistorySection } from "@/components/CaseStudyHistorySection";
 import { CaseContinuityReportSection } from "@/components/CaseContinuityReportSection";
 import { CaseDiscussion } from "@/components/CaseDiscussion";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
@@ -282,6 +283,7 @@ function ReviewerCaseDetailPanelImpl({
           hasKeyImages={c.hasKeyImages}
           keyImageCount={c.keyImageCount}
         />
+        <CaseStudyHistorySection lang={lang} caseDbId={c.id} />
         {showGuideline && c.guideline.trim() !== "" && (
           <div className="md:col-span-2">
             <dt className="sr-only">{tk("case_guideline")}</dt>

@@ -250,3 +250,22 @@ model AppSetting {
   value     String
   updatedAt DateTime @updatedAt
 }
+
+/**
+ * Prior labeling/review history keyed by study ID (external caseId).
+ * Imported from spreadsheet exports (PreLabeling / Label / Review stages).
+ */
+model CaseStudyHistory {
+  id            String   @id @default(cuid())
+  /** Study / case ID as imported (trimmed). */
+  studyId       String
+  /** Normalized study ID for matching (lowercase, optional asi- stripped). */
+  studyIdNorm   String   @unique
+  redbrickStage String   @default("")
+  /** JSON array of { stage, batchId, annotator, dateAssigned, dateCompleted, status, notes }. */
+  stagesJson    String   @default("[]")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([studyId])
+}

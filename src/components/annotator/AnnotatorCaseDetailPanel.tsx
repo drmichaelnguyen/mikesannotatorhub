@@ -3,6 +3,7 @@
 import { AnnotatorTakeCaseButton } from "@/components/annotator/AnnotatorTakeCaseButton";
 import { AnnotatorRedbrickFlagButton } from "@/components/annotator/AnnotatorRedbrickFlagButton";
 import { CaseKeyImagesSection } from "@/components/CaseKeyImagesSection";
+import { CaseStudyHistorySection } from "@/components/CaseStudyHistorySection";
 import { CaseContinuityReportSection } from "@/components/CaseContinuityReportSection";
 import { CaseDiscussion } from "@/components/CaseDiscussion";
 import { CaseDetailLink } from "@/components/CaseDetailLink";
@@ -267,6 +268,7 @@ export function AnnotatorCaseDetailPanel({
           hasKeyImages={row.hasKeyImages}
           keyImageCount={row.keyImageCount}
         />
+        <CaseStudyHistorySection lang={lang} caseDbId={row.id} />
         {row.radiologistFinding.trim() !== "" && (
           <div className="md:col-span-2">
             <dt className="sr-only">{tk("case_radiologist_finding")}</dt>
