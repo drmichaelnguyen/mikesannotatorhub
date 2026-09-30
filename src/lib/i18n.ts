@@ -79,6 +79,9 @@ export const dict = {
     case_radiologist_findings_preview_missing_cases: "Case IDs with no finding yet",
     finding_highlight_tool: "Highlight",
     finding_highlight_hint: "Select text in the finding to highlight it",
+    finding_highlight_select_hint:
+      "Select text, click Highlight — it stays highlighted in the paragraph. Double-click a highlight to remove it.",
+    finding_highlight_dblclick_hint: "Double-click to remove highlight",
     finding_highlight_new: "New highlight",
     finding_highlight_selected: "Selected highlight",
     finding_highlight_note_placeholder: "Optional note for this highlight…",
@@ -743,6 +746,9 @@ export const dict = {
     case_radiologist_findings_preview_missing_cases: "Case ID chưa có finding",
     finding_highlight_tool: "Tô sáng",
     finding_highlight_hint: "Bôi chọn đoạn văn trong finding để tô sáng",
+    finding_highlight_select_hint:
+      "Bôi chọn đoạn văn, bấm Tô sáng — đoạn đó được tô sáng trong đoạn văn. Nhấp đúp để bỏ tô sáng.",
+    finding_highlight_dblclick_hint: "Nhấp đúp để bỏ tô sáng",
     finding_highlight_new: "Tô sáng mới",
     finding_highlight_selected: "Đoạn đã tô sáng",
     finding_highlight_note_placeholder: "Ghi chú tuỳ chọn cho đoạn tô sáng…",
