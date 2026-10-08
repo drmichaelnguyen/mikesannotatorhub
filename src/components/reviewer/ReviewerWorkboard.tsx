@@ -811,12 +811,16 @@ export function ReviewerWorkboard({
     () =>
       Array.from(
         new Set(
-          cases
-            .map((c) => c.scopeOfWork.trim())
+          [
+            ...cases.map((c) => c.scopeOfWork),
+            ...scopeTemplates.map((item) => item.scopeOfWork),
+            ...topics.flatMap((topic) => topic.scopes.map((s) => s.scopeOfWork)),
+          ]
+            .map((scope) => scope.trim())
             .filter(Boolean),
         ),
       ).sort((a, b) => a.localeCompare(b)),
-    [cases],
+    [cases, scopeTemplates, topics],
   );
 
   const projectOptions = useMemo(
