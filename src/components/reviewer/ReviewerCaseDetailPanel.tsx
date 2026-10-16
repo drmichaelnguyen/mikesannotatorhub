@@ -20,8 +20,13 @@ import { ReviewerCaseEditor } from "@/components/reviewer/ReviewerCaseEditor";
 import { RerateQualityPanel } from "@/components/reviewer/RerateQualityPanel";
 import { StarRating } from "@/components/StarRating";
 import { CaseCompensationAmountButton } from "@/components/CaseCompensationBreakdown";
+import { CaseDetailTabs, initialCaseDetailTab } from "@/components/CaseDetailTabs";
+import {
+  AnnotatorCasePayProspectCard,
+  buildAnnotatorCasePayProspect,
+} from "@/components/annotator/AnnotatorCasePayProspect";
 import { computeCompensation, caseRushForfeitReason, caseRushPercent } from "@/lib/compensation";
-import { formatDate } from "@/lib/format";
+import { formatCompensationAmount, formatDate } from "@/lib/format";
 import type { SerializedCaseTopic, SerializedReviewerCase } from "@/lib/reviewer-serialize";
 import type { DictKey, Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
@@ -208,6 +213,15 @@ function ReviewerCaseDetailPanelImpl({
     c.status === CaseStatus.AUDITED || c.status === CaseStatus.ACCEPTED;
   const rushPercent = caseRushPercent(c);
   const rushForfeit = caseRushForfeitReason(c);
+  const payProspect = buildAnnotatorCasePayProspect({
+    fiveStarBonusPercent: c.fiveStarBonusPercent,
+    compensationType: c.compensationType,
+    compensationAmount: c.compensationAmount,
+    minMinutesPerCase: c.minMinutesPerCase,
+    maxMinutesPerCase: c.maxMinutesPerCase,
+    wasResubmitted: c.wasResubmitted,
+    rushPercent,
+  });
   const earned = computeCompensation(
     c.compensationType,
     c.compensationAmount,
@@ -248,6 +262,86 @@ function ReviewerCaseDetailPanelImpl({
           {tk(`status_${c.status}` as DictKey)}
         </span>
       </div>
+      <CaseDetailTabs
+        key={c.id}
+        caseDbId={c.id}
+        defaultTab={initialCaseDetailTab(c.radiologistFinding.trim() !== "")}
+        tabs={[
+          {
+            id: "pay",
+            label: tk("detail_tab_pay"),
+            badge: c.isReference
+              ? undefined
+              : formatCompensationAmount(lang, payProspect.maximumPotentialPay),
+          },
+          { id: "history", label: tk("detail_tab_history") },
+          { id: "finding", label: tk("detail_tab_finding") },
+          {
+            id: "discussion",
+            label: tk("detail_tab_discussion"),
+            badge: c.caseNoteCount > 0 ? String(c.caseNoteCount) : undefined,
+          },
+          {
+            id: "images",
+            label: tk("detail_tab_images"),
+            badge: c.keyImageCount > 0 ? String(c.keyImageCount) : undefined,
+          },
+        ]}
+        panels={{
+          pay: c.isReference ? (
+            <p className="text-sm text-[var(--muted)]">{tk("detail_tab_pay_reference")}</p>
+          ) : (
+            <AnnotatorCasePayProspectCard
+              lang={lang}
+              prospect={payProspect}
+              rushForfeitReason={rushForfeit}
+              subtitle={tk("detail_tab_pay_settled")}
+            />
+          ),
+          history: <CaseStudyHistorySection lang={lang} caseDbId={c.id} />,
+          finding:
+            c.radiologistFinding.trim() === "" ? (
+              <p className="text-sm text-[var(--muted)]">{tk("detail_tab_finding_empty")}</p>
+            ) : (
+              <RadiologistFindingSection lang={lang} caseDbId={c.id} text={c.radiologistFinding} />
+            ),
+          discussion: (
+            <div className="space-y-3">
+              {c.reviews[0]?.comment && c.status !== CaseStatus.SUBMITTED && (
+                <div className="text-sm text-[var(--muted)]">
+                  <span className="font-medium">{tk("last_review")}:</span>
+                  <CommentBodyWithVideos
+                    lang={lang}
+                    text={c.reviews[0].comment}
+                    className="mt-1 text-[var(--text)]"
+                  />
+                </div>
+              )}
+              <CaseDiscussion
+                lang={lang}
+                caseDbId={c.id}
+                caseLabel={c.caseId}
+                canPost
+                mentionOptions={mentionOptions}
+                composerTemplate={!c.isReference ? scopeOfWorkTemplate : null}
+                commentChoiceMode={
+                  !c.isReference ? parseCommentChoiceMode(commentChoiceMode) : "FREE"
+                }
+                commentChoices={!c.isReference ? parseCommentChoices(commentChoicesText) : []}
+                commentFieldConfigs={!c.isReference ? commentFieldConfigs ?? "[]" : "[]"}
+              />
+            </div>
+          ),
+          images: (
+            <CaseKeyImagesSection
+              lang={lang}
+              caseDbId={c.id}
+              hasKeyImages={c.hasKeyImages}
+              keyImageCount={c.keyImageCount}
+            />
+          ),
+        }}
+      />
       <dl className="grid gap-2 text-sm md:grid-cols-2">
         {c.guide && (
           <div className="md:col-span-2">
@@ -278,13 +372,6 @@ function ReviewerCaseDetailPanelImpl({
           caseDbId={c.id}
           hasContinuityReport={c.hasContinuityReport}
         />
-        <CaseKeyImagesSection
-          lang={lang}
-          caseDbId={c.id}
-          hasKeyImages={c.hasKeyImages}
-          keyImageCount={c.keyImageCount}
-        />
-        <CaseStudyHistorySection lang={lang} caseDbId={c.id} />
         {showGuideline && c.guideline.trim() !== "" && (
           <div className="md:col-span-2">
             <dt className="sr-only">{tk("case_guideline")}</dt>
@@ -299,13 +386,6 @@ function ReviewerCaseDetailPanelImpl({
               </details>
             </dd>
           </div>
-        )}
-        {c.radiologistFinding.trim() !== "" && (
-          <RadiologistFindingSection
-            lang={lang}
-            caseDbId={c.id}
-            text={c.radiologistFinding}
-          />
         )}
         {c.topics.length > 0 && (
           <div className="md:col-span-2">
@@ -483,30 +563,6 @@ function ReviewerCaseDetailPanelImpl({
         projectOptions={projectOptions}
         rbProjectOptions={rbProjectOptions}
       />
-      <div>
-        <h3 className="mb-2 text-sm font-medium text-[var(--muted)]">{tk("discussion_title")}</h3>
-        <CaseDiscussion
-          lang={lang}
-          caseDbId={c.id}
-          caseLabel={c.caseId}
-          canPost
-          mentionOptions={mentionOptions}
-          composerTemplate={!c.isReference ? scopeOfWorkTemplate : null}
-          commentChoiceMode={
-            !c.isReference ? parseCommentChoiceMode(commentChoiceMode) : "FREE"
-          }
-          commentChoices={
-            !c.isReference ? parseCommentChoices(commentChoicesText) : []
-          }
-          commentFieldConfigs={!c.isReference ? commentFieldConfigs ?? "[]" : "[]"}
-        />
-      </div>
-      {c.reviews[0]?.comment && c.status !== CaseStatus.SUBMITTED && (
-        <div className="text-sm text-[var(--muted)]">
-          <span className="font-medium">{tk("last_review")}:</span>
-          <CommentBodyWithVideos lang={lang} text={c.reviews[0].comment} className="mt-1 text-[var(--text)]" />
-        </div>
-      )}
       {c.status === CaseStatus.AVAILABLE && !c.annotator && (
         <>
           <ReviewerAssignCase lang={lang} caseDbId={c.id} annotators={annotators} />

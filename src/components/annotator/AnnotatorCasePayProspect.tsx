@@ -56,10 +56,13 @@ export function AnnotatorCasePayProspectCard({
   lang,
   prospect,
   rushForfeitReason = null,
+  subtitle,
 }: {
   lang: Lang;
   prospect: ReturnType<typeof buildAnnotatorCasePayProspect>;
   rushForfeitReason?: "rejected" | "late" | null;
+  /** Replaces the short line under the title. The line-item breakdown stays collapsed. */
+  subtitle?: string;
 }) {
   const tk = (k: DictKey) => t(lang, k);
   const vi = lang === "vi";
@@ -114,15 +117,28 @@ export function AnnotatorCasePayProspectCard({
       hint: "",
     }] : []),
   ];
+  const title = vi ? "Chi tiết thù lao tối đa" : "Maximum pay breakdown";
+  const defaultSubtitle = vi
+    ? "Ước tính trước khi nhận ca — có điều kiện, không phải khoản trả đảm bảo."
+    : "Estimate available before taking the case — conditional, not guaranteed pay.";
   return (
-    <section className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="text-base font-semibold text-[var(--text)]">{vi ? "Chi tiết thù lao tối đa" : "Maximum pay breakdown"}</h3>
-          <p className="mt-1 text-xs text-[var(--muted)]">{vi ? "Ước tính trước khi nhận ca — có điều kiện, không phải khoản trả đảm bảo." : "Estimate available before taking the case — conditional, not guaranteed pay."}</p>
-        </div>
-        <div className="text-xl font-semibold tabular-nums text-[var(--success)]">{fmt(prospect.maximumPotentialPay)}</div>
-      </div>
+    <section className="rounded-md border border-emerald-500/30 bg-emerald-500/5">
+      <details className="group">
+        <summary className="cursor-pointer list-none px-4 py-3 [&::-webkit-details-marker]:hidden">
+          <span className="flex flex-wrap items-start justify-between gap-3">
+            <span className="min-w-0">
+              <span className="flex items-center gap-2 text-base font-semibold text-[var(--text)]">
+                <span aria-hidden className="inline-block text-xs text-[var(--muted)] transition-transform group-open:rotate-90">
+                  ▸
+                </span>
+                {title}
+              </span>
+              <span className="mt-1 block text-xs text-[var(--muted)]">{subtitle ?? defaultSubtitle}</span>
+            </span>
+            <span className="text-xl font-semibold tabular-nums text-[var(--success)]">{fmt(prospect.maximumPotentialPay)}</span>
+          </span>
+        </summary>
+        <div className="border-t border-emerald-500/20 px-4 pb-4">
       <p className="mt-3 text-sm text-[var(--muted)]">
         {perMinute
           ? (vi ? `Thời gian khuyến nghị: ${prospect.minMinutes}–${prospect.maxMinutes} phút. Thời gian tối ưu: ${prospect.optimalMinutes} phút. Hoàn tất sớm hơn vẫn giữ thù lao cơ bản trước điều chỉnh chất lượng.` : `Recommended time: ${prospect.minMinutes}–${prospect.maxMinutes} minutes. Optimal time: ${prospect.optimalMinutes} minutes. Finishing sooner retains the base pay before quality adjustments.`)
@@ -148,6 +164,8 @@ export function AnnotatorCasePayProspectCard({
           {vi ? "4★ không có thưởng chất lượng; 3★/2★/1★ trừ 10%/25%/40% thù lao tối thiểu. Ca bị từ chối không được trả. Người đánh giá có thể điều chỉnh khoản thưởng khi duyệt." : "4★ adds no quality bonus; 3★/2★/1★ deduct 10%/25%/40% of minimum case pay. Rejected cases pay zero. Reviewers can adjust the bonus at approval."}
         </p>
       </div>
+        </div>
+      </details>
     </section>
   );
 }

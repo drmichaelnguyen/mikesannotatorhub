@@ -84,7 +84,6 @@ export function RadiologistFindingSection({
   const wrapRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(true);
   const [highlights, setHighlights] = useState<FindingHighlight[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [isReviewer, setIsReviewer] = useState(false);
@@ -116,9 +115,8 @@ export function RadiologistFindingSection({
   }, [caseDbId, lang]);
 
   useEffect(() => {
-    if (!open) return;
     void load();
-  }, [open, load]);
+  }, [load]);
 
   useEffect(() => {
     if (!popup) return;
@@ -251,23 +249,7 @@ export function RadiologistFindingSection({
   }
 
   return (
-    <div className="md:col-span-2">
-      <dt className="sr-only">{tk("case_radiologist_finding")}</dt>
-      <dd className="m-0">
-        <details
-          open={open}
-          onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-          className="rounded-md border border-[var(--border)] bg-[var(--bg)]"
-        >
-          <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-[var(--muted)] hover:bg-[var(--surface)]">
-            {tk("case_radiologist_finding")}
-            {highlights.length > 0 ? (
-              <span className="ml-2 rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200">
-                {highlights.length}
-              </span>
-            ) : null}
-          </summary>
-          <div className="space-y-3 border-t border-[var(--border)] px-3 py-3">
+    <div className="space-y-3">
             <p className="text-[11px] text-[var(--muted)]">
               {tk("finding_highlight_select_hint")}
               {loading ? ` · ${tk("ui_loading")}` : ""}
@@ -353,9 +335,6 @@ export function RadiologistFindingSection({
             </div>
 
             {error && <p className="text-sm text-[var(--danger)]">{error}</p>}
-          </div>
-        </details>
-      </dd>
     </div>
   );
 }
