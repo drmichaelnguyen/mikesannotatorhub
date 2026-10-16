@@ -21,6 +21,7 @@ import {
   type TakeCaseBlockReason,
 } from "@/lib/annotator-take-case";
 import { CaseCompensationAmountButton } from "@/components/CaseCompensationBreakdown";
+import { CaseDetailTabs, initialCaseDetailTab } from "@/components/CaseDetailTabs";
 import {
   AnnotatorCasePayProspectCard,
   buildAnnotatorCasePayProspect,
@@ -190,9 +191,6 @@ export function AnnotatorCaseDetailPanel({
           {tk("case_paused_banner")}
         </p>
       )}
-      {!row.isReference && !isTerminalDone && (
-        <AnnotatorCasePayProspectCard lang={lang} prospect={payProspect} rushForfeitReason={rushForfeit} />
-      )}
       {!row.isReference && row.status === CaseStatus.AVAILABLE && (
         <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3">
           <p className="mb-2 text-sm font-medium text-[var(--text)]">{tk("assign")}</p>
@@ -215,6 +213,90 @@ export function AnnotatorCaseDetailPanel({
           />
         </div>
       )}
+      <CaseDetailTabs
+        key={row.id}
+        caseDbId={row.id}
+        defaultTab={initialCaseDetailTab(row.radiologistFinding.trim() !== "")}
+        tabs={[
+          {
+            id: "pay",
+            label: tk("detail_tab_pay"),
+            badge: row.isReference
+              ? undefined
+              : formatCompensationAmount(lang, payProspect.maximumPotentialPay),
+          },
+          { id: "history", label: tk("detail_tab_history") },
+          { id: "finding", label: tk("detail_tab_finding") },
+          {
+            id: "discussion",
+            label: tk("detail_tab_discussion"),
+            badge: (row._count?.caseNotes ?? 0) > 0 ? String(row._count?.caseNotes) : undefined,
+          },
+          {
+            id: "images",
+            label: tk("detail_tab_images"),
+            badge: row.keyImageCount > 0 ? String(row.keyImageCount) : undefined,
+          },
+        ]}
+        panels={{
+          pay: row.isReference ? (
+            <p className="text-sm text-[var(--muted)]">{tk("detail_tab_pay_reference")}</p>
+          ) : (
+            <AnnotatorCasePayProspectCard
+              lang={lang}
+              prospect={payProspect}
+              rushForfeitReason={rushForfeit}
+              subtitle={isTerminalDone ? tk("detail_tab_pay_settled") : undefined}
+            />
+          ),
+          history: <CaseStudyHistorySection lang={lang} caseDbId={row.id} />,
+          finding:
+            row.radiologistFinding.trim() === "" ? (
+              <p className="text-sm text-[var(--muted)]">{tk("detail_tab_finding_empty")}</p>
+            ) : (
+              <RadiologistFindingSection
+                lang={lang}
+                caseDbId={row.id}
+                text={row.radiologistFinding}
+              />
+            ),
+          discussion: (
+            <div className="space-y-3">
+              {last?.comment && (
+                <div className="rounded-md bg-[var(--surface)] p-2 text-sm">
+                  <span className="font-medium text-[var(--text)]">{tk("last_review")}: </span>
+                  <CommentBodyWithVideos lang={lang} text={last.comment} className="mt-1" />
+                </div>
+              )}
+              <CaseDiscussion
+                lang={lang}
+                caseDbId={row.id}
+                caseLabel={row.caseId}
+                canPost={canPostDiscussion}
+                mentionOptions={mentionOptions}
+                composerTemplate={!row.isReference ? row.scopeOfWorkTemplate ?? null : null}
+                requireComposerTemplate={true}
+                requireTemplateImages={
+                  !row.isReference ? row.scopeOfWorkTemplateRequiresImages === true : false
+                }
+                commentChoiceMode={
+                  !row.isReference ? parseCommentChoiceMode(row.commentChoiceMode) : "FREE"
+                }
+                commentChoices={!row.isReference ? parseCommentChoices(row.commentChoices) : []}
+                commentFieldConfigs={!row.isReference ? row.commentFieldConfigs ?? "[]" : "[]"}
+              />
+            </div>
+          ),
+          images: (
+            <CaseKeyImagesSection
+              lang={lang}
+              caseDbId={row.id}
+              hasKeyImages={row.hasKeyImages}
+              keyImageCount={row.keyImageCount}
+            />
+          ),
+        }}
+      />
       <dl className="grid gap-2 text-sm md:grid-cols-2">
         {row.guide && (
           <div className="md:col-span-2">
@@ -263,20 +345,6 @@ export function AnnotatorCaseDetailPanel({
           caseDbId={row.id}
           hasContinuityReport={row.hasContinuityReport}
         />
-        <CaseKeyImagesSection
-          lang={lang}
-          caseDbId={row.id}
-          hasKeyImages={row.hasKeyImages}
-          keyImageCount={row.keyImageCount}
-        />
-        <CaseStudyHistorySection lang={lang} caseDbId={row.id} />
-        {row.radiologistFinding.trim() !== "" && (
-          <RadiologistFindingSection
-            lang={lang}
-            caseDbId={row.id}
-            text={row.radiologistFinding}
-          />
-        )}
         {row.topics.length > 0 && (
           <div className="md:col-span-2">
             <dt className="text-[var(--muted)]">{tk("case_topic")}</dt>
@@ -443,36 +511,6 @@ export function AnnotatorCaseDetailPanel({
           </>
         )}
       </dl>
-      {last?.comment && (
-        <div className="rounded-md bg-[var(--bg)] p-2 text-sm">
-          <span className="font-medium text-[var(--text)]">{tk("last_review")}: </span>
-          <CommentBodyWithVideos lang={lang} text={last.comment} className="mt-1" />
-        </div>
-      )}
-      <div>
-        <h3 className="mb-2 text-sm font-medium text-[var(--muted)]">{tk("discussion_title")}</h3>
-        <CaseDiscussion
-          lang={lang}
-          caseDbId={row.id}
-          caseLabel={row.caseId}
-          canPost={canPostDiscussion}
-          mentionOptions={mentionOptions}
-          composerTemplate={!row.isReference ? row.scopeOfWorkTemplate ?? null : null}
-          requireComposerTemplate={true}
-          requireTemplateImages={
-            !row.isReference ? row.scopeOfWorkTemplateRequiresImages === true : false
-          }
-          commentChoiceMode={
-            !row.isReference
-              ? parseCommentChoiceMode(row.commentChoiceMode)
-              : "FREE"
-          }
-          commentChoices={
-            !row.isReference ? parseCommentChoices(row.commentChoices) : []
-          }
-          commentFieldConfigs={!row.isReference ? row.commentFieldConfigs ?? "[]" : "[]"}
-        />
-      </div>
       <TopicDetailModal lang={lang} topic={topicModal} onClose={() => setTopicModal(null)} />
     </div>
   );
