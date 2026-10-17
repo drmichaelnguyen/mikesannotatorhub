@@ -2,9 +2,14 @@
 
 import { useState, type ReactNode } from "react";
 
-export type CaseDetailTabId = "pay" | "history" | "finding" | "discussion" | "images";
+export type CaseDetailTab = {
+  id: string;
+  label: string;
+  badge?: string;
+  content: ReactNode;
+};
 
-export function initialCaseDetailTab(hasFinding: boolean): CaseDetailTabId {
+export function initialCaseDetailTab(hasFinding: boolean): string {
   return hasFinding ? "finding" : "discussion";
 }
 
@@ -12,15 +17,16 @@ export function CaseDetailTabs({
   caseDbId,
   tabs,
   defaultTab,
-  panels,
 }: {
   caseDbId: string;
-  tabs: { id: CaseDetailTabId; label: string; badge?: string }[];
-  defaultTab: CaseDetailTabId;
-  panels: Record<CaseDetailTabId, ReactNode>;
+  tabs: CaseDetailTab[];
+  defaultTab: string;
 }) {
-  const [active, setActive] = useState(defaultTab);
-  const [visited, setVisited] = useState<Set<CaseDetailTabId>>(() => new Set([defaultTab]));
+  const resolvedDefault = tabs.some((tab) => tab.id === defaultTab) ? defaultTab : tabs[0]?.id ?? "";
+  const [active, setActive] = useState(resolvedDefault);
+  const [visited, setVisited] = useState<Set<string>>(() => new Set(resolvedDefault ? [resolvedDefault] : []));
+
+  if (tabs.length === 0) return null;
 
   return (
     <div className="rounded-md border border-[var(--border)] bg-[var(--bg)]">
@@ -71,7 +77,7 @@ export function CaseDetailTabs({
             hidden={active !== tab.id}
             className="p-3"
           >
-            {panels[tab.id]}
+            {tab.content}
           </div>
         ) : null,
       )}

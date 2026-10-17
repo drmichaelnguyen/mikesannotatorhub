@@ -20,9 +20,7 @@ export function CaseVideoGuidesSection({ lang, urls }: { lang: Lang; urls: strin
     playingUrl && playingId ? tryYoutubeEmbedSrc(playingUrl, { autoplay: true }) : null;
 
   return (
-    <div className="md:col-span-2">
-      <dt className="text-[var(--muted)]">{tk("case_videos")}</dt>
-      <dd className="mt-2 space-y-3">
+    <div className="space-y-3">
         {playingUrl && playingEmbed && (
           <div className="overflow-hidden rounded-md border border-[var(--accent)] bg-[var(--bg)]">
             <div className="aspect-video w-full bg-black">
@@ -127,7 +125,6 @@ export function CaseVideoGuidesSection({ lang, urls }: { lang: Lang; urls: strin
             );
           })}
         </ul>
-      </dd>
     </div>
   );
 }

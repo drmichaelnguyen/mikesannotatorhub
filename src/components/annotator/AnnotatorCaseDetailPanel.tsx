@@ -21,7 +21,7 @@ import {
   type TakeCaseBlockReason,
 } from "@/lib/annotator-take-case";
 import { CaseCompensationAmountButton } from "@/components/CaseCompensationBreakdown";
-import { CaseDetailTabs, initialCaseDetailTab } from "@/components/CaseDetailTabs";
+import { CaseDetailTabs, initialCaseDetailTab, type CaseDetailTab } from "@/components/CaseDetailTabs";
 import {
   AnnotatorCasePayProspectCard,
   buildAnnotatorCasePayProspect,
@@ -158,6 +158,188 @@ export function AnnotatorCaseDetailPanel({
     currentUserId != null &&
     (row.status === CaseStatus.AVAILABLE || row.annotatorId === currentUserId);
 
+  const detailTabs: CaseDetailTab[] = [
+    {
+      id: "pay",
+      label: tk("detail_tab_pay"),
+      badge: row.isReference
+        ? undefined
+        : formatCompensationAmount(lang, payProspect.maximumPotentialPay),
+      content: row.isReference ? (
+        <p className="text-sm text-[var(--muted)]">{tk("detail_tab_pay_reference")}</p>
+      ) : (
+        <AnnotatorCasePayProspectCard
+          lang={lang}
+          prospect={payProspect}
+          rushForfeitReason={rushForfeit}
+          subtitle={isTerminalDone ? tk("detail_tab_pay_settled") : undefined}
+        />
+      ),
+    },
+    {
+      id: "history",
+      label: tk("detail_tab_history"),
+      content: <CaseStudyHistorySection lang={lang} caseDbId={row.id} />,
+    },
+    {
+      id: "finding",
+      label: tk("detail_tab_finding"),
+      content:
+        row.radiologistFinding.trim() === "" ? (
+          <p className="text-sm text-[var(--muted)]">{tk("detail_tab_finding_empty")}</p>
+        ) : (
+          <RadiologistFindingSection lang={lang} caseDbId={row.id} text={row.radiologistFinding} />
+        ),
+    },
+    {
+      id: "discussion",
+      label: tk("detail_tab_discussion"),
+      badge: (row._count?.caseNotes ?? 0) > 0 ? String(row._count?.caseNotes) : undefined,
+      content: (
+        <div className="space-y-3">
+          {last?.comment && (
+            <div className="rounded-md bg-[var(--surface)] p-2 text-sm">
+              <span className="font-medium text-[var(--text)]">{tk("last_review")}: </span>
+              <CommentBodyWithVideos lang={lang} text={last.comment} className="mt-1" />
+            </div>
+          )}
+          <CaseDiscussion
+            lang={lang}
+            caseDbId={row.id}
+            caseLabel={row.caseId}
+            canPost={canPostDiscussion}
+            mentionOptions={mentionOptions}
+            composerTemplate={!row.isReference ? row.scopeOfWorkTemplate ?? null : null}
+            requireComposerTemplate={true}
+            requireTemplateImages={
+              !row.isReference ? row.scopeOfWorkTemplateRequiresImages === true : false
+            }
+            commentChoiceMode={
+              !row.isReference ? parseCommentChoiceMode(row.commentChoiceMode) : "FREE"
+            }
+            commentChoices={!row.isReference ? parseCommentChoices(row.commentChoices) : []}
+            commentFieldConfigs={!row.isReference ? row.commentFieldConfigs ?? "[]" : "[]"}
+          />
+        </div>
+      ),
+    },
+    {
+      id: "images",
+      label: tk("detail_tab_images"),
+      badge: row.keyImageCount > 0 ? String(row.keyImageCount) : undefined,
+      content: (
+        <CaseKeyImagesSection
+          lang={lang}
+          caseDbId={row.id}
+          hasKeyImages={row.hasKeyImages}
+          keyImageCount={row.keyImageCount}
+        />
+      ),
+    },
+  ];
+  if (showGuideline && row.guideline.trim() !== "") {
+    detailTabs.push({
+      id: "guideline",
+      label: tk("case_guideline"),
+      content: (
+        <div className="whitespace-pre-wrap text-base leading-relaxed text-[var(--text)]">
+          {row.guideline}
+        </div>
+      ),
+    });
+  }
+  if (row.scopeOfWork.trim() !== "") {
+    detailTabs.push({
+      id: "scope",
+      label: tk("case_scope"),
+      content: <div className="whitespace-pre-wrap text-sm text-[var(--text)]">{row.scopeOfWork}</div>,
+    });
+  }
+  if (row.guide) {
+    detailTabs.push({
+      id: "guide",
+      label: tk("case_guide"),
+      content: (
+        <div className="space-y-3">
+          <p className="text-sm font-medium text-[var(--text)]">{row.guide.title}</p>
+          {guideLoading ? (
+            <div className="overflow-hidden rounded-md border border-[var(--border)]">
+              <LoadingProgressBar />
+              <p className="px-3 py-4 text-sm text-[var(--muted)]">{tk("ui_loading")}</p>
+            </div>
+          ) : (
+            <RichTextContent lang={lang} html={guideHtml} />
+          )}
+        </div>
+      ),
+    });
+  }
+  if (videoUrls.length > 0) {
+    detailTabs.push({
+      id: "videos",
+      label: tk("case_videos"),
+      badge: String(videoUrls.length),
+      content: <CaseVideoGuidesSection lang={lang} urls={videoUrls} />,
+    });
+  }
+  if (row.hasContinuityReport) {
+    detailTabs.push({
+      id: "continuity",
+      label: tk("case_continuity_report"),
+      content: (
+        <CaseContinuityReportSection lang={lang} caseDbId={row.id} hasContinuityReport />
+      ),
+    });
+  }
+  if (row.topics.length > 0) {
+    detailTabs.push({
+      id: "topics",
+      label: tk("case_topic"),
+      badge: String(row.topics.length),
+      content: (
+        <div className="flex flex-wrap gap-2">
+          {row.topics.map((topic) => (
+            <button
+              key={topic.id}
+              type="button"
+              onClick={() => setTopicModal(topic)}
+              className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1 text-left text-sm font-medium text-[var(--accent)] underline-offset-2 hover:underline"
+            >
+              {topic.name}
+            </button>
+          ))}
+        </div>
+      ),
+    });
+  }
+  if (referenceCases.length > 0) {
+    detailTabs.push({
+      id: "references",
+      label: tk("case_reference_same_scope"),
+      badge: String(referenceCases.length),
+      content: (
+        <div className="flex flex-wrap gap-2">
+          {referenceCases.map((referenceCase) => (
+            <CaseDetailLink
+              key={referenceCase.id}
+              caseDbId={referenceCase.id}
+              target="_blank"
+              className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1 text-sm text-[var(--accent)] underline-offset-2 hover:underline"
+            >
+              <span className="font-mono font-medium">{referenceCase.caseId}</span>
+              <span className="max-w-[12rem] truncate text-xs text-[var(--muted)]">
+                {referenceCase.redbrickProject}
+              </span>
+              <span className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
+                {tk("case_reference_new_tab")}
+              </span>
+            </CaseDetailLink>
+          ))}
+        </div>
+      ),
+    });
+  }
+
   return (
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[var(--border)] pb-3">
@@ -217,178 +399,9 @@ export function AnnotatorCaseDetailPanel({
         key={row.id}
         caseDbId={row.id}
         defaultTab={initialCaseDetailTab(row.radiologistFinding.trim() !== "")}
-        tabs={[
-          {
-            id: "pay",
-            label: tk("detail_tab_pay"),
-            badge: row.isReference
-              ? undefined
-              : formatCompensationAmount(lang, payProspect.maximumPotentialPay),
-          },
-          { id: "history", label: tk("detail_tab_history") },
-          { id: "finding", label: tk("detail_tab_finding") },
-          {
-            id: "discussion",
-            label: tk("detail_tab_discussion"),
-            badge: (row._count?.caseNotes ?? 0) > 0 ? String(row._count?.caseNotes) : undefined,
-          },
-          {
-            id: "images",
-            label: tk("detail_tab_images"),
-            badge: row.keyImageCount > 0 ? String(row.keyImageCount) : undefined,
-          },
-        ]}
-        panels={{
-          pay: row.isReference ? (
-            <p className="text-sm text-[var(--muted)]">{tk("detail_tab_pay_reference")}</p>
-          ) : (
-            <AnnotatorCasePayProspectCard
-              lang={lang}
-              prospect={payProspect}
-              rushForfeitReason={rushForfeit}
-              subtitle={isTerminalDone ? tk("detail_tab_pay_settled") : undefined}
-            />
-          ),
-          history: <CaseStudyHistorySection lang={lang} caseDbId={row.id} />,
-          finding:
-            row.radiologistFinding.trim() === "" ? (
-              <p className="text-sm text-[var(--muted)]">{tk("detail_tab_finding_empty")}</p>
-            ) : (
-              <RadiologistFindingSection
-                lang={lang}
-                caseDbId={row.id}
-                text={row.radiologistFinding}
-              />
-            ),
-          discussion: (
-            <div className="space-y-3">
-              {last?.comment && (
-                <div className="rounded-md bg-[var(--surface)] p-2 text-sm">
-                  <span className="font-medium text-[var(--text)]">{tk("last_review")}: </span>
-                  <CommentBodyWithVideos lang={lang} text={last.comment} className="mt-1" />
-                </div>
-              )}
-              <CaseDiscussion
-                lang={lang}
-                caseDbId={row.id}
-                caseLabel={row.caseId}
-                canPost={canPostDiscussion}
-                mentionOptions={mentionOptions}
-                composerTemplate={!row.isReference ? row.scopeOfWorkTemplate ?? null : null}
-                requireComposerTemplate={true}
-                requireTemplateImages={
-                  !row.isReference ? row.scopeOfWorkTemplateRequiresImages === true : false
-                }
-                commentChoiceMode={
-                  !row.isReference ? parseCommentChoiceMode(row.commentChoiceMode) : "FREE"
-                }
-                commentChoices={!row.isReference ? parseCommentChoices(row.commentChoices) : []}
-                commentFieldConfigs={!row.isReference ? row.commentFieldConfigs ?? "[]" : "[]"}
-              />
-            </div>
-          ),
-          images: (
-            <CaseKeyImagesSection
-              lang={lang}
-              caseDbId={row.id}
-              hasKeyImages={row.hasKeyImages}
-              keyImageCount={row.keyImageCount}
-            />
-          ),
-        }}
+        tabs={detailTabs}
       />
       <dl className="grid gap-2 text-sm md:grid-cols-2">
-        {row.guide && (
-          <div className="md:col-span-2">
-            <dt className="sr-only">{tk("case_guide")}</dt>
-            <dd className="m-0">
-              <details className="rounded-md border border-[var(--border)] bg-[var(--bg)]">
-                <summary className="cursor-pointer px-3 py-2 text-sm hover:bg-[var(--surface)]">
-                  <span className="text-[var(--muted)]">{tk("case_guide")}: </span>
-                  <span className="font-medium text-[var(--text)]">{row.guide.title}</span>
-                </summary>
-                <div className="border-t border-[var(--border)] px-3 py-3">
-                  {guideLoading ? (
-                    <div className="overflow-hidden rounded-md border border-[var(--border)]">
-                      <LoadingProgressBar />
-                      <p className="px-3 py-4 text-sm text-[var(--muted)]">{tk("ui_loading")}</p>
-                    </div>
-                  ) : (
-                    <RichTextContent lang={lang} html={guideHtml} />
-                  )}
-                </div>
-              </details>
-            </dd>
-          </div>
-        )}
-        {showGuideline && row.guideline.trim() !== "" && (
-          <div className="md:col-span-2">
-            <dt className="sr-only">{tk("case_guideline")}</dt>
-            <dd className="m-0">
-              <details
-                open
-                className="rounded-md border-2 border-[var(--accent)]/50 bg-[var(--surface)] shadow-sm"
-              >
-                <summary className="cursor-pointer px-3 py-2.5 text-base font-semibold tracking-wide text-[var(--text)] hover:bg-[var(--bg)]">
-                  {tk("case_guideline")}
-                </summary>
-                <div className="border-t border-[var(--accent)]/30 px-3 py-3 text-base leading-relaxed whitespace-pre-wrap text-[var(--text)]">
-                  {row.guideline}
-                </div>
-              </details>
-            </dd>
-          </div>
-        )}
-        <CaseVideoGuidesSection lang={lang} urls={videoUrls} />
-        <CaseContinuityReportSection
-          lang={lang}
-          caseDbId={row.id}
-          hasContinuityReport={row.hasContinuityReport}
-        />
-        {row.topics.length > 0 && (
-          <div className="md:col-span-2">
-            <dt className="text-[var(--muted)]">{tk("case_topic")}</dt>
-            <dd className="flex flex-wrap gap-2">
-              {row.topics.map((topic) => (
-                <button
-                  key={topic.id}
-                  type="button"
-                  onClick={() => setTopicModal(topic)}
-                  className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1 text-left text-sm font-medium text-[var(--accent)] underline-offset-2 hover:bg-[var(--surface)] hover:underline"
-                >
-                  {topic.name}
-                </button>
-              ))}
-            </dd>
-          </div>
-        )}
-        <div className="md:col-span-2">
-          <dt className="text-[var(--muted)]">{tk("case_scope")}</dt>
-          <dd>{row.scopeOfWork}</dd>
-        </div>
-        {referenceCases.length > 0 && (
-          <div className="md:col-span-2">
-            <dt className="text-[var(--muted)]">{tk("case_reference_same_scope")}</dt>
-            <dd className="mt-1 flex flex-wrap gap-2">
-              {referenceCases.map((referenceCase) => (
-                <CaseDetailLink
-                  key={referenceCase.id}
-                  caseDbId={referenceCase.id}
-                  target="_blank"
-                  className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1 text-sm text-[var(--accent)] underline-offset-2 hover:bg-[var(--surface)] hover:underline"
-                >
-                  <span className="font-mono font-medium">{referenceCase.caseId}</span>
-                  <span className="max-w-[12rem] truncate text-xs text-[var(--muted)]">
-                    {referenceCase.redbrickProject}
-                  </span>
-                  <span className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
-                    {tk("case_reference_new_tab")}
-                  </span>
-                </CaseDetailLink>
-              ))}
-            </dd>
-          </div>
-        )}
         <div>
           <dt className="text-[var(--muted)]">{tk("case_minMinutes_recommended")}</dt>
           <dd>{row.minMinutesPerCase}</dd>
