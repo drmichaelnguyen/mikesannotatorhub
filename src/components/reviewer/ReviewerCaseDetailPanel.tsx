@@ -25,7 +25,12 @@ import {
   AnnotatorCasePayProspectCard,
   buildAnnotatorCasePayProspect,
 } from "@/components/annotator/AnnotatorCasePayProspect";
-import { computeCompensation, caseRushForfeitReason, caseRushPercent } from "@/lib/compensation";
+import {
+  computeCompensation,
+  caseRushForfeitReason,
+  caseRushPercent,
+  optimalMinutes,
+} from "@/lib/compensation";
 import { formatCompensationAmount, formatDate } from "@/lib/format";
 import type { SerializedCaseTopic, SerializedReviewerCase } from "@/lib/reviewer-serialize";
 import type { DictKey, Lang } from "@/lib/i18n";
@@ -213,6 +218,7 @@ function ReviewerCaseDetailPanelImpl({
     c.status === CaseStatus.AUDITED || c.status === CaseStatus.ACCEPTED;
   const rushPercent = caseRushPercent(c);
   const rushForfeit = caseRushForfeitReason(c);
+  const optMinutes = optimalMinutes(c.minMinutesPerCase, c.maxMinutesPerCase);
   const payProspect = buildAnnotatorCasePayProspect({
     fiveStarBonusPercent: c.fiveStarBonusPercent,
     compensationType: c.compensationType,
@@ -245,15 +251,37 @@ function ReviewerCaseDetailPanelImpl({
       badge: c.isReference
         ? undefined
         : formatCompensationAmount(lang, payProspect.maximumPotentialPay),
-      content: c.isReference ? (
-        <p className="text-sm text-[var(--muted)]">{tk("detail_tab_pay_reference")}</p>
-      ) : (
-        <AnnotatorCasePayProspectCard
-          lang={lang}
-          prospect={payProspect}
-          rushForfeitReason={rushForfeit}
-          subtitle={tk("detail_tab_pay_settled")}
-        />
+      content: (
+        <div className="space-y-3">
+          <dl className="grid gap-2 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-[var(--muted)]">{tk("case_minMinutes_recommended")}</dt>
+              <dd>{c.minMinutesPerCase}</dd>
+            </div>
+            <div>
+              <dt className="text-[var(--muted)]">{tk("case_maxMinutes")}</dt>
+              <dd>{c.maxMinutesPerCase}</dd>
+            </div>
+            <div>
+              <dt className="text-[var(--muted)]">{tk("case_optimal_minutes")}</dt>
+              <dd>{optMinutes}</dd>
+            </div>
+            <div>
+              <dt className="text-[var(--muted)]">{tk("case_compAmount")}</dt>
+              <dd>{compLabel(lang, c.compensationType, c.compensationAmount)}</dd>
+            </div>
+          </dl>
+          {c.isReference ? (
+            <p className="text-sm text-[var(--muted)]">{tk("detail_tab_pay_reference")}</p>
+          ) : (
+            <AnnotatorCasePayProspectCard
+              lang={lang}
+              prospect={payProspect}
+              rushForfeitReason={rushForfeit}
+              subtitle={tk("detail_tab_pay_settled")}
+            />
+          )}
+        </div>
       ),
     },
     {
@@ -445,18 +473,6 @@ function ReviewerCaseDetailPanelImpl({
         tabs={detailTabs}
       />
       <dl className="grid gap-2 text-sm md:grid-cols-2">
-        <div>
-          <dt className="text-[var(--muted)]">{tk("case_minMinutes_recommended")}</dt>
-          <dd>{c.minMinutesPerCase}</dd>
-        </div>
-        <div>
-          <dt className="text-[var(--muted)]">{tk("case_maxMinutes")}</dt>
-          <dd>{c.maxMinutesPerCase}</dd>
-        </div>
-        <div>
-          <dt className="text-[var(--muted)]">{tk("case_compAmount")}</dt>
-          <dd>{compLabel(lang, c.compensationType, c.compensationAmount)}</dd>
-        </div>
         <div>
           <dt className="text-[var(--muted)]">{tk("case_deadline")}</dt>
           <dd>{formatDate(lang, c.deadline)}</dd>
