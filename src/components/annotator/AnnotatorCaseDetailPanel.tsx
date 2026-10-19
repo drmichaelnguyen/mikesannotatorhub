@@ -165,15 +165,37 @@ export function AnnotatorCaseDetailPanel({
       badge: row.isReference
         ? undefined
         : formatCompensationAmount(lang, payProspect.maximumPotentialPay),
-      content: row.isReference ? (
-        <p className="text-sm text-[var(--muted)]">{tk("detail_tab_pay_reference")}</p>
-      ) : (
-        <AnnotatorCasePayProspectCard
-          lang={lang}
-          prospect={payProspect}
-          rushForfeitReason={rushForfeit}
-          subtitle={isTerminalDone ? tk("detail_tab_pay_settled") : undefined}
-        />
+      content: (
+        <div className="space-y-3">
+          <dl className="grid gap-2 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-[var(--muted)]">{tk("case_minMinutes_recommended")}</dt>
+              <dd>{row.minMinutesPerCase}</dd>
+            </div>
+            <div>
+              <dt className="text-[var(--muted)]">{tk("case_maxMinutes")}</dt>
+              <dd>{row.maxMinutesPerCase}</dd>
+            </div>
+            <div>
+              <dt className="text-[var(--muted)]">{tk("case_optimal_minutes")}</dt>
+              <dd>{optMinutes}</dd>
+            </div>
+            <div>
+              <dt className="text-[var(--muted)]">{tk("case_compAmount")}</dt>
+              <dd>{compLabel(lang, row.compensationType, row.compensationAmount)}</dd>
+            </div>
+          </dl>
+          {row.isReference ? (
+            <p className="text-sm text-[var(--muted)]">{tk("detail_tab_pay_reference")}</p>
+          ) : (
+            <AnnotatorCasePayProspectCard
+              lang={lang}
+              prospect={payProspect}
+              rushForfeitReason={rushForfeit}
+              subtitle={isTerminalDone ? tk("detail_tab_pay_settled") : undefined}
+            />
+          )}
+        </div>
       ),
     },
     {
@@ -402,22 +424,6 @@ export function AnnotatorCaseDetailPanel({
         tabs={detailTabs}
       />
       <dl className="grid gap-2 text-sm md:grid-cols-2">
-        <div>
-          <dt className="text-[var(--muted)]">{tk("case_minMinutes_recommended")}</dt>
-          <dd>{row.minMinutesPerCase}</dd>
-        </div>
-        <div>
-          <dt className="text-[var(--muted)]">{tk("case_maxMinutes")}</dt>
-          <dd>{row.maxMinutesPerCase}</dd>
-        </div>
-        <div>
-          <dt className="text-[var(--muted)]">{tk("case_optimal_minutes")}</dt>
-          <dd>{optMinutes}</dd>
-        </div>
-        <div>
-          <dt className="text-[var(--muted)]">{tk("case_compAmount")}</dt>
-          <dd>{compLabel(lang, row.compensationType, row.compensationAmount)}</dd>
-        </div>
         <div>
           <dt className="text-[var(--muted)]">{tk("case_deadline")}</dt>
           <dd>{formatDate(lang, row.deadline)}</dd>
